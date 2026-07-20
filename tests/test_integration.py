@@ -14,9 +14,13 @@ from ms_odd_tagging.inference.run_local_vllm_eval import (
     validate_against_gt,
     validate_output,
 )
+from ms_odd_tagging.gt.build_gt_labels import build_gt_payload
 from ms_odd_tagging.model_inputs.build_bev_model_inputs import build_refined_json
 from ms_odd_tagging.validation.validate_refined_model_input_schema import validate_refined
-from ms_odd_tagging.windows.build_motional_windows import build_recording as build_windows
+from ms_odd_tagging.windows.build_motional_windows import (
+    build_candidates,
+    build_recording as build_windows,
+)
 
 
 RECORDING = "Rec_Drv_GER_MACHET18_20260227_153128"
@@ -89,11 +93,49 @@ def test_sample_pipeline_and_schema_validation(tmp_path: Path) -> None:
         "end": {"frame_index": 49, "path": "bev_end.png"},
     }
     refined = build_refined_json(recording, window, keyframe_files, max_objects=24, include_preliminary_candidates=False)
+    assert refined["ld_summary"]["available"] is False
+    assert refined["ld_series_sampled"]
     refined_path = window_dir / "refined.json"
     refined_path.write_text(json.dumps(refined), encoding="utf-8")
 
     errors = validate_refined(refined_path, {window["window_id"]: window})
     assert errors == []
+
+
+def test_ld_context_gates_following_lane_candidates() -> None:
+    def frame(index: int, has_ld_context: bool) -> dict:
+        summary = {
+            "nearby_lane_line_count": 2 if has_ld_context else 0,
+            "nearby_lane_count": 1 if has_ld_context else 0,
+            "nearest_lane_line_distance_m": 1.2 if has_ld_context else None,
+            "nearest_lane_distance_m": 2.4 if has_ld_context else None,
+            "lane_line_pattern_counts": {"solid": 1} if has_ld_context else {},
+        }
+        return {
+            "frame_index": index,
+            "time_since_start_s": index * 0.1,
+            "ego": {"speed_mps": 8.0},
+            "scenario_signals": {"lead_candidate": None},
+            "objects": [],
+            "ld": {
+                "available": True,
+                "summary": summary,
+                "quality_flags": {"nearby_lane_ids_with_invalid_boundary_ranges": []},
+            },
+        }
+
+    frames_without_ld_context = [frame(index, False) for index in range(50)]
+    candidates = build_candidates(frames_without_ld_context, [], [], 0.1)
+    assert candidates["ld_context"]["available"] is True
+    assert candidates["ld_context"]["candidate"] is None
+    assert candidates["candidate_flags"]["following_lane_without_lead"] is False
+
+    frames_with_ld_context = [frame(index, True) for index in range(50)]
+    candidates = build_candidates(frames_with_ld_context, [], [], 0.1)
+    assert candidates["ld_context"]["candidate"]["qualifying_fraction"] == 1.0
+    assert candidates["candidate_flags"]["following_lane_without_lead"] is True
+    evidence = candidates["evidence"]["following_lane_without_lead"]
+    assert evidence["ld_lane_context"]["minimum_nearest_lane_line_distance_m"] == 1.2
 
 
 def test_output_schema_loads() -> None:
@@ -267,6 +309,32 @@ def test_gt_mismatch_does_not_create_validation_error() -> None:
     result = validate_against_gt(output, gt_labels)
     assert result["status"] == "failed"
     assert result["mismatches"] == [{"label": "stationary", "expected": True, "actual": False}]
+
+
+def test_gt_template_formula_fills_speed_labels(tmp_path: Path) -> None:
+    model_input_root = tmp_path / "model_inputs"
+    window_dir = model_input_root / RECORDING / f"{RECORDING}_000-049"
+    window_dir.mkdir(parents=True)
+    refined = {
+        "recording_id": RECORDING,
+        "source_window_id": f"{RECORDING}:000-049",
+        "time_window": {
+            "start_frame": 0,
+            "end_frame": 49,
+            "start_time_s": 0.0,
+            "end_time_s": 4.9,
+        },
+        "ego_summary": {"median_speed_mps": 12.0},
+    }
+    (window_dir / "refined.json").write_text(json.dumps(refined), encoding="utf-8")
+
+    payload = build_gt_payload(model_input_root, RECORDING)
+    labels = payload["windows"][f"{RECORDING}:000-049"]["labels"]
+
+    assert labels["high_magnitude_speed"] is False
+    assert labels["medium_magnitude_speed"] is True
+    assert labels["low_magnitude_speed"] is False
+    assert labels["following_lane_with_lead"] is None
 
 
 def test_no_tracked_secret_or_server_absolute_path_patterns() -> None:

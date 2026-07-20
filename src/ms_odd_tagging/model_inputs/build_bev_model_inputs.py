@@ -15,15 +15,12 @@ import zlib
 import html
 import json
 import math
-import os
 from collections import defaultdict
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_OUTPUT_BASE = Path(os.environ.get("MS_ODD_OUTPUT_ROOT", REPO_ROOT / "outputs"))
-DEFAULT_INPUT_DIR = DEFAULT_OUTPUT_BASE / "motional_windows"
-DEFAULT_OUTPUT_DIR = DEFAULT_OUTPUT_BASE / "model_inputs"
+DEFAULT_INPUT_DIR = Path("quick_exploration_outputs/motional_windows")
+DEFAULT_OUTPUT_DIR = Path("quick_exploration_outputs/scenario_tagging_pipeline/03_model_inputs")
 
 SCHEMA_VERSION = "od-motional-model-input-v2"
 BEV_SCHEMA_VERSION = "od-bev-keyframe-v2"
@@ -31,6 +28,8 @@ DEPRECATED_REFINED_FIELDS = {
     "per_frame_counts[].object_count": "Use total_object_count.",
     "per_frame_counts[].classes": "Use classes_total.",
 }
+DEFAULT_LD_LINE_PATTERNS = {"solid", "dashed"}
+DEFAULT_LD_ROADMARK_CLASSES = {"crosswalk", "stopline"}
 
 CLASS_COLORS = {
     "car": "#2f6fed",
@@ -169,6 +168,188 @@ def svg_polyline(points, center_x, center_y, scale):
 
 def class_color(class_name):
     return CLASS_COLORS.get(class_name, "#64748b")
+
+
+def ld_point_lookup(recording):
+    store = recording.get("ld_feature_store") or {}
+    return {
+        str(point["point_id"]): point.get("position_lcs_m")
+        for point in store.get("points", [])
+        if point.get("point_id") is not None and point.get("position_lcs_m")
+    }
+
+
+def ld_feature_lookup(recording, store_key, id_key):
+    store = recording.get("ld_feature_store") or {}
+    return {
+        str(feature[id_key]): feature
+        for feature in store.get(store_key, [])
+        if feature.get(id_key) is not None
+    }
+
+
+def ld_feature_lcs_points(feature, points_by_id):
+    positions = []
+    if feature.get("point_ids"):
+        for point_id in feature.get("point_ids", []):
+            position = points_by_id.get(str(point_id))
+            if not position or len(position) < 2:
+                continue
+            positions.append((position[0], position[1]))
+    else:
+        for point in feature.get("points", []):
+            position = point.get("position_lcs_m")
+            if not position or len(position) < 2:
+                continue
+            positions.append((position[0], position[1]))
+    return positions
+
+
+def ld_lane_style(feature):
+    attributes = feature.get("attributes") or {}
+    pattern = str(attributes.get("pattern") or "").lower()
+    if pattern in {"dashed", "broken"}:
+        return hex_to_rgb("#38bdf8"), 2, 0.72
+    if pattern in {"virtual", "unknown"}:
+        return hex_to_rgb("#64748b"), 2, 0.42
+    return hex_to_rgb("#0ea5e9"), 2, 0.78
+
+
+def ld_lane_pattern(feature):
+    attributes = feature.get("attributes") or {}
+    return str(attributes.get("pattern") or "").lower()
+
+
+def ld_roadmark_class(feature):
+    return str(feature.get("class") or "").lower()
+
+
+def ld_boundary_attribute(feature):
+    return str(feature.get("boundary_attribute") or "").lower()
+
+
+def draw_ld_polyline(canvas, lcs_points, key_pos, key_heading, visible, screen, color, width, alpha):
+    current_segment = []
+    for point_lcs in lcs_points:
+        point_ego = lcs_to_ego(point_lcs, key_pos, key_heading)
+        if visible(point_ego):
+            current_segment.append(screen(point_ego))
+            continue
+        if len(current_segment) >= 2:
+            canvas.polyline(current_segment, color, width=width, alpha=alpha)
+        current_segment = []
+    if len(current_segment) >= 2:
+        canvas.polyline(current_segment, color, width=width, alpha=alpha)
+
+
+def draw_ld_context(canvas, recording, frame, key_pos, key_heading, visible, screen, filters):
+    """Draw nearby LD lane/boundary geometry if an ODLD window is provided."""
+    ld_frame = frame.get("ld") or {}
+    if not ld_frame.get("available"):
+        return
+    nearby_ids = ld_frame.get("nearby_feature_ids") or {}
+    if not nearby_ids:
+        return
+
+    points_by_id = ld_point_lookup(recording)
+    if not points_by_id:
+        return
+
+    lane_by_id = ld_feature_lookup(recording, "lane_lines", "line_id")
+    boundary_by_id = ld_feature_lookup(recording, "road_boundaries", "road_boundary_id")
+    roadmark_by_id = ld_feature_lookup(recording, "roadmarks", "roadmark_id")
+    line_patterns = filters.get("line_patterns", set())
+    boundary_attributes = filters.get("boundary_attributes", set())
+    roadmark_classes = filters.get("roadmark_classes", set())
+
+    for feature_id in nearby_ids.get("road_boundaries", []):
+        feature = boundary_by_id.get(str(feature_id))
+        if not feature:
+            continue
+        if ld_boundary_attribute(feature) not in boundary_attributes:
+            continue
+        draw_ld_polyline(
+            canvas,
+            ld_feature_lcs_points(feature, points_by_id),
+            key_pos,
+            key_heading,
+            visible,
+            screen,
+            hex_to_rgb("#f59e0b"),
+            width=4,
+            alpha=0.48,
+        )
+
+    for feature_id in nearby_ids.get("roadmarks", []):
+        feature = roadmark_by_id.get(str(feature_id))
+        if not feature:
+            continue
+        if ld_roadmark_class(feature) not in roadmark_classes:
+            continue
+        draw_ld_polyline(
+            canvas,
+            ld_feature_lcs_points(feature, points_by_id),
+            key_pos,
+            key_heading,
+            visible,
+            screen,
+            hex_to_rgb("#f97316"),
+            width=3,
+            alpha=0.55,
+        )
+
+    for feature_id in nearby_ids.get("lane_lines", []):
+        feature = lane_by_id.get(str(feature_id))
+        if not feature:
+            continue
+        if ld_lane_pattern(feature) not in line_patterns:
+            continue
+        color, line_width, alpha = ld_lane_style(feature)
+        draw_ld_polyline(
+            canvas,
+            ld_feature_lcs_points(feature, points_by_id),
+            key_pos,
+            key_heading,
+            visible,
+            screen,
+            color,
+            width=line_width,
+            alpha=alpha,
+        )
+
+
+def parse_csv_set(value):
+    if value is None:
+        return set()
+    return {
+        item.strip().lower()
+        for item in str(value).split(",")
+        if item.strip()
+    }
+
+
+def motional_recording_id(path):
+    name = path.name
+    if name.endswith("_motional_windows_odld.json"):
+        return name[: -len("_motional_windows_odld.json")]
+    if name.endswith("_motional_windows.json"):
+        return name[: -len("_motional_windows.json")]
+    return path.stem
+
+
+def select_motional_window_files(input_dir):
+    selected = {}
+    for path in sorted(
+        {
+            *input_dir.glob("*_motional_windows.json"),
+            *input_dir.glob("*_motional_windows_odld.json"),
+        }
+    ):
+        recording_id = motional_recording_id(path)
+        current = selected.get(recording_id)
+        if current is None or path.name.endswith("_motional_windows_odld.json"):
+            selected[recording_id] = path
+    return [selected[key] for key in sorted(selected)]
 
 
 def ego_heading(ego):
@@ -699,16 +880,6 @@ def render_bev_svg(recording, window, frame_idx, label, output_path, extent, siz
             f'<line x1="0" y1="{y:.1f}" x2="{width}" y2="{y:.1f}" '
             f'stroke="{grid_color}" stroke-width="1"/>'
         )
-    x0, y0 = ego_to_screen((0, 0), center_x, center_y, scale)
-    parts.append(
-        f'<line x1="0" y1="{y0:.1f}" x2="{width}" y2="{y0:.1f}" '
-        'stroke="#94a3b8" stroke-width="1.5"/>'
-    )
-    parts.append(
-        f'<line x1="{x0:.1f}" y1="0" x2="{x0:.1f}" y2="{height}" '
-        'stroke="#94a3b8" stroke-width="1.5"/>'
-    )
-
     ego_path_points = []
     elapsed_path_points = []
     for path_frame in window["frames"]:
@@ -841,7 +1012,7 @@ def render_bev_svg(recording, window, frame_idx, label, output_path, extent, siz
     output_path.write_text("\n".join(parts), encoding="utf-8")
 
 
-def render_bev_model_png(recording, window, frame_idx, label, output_path, extent, size):
+def render_bev_model_png(recording, window, frame_idx, label, output_path, extent, size, ld_filters=None):
     """Render a model-facing BEV PNG with no formula/candidate text leakage."""
     frames = frame_by_index(window)
     frame = frames[frame_idx]
@@ -867,16 +1038,23 @@ def render_bev_model_png(recording, window, frame_idx, label, output_path, exten
 
     canvas = PngCanvas(width, height)
     grid = hex_to_rgb("#dbe4ee")
-    axis = hex_to_rgb("#94a3b8")
     for lateral in range(-int(right_m), int(left_m) + 1, 10):
         x, _ = screen((0, lateral))
         canvas.line(x, 0, x, height - 1, grid, width=1, alpha=0.75)
     for longitudinal in range(-int(back_m), int(forward_m) + 1, 10):
         _, y = screen((longitudinal, 0))
         canvas.line(0, y, width - 1, y, grid, width=1, alpha=0.75)
-    x0, y0 = screen((0, 0))
-    canvas.line(0, y0, width - 1, y0, axis, width=2, alpha=0.8)
-    canvas.line(x0, 0, x0, height - 1, axis, width=2, alpha=0.8)
+
+    draw_ld_context(
+        canvas,
+        recording,
+        frame,
+        key_pos,
+        key_heading,
+        visible,
+        screen,
+        ld_filters or {},
+    )
 
     ego_path_points = []
     elapsed_path_points = []
@@ -988,6 +1166,14 @@ is centered on the ego pose at that keyframe. Object trails are transformed from
 LCS into the keyframe ego pose, so the current frame and trail are spatially
 consistent.
 
+When ODLD motional windows are used, nearby LD lane lines, road boundaries, and
+roadmarks are rendered from `ld_feature_store` into the same keyframe-relative
+BEV image. By default, LD rendering includes solid/dashed lane lines and
+crosswalk/stopline roadmarks. Virtual/zigzag lane lines and
+drivable/non_drivable road boundaries are hidden unless explicitly enabled with
+`--ld-line-patterns` or `--ld-boundary-attributes`. OD-only motional windows
+keep the previous OD/trajectory-only view.
+
 Formula-only baseline labels remain in the upstream motional-window JSON and
 should be compared outside this model input package.
 
@@ -1029,6 +1215,30 @@ def parse_args():
     parser.add_argument("--back-m", type=float, default=25.0)
     parser.add_argument("--forward-m", type=float, default=95.0)
     parser.add_argument(
+        "--ld-line-patterns",
+        default="solid,dashed",
+        help=(
+            "Comma-separated LD lane-line patterns to render. "
+            "Default: solid,dashed. Examples: solid,dashed,virtual,zigzag"
+        ),
+    )
+    parser.add_argument(
+        "--ld-roadmark-classes",
+        default="crosswalk,stopline",
+        help=(
+            "Comma-separated LD roadmark classes to render. "
+            "Default: crosswalk,stopline."
+        ),
+    )
+    parser.add_argument(
+        "--ld-boundary-attributes",
+        default="",
+        help=(
+            "Comma-separated LD road-boundary attributes to render. "
+            "Default is empty, so drivable/non_drivable boundaries are hidden."
+        ),
+    )
+    parser.add_argument(
         "--window-limit",
         type=int,
         default=None,
@@ -1042,7 +1252,12 @@ def main():
     ensure_dir(args.output_dir)
     write_readme(args.output_dir)
     recordings = set(args.recording or [])
-    files = sorted(args.input_dir.glob("*_motional_windows.json"))
+    ld_filters = {
+        "line_patterns": parse_csv_set(args.ld_line_patterns),
+        "roadmark_classes": parse_csv_set(args.ld_roadmark_classes),
+        "boundary_attributes": parse_csv_set(args.ld_boundary_attributes),
+    }
+    files = select_motional_window_files(args.input_dir)
     converted = []
     manifest = {
         "schema_version": SCHEMA_VERSION,
@@ -1056,6 +1271,11 @@ def main():
             "forward": args.forward_m,
         },
         "bev_size_px": {"width": args.width, "height": args.height},
+        "ld_render_filters": {
+            "line_patterns": sorted(ld_filters["line_patterns"]),
+            "roadmark_classes": sorted(ld_filters["roadmark_classes"]),
+            "boundary_attributes": sorted(ld_filters["boundary_attributes"]),
+        },
         "recordings": [],
     }
     for path in files:
@@ -1091,6 +1311,7 @@ def main():
                     output_path,
                     (args.left_m, args.right_m, args.back_m, args.forward_m),
                     (args.width, args.height),
+                    ld_filters=ld_filters,
                 )
                 keyframe_files[label] = {
                     "frame_index": frame_idx,

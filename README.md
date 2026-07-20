@@ -1,8 +1,8 @@
 # MS ODD Tagging
 
-Clean repository for the autonomous-driving ODD scenario tagging pipeline.
+Repository for the autonomous-driving ODD scenario tagging pipeline.
 
-This repo keeps the same core pipeline shape:
+This repo keeps the following core pipeline shape:
 
 ```text
 OD annotations + ego trajectory
@@ -13,8 +13,6 @@ OD annotations + ego trajectory
   -> schema validation
   -> optional GT comparison
 ```
-
-It intentionally does not track raw data, generated model inputs, model outputs, vLLM caches, or experiments.
 
 ## Layout
 

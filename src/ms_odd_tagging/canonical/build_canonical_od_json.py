@@ -6,19 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 from collections import defaultdict
 from pathlib import Path
 from statistics import median
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DATA_ROOT = REPO_ROOT / "data" / "raw" / "2600_MV2_OD_traj_annotations"
-DEFAULT_OUTPUT_ROOT = Path(os.environ.get("MS_ODD_OUTPUT_ROOT", REPO_ROOT / "outputs")) / "canonical_frames"
 
 DEFAULT_RECORDINGS = [
-    "Rec_Drv_GER_MACHET18_20260227_153128",
-    "Rec_Drv_GER_MACHET18_20260227_155628",
-    "Rec_Drv_GER_MACHET18_20260227_151728",
+    "Rec_Drv_GER_MACHET18_20260319_152119",
 ]
 
 SCENARIO_TAXONOMY = [
@@ -36,7 +30,7 @@ SCENARIO_TAXONOMY = [
     "near_multiple_motorcycle",
 ]
 
-MS_ODD_CLASSES = {
+MOTIONAL_CLASSES = {
     "car",
     "truck",
     "truck_head",
@@ -407,7 +401,7 @@ def scenario_signals(ego, object_states):
         "nearby_30m_counts": {
             "pedestrian": sum(state["class"] == "pedestrian" for state in nearby),
             "motorcycle": sum(state["class"] == "motorcycle" for state in nearby),
-            "all_motional": sum(state["class"] in MS_ODD_CLASSES for state in nearby),
+            "all_motional": sum(state["class"] in MOTIONAL_CLASSES for state in nearby),
         },
         "heuristic_parameters": {
             "nearby_radius_m": 30.0,
@@ -460,7 +454,7 @@ def build_recording(source_root, output_root, recording):
         )
         interaction_candidates = []
         for state in object_states:
-            if state["class"] not in MS_ODD_CLASSES:
+            if state["class"] not in MOTIONAL_CLASSES:
                 continue
             current_metrics = constant_velocity_interaction(state)
             future_metrics = observed_future_path_overlap(
@@ -554,12 +548,14 @@ def main():
     parser.add_argument(
         "--source-root",
         type=Path,
-        default=Path(os.environ.get("MS_ODD_DATA_ROOT", DEFAULT_DATA_ROOT)),
+        default=Path(
+            "2600_MV2_OD_traj_annotations/2600_MV2_OD_traj_annotations"
+        ),
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=DEFAULT_OUTPUT_ROOT,
+        default=Path("quick_exploration_outputs/canonical_od_json"),
     )
     parser.add_argument("recordings", nargs="*", default=DEFAULT_RECORDINGS)
     args = parser.parse_args()

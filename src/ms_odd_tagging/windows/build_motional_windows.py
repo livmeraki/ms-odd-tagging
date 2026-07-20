@@ -5,12 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 from statistics import median
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_OUTPUT_BASE = Path(os.environ.get("MS_ODD_OUTPUT_ROOT", REPO_ROOT / "outputs"))
 
 CONFIG = {
     "window_duration_s": 5.0,
@@ -70,6 +67,14 @@ TAXONOMY = [
     "near_multiple_pedestrians",
     "near_multiple_motorcycle",
 ]
+
+
+def portable_path(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
 
 
 def contiguous_true_runs(values):
@@ -330,6 +335,7 @@ def summarize_objects(frames):
 def build_recording(source_path, output_dir):
     with source_path.open(encoding="utf-8") as handle:
         canonical = json.load(handle)
+    has_ld = "ld_feature_store" in canonical
     frames = canonical["frames"]
     frame_interval = canonical["recording"]["median_frame_interval_s"]
     window_count = required_samples(CONFIG["window_duration_s"], frame_interval)
@@ -378,10 +384,11 @@ def build_recording(source_path, output_dir):
         )
 
     result = {
-        "schema_version": "od-motional-window-v1",
+        "schema_version": "odld-motional-window-v1" if has_ld else "od-motional-window-v1",
         "recording_id": canonical["recording_id"],
-        "source_canonical_json": source_path.name,
+        "source_canonical_json": portable_path(source_path) if has_ld else source_path.name,
         "scenario_taxonomy": TAXONOMY,
+        "candidate_basis": "od_ego_only_v1" if has_ld else "od_ego_v1",
         "candidate_configuration": CONFIG,
         "recording_events": {
             "turn_onsets": turn_events,
@@ -397,9 +404,17 @@ def build_recording(source_path, output_dir):
         },
         "windows": windows,
     }
-    output_path = output_dir / source_path.name.replace(
-        "_canonical_frames.json", "_motional_windows.json"
-    )
+    if has_ld:
+        result["ld_configuration"] = canonical.get("ld_configuration")
+        result["ld_feature_store"] = canonical["ld_feature_store"]
+        output_name = source_path.name.replace(
+            "_canonical_odld_frames.json", "_motional_windows_odld.json"
+        )
+    else:
+        output_name = source_path.name.replace(
+            "_canonical_frames.json", "_motional_windows.json"
+        )
+    output_path = output_dir / output_name
     with output_path.open("w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=True, separators=(",", ":"))
     return output_path, result
@@ -410,12 +425,12 @@ def main():
     parser.add_argument(
         "--canonical-dir",
         type=Path,
-        default=DEFAULT_OUTPUT_BASE / "canonical_frames",
+        default=Path("quick_exploration_outputs/canonical_od_json"),
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=DEFAULT_OUTPUT_BASE / "motional_windows",
+        default=Path("quick_exploration_outputs/motional_windows"),
     )
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -426,7 +441,13 @@ def main():
         "candidate_configuration": CONFIG,
         "recordings": [],
     }
-    for source_path in sorted(args.canonical_dir.glob("*_canonical_frames.json")):
+    canonical_paths = sorted(
+        {
+            *args.canonical_dir.glob("*_canonical_frames.json"),
+            *args.canonical_dir.glob("*_canonical_odld_frames.json"),
+        }
+    )
+    for source_path in canonical_paths:
         output_path, result = build_recording(source_path, args.output_dir)
         tag_counts = {
             tag: sum(

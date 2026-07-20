@@ -1,0 +1,91 @@
+{
+  "schema_version": "scenario-gt-labels-v1",
+  "recording_id": "Rec_Drv_GER_MACHET18_20260319_152119",
+  "notes": [
+    "Human-editable GT labels for optional comparison during local vLLM runs.",
+    "Use true or false for completed GT values; leave unknown labels as null.",
+    "Speed-band labels are formula-filled from ego_summary.median_speed_mps using low: 0.5 <= speed < 5, medium: 5 <= speed < 15, high: speed >= 15.",
+    "Rerunning this generator preserves non-speed manual labels and refreshes speed-band labels from the formula."
+  ],
+  "label_fields": [
+    "stationary",
+    "high_magnitude_speed",
+    "low_magnitude_speed",
+    "medium_magnitude_speed",
+    "following_lane_with_lead",
+    "following_lane_without_lead",
+    "starting_left_turn",
+    "starting_right_turn",
+    "stopping_with_lead",
+    "stopping_without_lead",
+    "near_multiple_pedestrians",
+    "near_multiple_motorcycle"
+  ],
+  "formula_filled_label_fields": [
+    "high_magnitude_speed",
+    "low_magnitude_speed",
+    "medium_magnitude_speed"
+  ],
+  "windows": {
+    "Rec_Drv_GER_MACHET18_20260319_152119:000-049": {
+      "window_id": "Rec_Drv_GER_MACHET18_20260319_152119:000-049",
+      "start_frame": 0,
+      "end_frame": 49,
+      "start_time_s": 0.0,
+      "end_time_s": 4.9001,
+      "reference": {
+        "median_speed_mps": 3.0177,
+        "speed_formula_label": "low_magnitude_speed"
+      },
+      "labels": {
+        "stationary": null,
+        "high_magnitude_speed": false,
+        "low_magnitude_speed": true,
+        "medium_magnitude_speed": false,
+        "following_lane_with_lead": null,
+        "following_lane_without_lead": null,
+        "starting_left_turn": null,
+        "starting_right_turn": null,
+        "stopping_with_lead": null,
+        "stopping_without_lead": null,
+        "near_multiple_pedestrians": null,
+        "near_multiple_motorcycle": null
+      },
+      "confidence": null,
+      "needs_review": true,
+      "notes": "",
+      "reviewer": "",
+      "reviewed_at": ""
+    },
+    "Rec_Drv_GER_MACHET18_20260319_152119:025-074": {
+      "window_id": "Rec_Drv_GER_MACHET18_20260319_152119:025-074",
+      "start_frame": 25,
+      "end_frame": 74,
+      "start_time_s": 2.5001,
+      "end_time_s": 7.4002,
+      "reference": {
+        "median_speed_mps": 3.7247,
+        "speed_formula_label": "low_magnitude_speed"
+      },
+      "labels": {
+        "stationary": null,
+        "high_magnitude_speed": false,
+        "low_magnitude_speed": true,
+        "medium_magnitude_speed": false,
+        "following_lane_with_lead": null,
+        "following_lane_without_lead": null,
+        "starting_left_turn": null,
+        "starting_right_turn": null,
+        "stopping_with_lead": null,
+        "stopping_without_lead": null,
+        "near_multiple_pedestrians": null,
+        "near_multiple_motorcycle": null
+      },
+      "confidence": null,
+      "needs_review": true,
+      "notes": "",
+      "reviewer": "",
+      "reviewed_at": ""
+    }
+  }
+}
