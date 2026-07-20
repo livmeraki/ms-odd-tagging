@@ -3,15 +3,26 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
+SRC_ROOT = Path(__file__).resolve().parents[1]
+
+
 def run_stage(module: str, arguments: list[str]) -> None:
     command = [sys.executable, "-m", module, *arguments]
     print(f"\n==> {' '.join(command)}", flush=True)
-    subprocess.run(command, check=True)
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(SRC_ROOT)
+        if not existing_pythonpath
+        else f"{SRC_ROOT}{os.pathsep}{existing_pythonpath}"
+    )
+    subprocess.run(command, check=True, env=env)
 
 
 def parse_args() -> argparse.Namespace:

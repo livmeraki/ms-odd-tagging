@@ -1,7 +1,7 @@
 {
   "schema_version": "scenario-gt-labels-v1",
   "recording_id": "Rec_Drv_GER_MACHET18_20260227_153128",
-  "source_csv": "tests/fixtures/gt/Rec_Drv_GER_MACHET18_20260227_153128_gt_template.csv",
+  "source_csv": "gt_labels/Rec_Drv_GER_MACHET18_20260227_153128_gt_template.csv",
   "notes": [
     "Human-editable GT labels generated from the filled CSV.",
     "stationary and speed-band labels were filled from formula candidate_flags as requested.",

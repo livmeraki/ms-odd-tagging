@@ -76,6 +76,40 @@ def test_cli_help_works() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_run_pipeline_script_works_without_pythonpath(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "outputs"
+    write_synthetic_recording(source_root)
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo / "run_pipeline.py"),
+            "--source-root",
+            str(source_root),
+            "--output-root",
+            str(output_root),
+            "--stop-after",
+            "windows",
+            RECORDING,
+        ],
+        cwd=repo,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        output_root / "02_windows" / f"{RECORDING}_motional_windows.json"
+    ).is_file()
+
+
 def test_sample_pipeline_and_schema_validation(tmp_path: Path) -> None:
     source_root = tmp_path / "source"
     canonical_dir = tmp_path / "canonical"
@@ -359,11 +393,20 @@ def test_no_tracked_secret_or_server_absolute_path_patterns() -> None:
         "/media/" + "stradvision",
         "C:" + "\\Users",
     )
-    for path in repo.rglob("*"):
-        if path.is_dir() or ".git" in path.parts or "__pycache__" in path.parts:
+    tracked_files = subprocess.run(
+        ["git", "ls-files"],
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    ).stdout.splitlines()
+    for relative_path in tracked_files:
+        path = repo / relative_path
+        if not path.exists():
             continue
         if path.suffix.lower() in {".png", ".pyc"}:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for pattern in banned:
-            assert pattern not in text, f"{pattern} found in {path.relative_to(repo)}"
+            assert pattern not in text, f"{pattern} found in {relative_path}"
