@@ -5,7 +5,7 @@ Reusable prompts for evaluating OD + ego-trajectory windows with LLM/VLM APIs.
 The prompts are designed for the current model input package:
 
 ```text
-quick_exploration_outputs/model_inputs/<recording>/<window>/
+outputs/03_model_inputs/<recording>/<window>/
   refined.json
   bev_start.png
   bev_middle.png
@@ -28,4 +28,3 @@ Efficiency notes:
 - Keep output concise and schema-valid.
 - Ask for evidence summaries, not hidden chain-of-thought.
 - Use PNG/JPEG BEV images for true vision input.
-

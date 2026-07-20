@@ -1,135 +1,74 @@
 # MS ODD Tagging
 
-Repository for the autonomous-driving ODD scenario tagging pipeline.
-
-This repo keeps the following core pipeline shape:
+Modular autonomous-driving motional-scenario tagging from OD/LD annotations and ego trajectories.
 
 ```text
-OD annotations + ego trajectory
-  -> canonical frame JSON
-  -> overlapping 5-second windows
-  -> refined.json + BEV keyframes
-  -> local/server vLLM inference
-  -> schema validation
-  -> optional GT comparison
+data/01_raw
+  -> outputs/01_canonical
+  -> outputs/02_windows
+  -> outputs/03_model_inputs
+  -> outputs/04_tagging
+  -> outputs/05_validation
+  -> outputs/06_gt_comparison
 ```
 
-## Layout
+The numbered data/output folders express execution order. Python package folders remain semantic because importable module names cannot begin with digits.
 
-- `src/ms_odd_tagging/`: reusable pipeline code.
-- `scripts/`: thin CLI entry points.
-- `prompts/`: model prompt templates.
-- `schemas/`: model output schema.
-- `configs/`: example configuration only.
-- `tests/fixtures/`: small test/GT fixtures.
-- `data/`: local data mount point; raw/private data is ignored.
-- `outputs/`: generated outputs; ignored except `outputs/README.md`.
+## Repository layout
 
-## Install
+- `configs/`: machine-specific configuration examples (documentation only).
+- `data/01_raw/`: local OD/LD/trajectory recordings.
+- `data/02_gt/`: ground-truth label files.
+- `outputs/01_canonical/`: synchronized canonical frames.
+- `outputs/02_windows/`: overlapping motional windows and rule candidates.
+- `outputs/03_model_inputs/`: compact `refined.json` and BEV keyframes.
+- `outputs/04_tagging/`: local/server model results.
+- `outputs/05_validation/`: schema and semantic validation results.
+- `outputs/06_gt_comparison/`: GT comparison reports.
+- `src/ms_odd_tagging/input_generator/`: canonical, window, feature, BEV, and compaction code.
+- `src/ms_odd_tagging/tagger/`: rule-based and model-based tagging.
+- `src/ms_odd_tagging/validator/`: input/output validation and retry logic.
+- `src/ms_odd_tagging/gt_comparison/`: GT label generation, matching, metrics, and reports.
+
+The OD-only and OD+LD canonicalizers remain separate until their experimental differences are deliberately reconciled.
+
+## Install and validate
 
 ```bash
-cd /path/to/ms-odd-tagging
 python -m pip install -e ".[dev]"
+python -m pytest
 ```
 
-If you do not install the package, prefix commands with `PYTHONPATH=src`.
+Without installation, set `PYTHONPATH=src` (PowerShell: `$env:PYTHONPATH = "src"`).
 
-## Build Inputs For One Recording
+## Run stages 01-03
 
 ```bash
-cd /path/to/ms-odd-tagging
-
-PYTHONPATH=src python scripts/build_canonical_od_json.py \
-  --source-root /path/to/2600_MV2_OD_traj_annotations \
-  --output-root outputs/canonical_frames \
+python run_pipeline.py --source-root data/01_raw \
   Rec_Drv_GER_MACHET18_20260227_153128
-
-PYTHONPATH=src python scripts/build_motional_windows.py \
-  --canonical-dir outputs/canonical_frames \
-  --output-dir outputs/motional_windows
-
-PYTHONPATH=src python scripts/build_bev_model_inputs.py \
-  --input-dir outputs/motional_windows \
-  --output-dir outputs/model_inputs
 ```
 
-## Start vLLM
+Use `--odld` for a recording containing `annotations_OD.json`, `annotations_LD.json`, and `traj_lcs.txt`. Add `--window-limit 1` for a fast smoke run or `--stop-after canonical|windows` while debugging.
 
-Use the writable Hugging Face cache mount.
+Each stage is also independently executable:
 
 ```bash
-cd /path/to/ms-odd-tagging
-
-HF_HOME=/path/to/huggingface \
-HF_HUB_CACHE=/path/to/huggingface/hub \
-TRANSFORMERS_CACHE=/path/to/huggingface/transformers \
-VLLM_USE_FLASHINFER_SAMPLER=0 \
-/path/to/vllm-env/bin/python \
-  -m vllm.entrypoints.openai.api_server \
-  --host 127.0.0.1 \
-  --port 8001 \
-  --model "Qwen/Qwen3-VL-4B-Instruct" \
-  --dtype half \
-  --max-model-len 16384 \
-  --gpu-memory-utilization 0.85 \
-  --limit-mm-per-prompt '{"image":3}'
+python -m ms_odd_tagging.input_generator.canonical --help
+python -m ms_odd_tagging.input_generator.canonical_odld --help
+python -m ms_odd_tagging.input_generator.windows --help
+python -m ms_odd_tagging.input_generator.model_input --help
+python -m ms_odd_tagging.validator.schema --help
+python -m ms_odd_tagging.tagger.model_based.local_vllm --help
 ```
 
-## Run One Window
+## Important contracts
 
-```bash
-cd /path/to/ms-odd-tagging
+- Canonical schemas are `od-trajectory-canonical-frame-v1` and experimental `odld-trajectory-canonical-frame-v1`.
+- Windows default to about 5 seconds with about 2.5-second stride.
+- Formula/rule outputs stay in `preliminary_candidates`; model-facing `refined.json` excludes them by default to prevent label leakage.
+- Numeric zero is valid data and must not become `null`.
+- OD+LD BEV requires both `ld_feature_store` and frame-level `ld.nearby_feature_ids`.
+- Unsupported semantic labels should remain unknown instead of being inferred from weak evidence.
+- Generated artifacts, model weights, secrets, and machine-local configs are ignored by Git.
 
-PYTHONPATH=src /path/to/vllm-env/bin/python \
-  scripts/run_local_vllm_eval.py \
-  --recording Rec_Drv_GER_MACHET18_20260227_153128 \
-  --window Rec_Drv_GER_MACHET18_20260227_153128_000-049 \
-  --mode json_bev \
-  --endpoint http://127.0.0.1:8001/v1/chat/completions \
-  --model "Qwen/Qwen3-VL-4B-Instruct" \
-  --model-input-root outputs/model_inputs \
-  --output-root outputs/local_vllm_eval \
-  --gt-labels tests/fixtures/gt/Rec_Drv_GER_MACHET18_20260227_153128_gt.json \
-  --max-tokens 1800 \
-  --retry-on-invalid
-```
-
-## Run All Windows For One Recording
-
-```bash
-cd /path/to/ms-odd-tagging
-
-for d in outputs/model_inputs/Rec_Drv_GER_MACHET18_20260227_153128/Rec_Drv_GER_MACHET18_20260227_153128_*; do
-  w="$(basename "$d")"
-  PYTHONPATH=src /path/to/vllm-env/bin/python \
-    scripts/run_local_vllm_eval.py \
-    --recording Rec_Drv_GER_MACHET18_20260227_153128 \
-    --window "$w" \
-    --mode json_bev \
-    --endpoint http://127.0.0.1:8001/v1/chat/completions \
-    --model "Qwen/Qwen3-VL-4B-Instruct" \
-    --model-input-root outputs/model_inputs \
-    --output-root outputs/local_vllm_eval \
-    --gt-labels tests/fixtures/gt/Rec_Drv_GER_MACHET18_20260227_153128_gt.json \
-    --max-tokens 1800 \
-    --retry-on-invalid
-done
-```
-
-## Ignored Data
-
-Ignored by default:
-
-- raw ALT data
-- generated canonical/window/model-input trees
-- BEV images
-- model outputs and reports
-- caches and virtual environments
-- model weights and large binaries
-- real `.env` and machine-specific config files
-
-## Notes
-
-- YAML files under `configs/` are examples only; CLI loading from YAML is not implemented.
-- The vLLM server is intentionally bound to `127.0.0.1`.
-- Keep raw data and generated outputs local to each machine; synchronize code through Git.
+See [docs/audit.md](docs/audit.md) for migration provenance and [data/README.md](data/README.md) for data policy.

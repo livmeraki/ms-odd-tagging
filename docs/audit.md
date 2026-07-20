@@ -14,4 +14,6 @@ Excluded material:
 - `quick_exploration_outputs/experiments/smoothed_ego_kinematics`
 - old Together API probing/evaluation scripts
 
-The source scripts were copied and adjusted only for repository-relative paths, prompt/schema locations, and CLI-configurable roots.
+The source scripts were migrated into the `ms_odd_tagging` package and adjusted for repository-relative paths, prompt/schema locations, and CLI-configurable roots.
+
+The project handoff is historical context rather than an exact inventory. This repository intentionally does not claim that the predecessor's large raw/generated assets are present.

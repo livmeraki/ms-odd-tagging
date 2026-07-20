@@ -12,6 +12,14 @@ dependencies = [
   "Pillow>=10",
 ]
 
+[project.scripts]
+ms-odd-tagging = "ms_odd_tagging.pipeline:main"
+ms-odd-canonical = "ms_odd_tagging.input_generator.canonical:main"
+ms-odd-windows = "ms_odd_tagging.input_generator.windows:main"
+ms-odd-model-inputs = "ms_odd_tagging.input_generator.model_input:main"
+ms-odd-tag = "ms_odd_tagging.tagger.model_based.local_vllm:main"
+ms-odd-validate = "ms_odd_tagging.validator.schema:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
