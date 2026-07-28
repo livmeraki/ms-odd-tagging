@@ -1,0 +1,22 @@
+{
+  "minimum_moving_speed_mps": 0.5,
+  "maximum_lead_distance_m": 80.0,
+  "maximum_lane_heading_difference_deg": 60.0,
+  "outside_lane_tolerance_m": 1.0,
+  "lead_annotation_types": ["dynamic"],
+  "probable_lane_max_bounded_extension_m": 65.0,
+  "probable_lane_max_unbounded_extension_m": 20.0,
+  "probable_lane_max_frame_gap": 80,
+  "probable_lane_lateral_padding_m": 0.75,
+  "lead_switch_margin_m": 8.0,
+  "lead_switch_confirmation_frames": 5,
+  "lead_missing_grace_frames": 5,
+  "maximum_virtual_lane_curvature_deg": 25.0,
+  "maximum_adjacent_lane_heading_difference_deg": 20.0,
+  "virtual_only_score_penalty": 1.5,
+  "mixed_virtual_score_penalty": 0.35,
+  "dashed_drivable_boundary_score_bonus": 0.75,
+  "same_logical_lane_score_bonus": 0.9,
+  "minimum_recovered_boundary_overlap_m": 3.0,
+  "maximum_observed_route_upstream_gap_m": 25.0
+}

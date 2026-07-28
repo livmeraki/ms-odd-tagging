@@ -53,7 +53,7 @@ def _recording(
 ) -> dict:
     count = len(object_frames)
     timestamps = timestamps or [round(index * 0.1, 4) for index in range(count)]
-    ego_points = ego_points or [(float(index), 0.0) for index in range(count)]
+    ego_points = ego_points or [(0.0, 0.0) for _ in range(count)]
     frames = []
     for index, objects in enumerate(object_frames):
         if index + 1 < count:
@@ -65,6 +65,13 @@ def _recording(
         else:
             dx, dy = 1.0, 0.0
         heading = math.atan2(dy, dx)
+        if index + 1 < count:
+            dt = timestamps[index + 1] - timestamps[index]
+        elif index:
+            dt = timestamps[index] - timestamps[index - 1]
+        else:
+            dt = 0.1
+        ego_speed = math.hypot(dx, dy) / dt if dt > 0 else 0.0
         frames.append(
             {
                 "frame_index": 5 + index * 2,
@@ -72,9 +79,13 @@ def _recording(
                 "ego": {
                     "position_lcs_m": [*ego_points[index], 0.0],
                     "heading_lcs_rad": heading,
-                    "speed_mps": 10.0,
+                    "speed_mps": ego_speed,
                     "acceleration_mps2": 0.0,
-                    "velocity_lcs_mps": [10.0, 0.0, 0.0],
+                    "velocity_lcs_mps": [
+                        ego_speed * math.cos(heading),
+                        ego_speed * math.sin(heading),
+                        0.0,
+                    ],
                     "yaw_rate_radps": 0.0,
                 },
                 "objects": objects,
@@ -89,7 +100,10 @@ def _clean_frames(
     *,
     reverse: bool = False,
 ) -> list[list[dict]]:
-    offsets = [5, 5, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -4, -4]
+    offsets = [
+        12, 12, 12, 10, 8, 6, 4, 2, 0,
+        -2, -4, -6, -8, -10, -12, -12, -12,
+    ]
     if reverse:
         offsets = [-value for value in offsets]
     heading = math.pi / 2 if reverse else -math.pi / 2
@@ -98,7 +112,7 @@ def _clean_frames(
             _object(
                 object_id,
                 class_name,
-                6.0,
+                15.0,
                 value,
                 heading_relative_rad=heading,
             )
@@ -195,7 +209,7 @@ def test_crossing_behind_current_ego_is_rejected():
     assert not _scenario(events, "crossed_by_vehicle")
 
 
-def test_spatial_intersection_at_very_different_time_is_rejected():
+def test_object_that_never_traverses_forward_arc_is_rejected():
     offsets = [5, 5, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -4, -4]
     offsets.extend([-4] * 26)
     frames = [
@@ -217,9 +231,10 @@ def test_spatial_intersection_at_very_different_time_is_rejected():
         recording["frames"], config, payload
     )
     assert not _scenario(events, "crossed_by_vehicle")
-    assert any(
-        item["reason"] == "time_to_intersection_incompatible"
-        for item in diagnostics
+    assert not any(
+        item.get("projected_intersection_valid")
+        for frame in payload["frames"]
+        for item in frame["objects"]
     )
 
 
@@ -254,10 +269,10 @@ def test_object_approaching_but_stopping_before_path():
 
 
 def test_object_enters_corridor_then_returns():
-    offsets = [5, 5, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5]
+    offsets = [12, 12, 12, 10, 8, 6, 4, 2, 0, 2, 4, 6, 8, 10, 12]
     recording = _recording(
         [
-            [_object("o1", "car", 6, y, heading_relative_rad=-math.pi / 2)]
+                [_object("o1", "car", 15, y, heading_relative_rad=-math.pi / 2)]
             for y in offsets
         ]
     )
@@ -277,46 +292,65 @@ def test_static_object_inside_corridor_while_ego_passes():
 
 
 def test_object_first_appearing_inside_corridor():
-    offsets = [0, 0, -1, -2, -3, -4, -4, -4]
-    recording = _recording([[_object("o1", "car", 6, y)] for y in offsets])
+    offsets = [0, 0, -2, -4, -6, -8, -10, -12]
+    recording = _recording([[_object("o1", "car", 15, y)] for y in offsets])
     config = load_config()
     payload = _payload(recording, config)
     events, diagnostics = detect_object_path_crossings(
         recording["frames"], config, payload
     )
     assert not events
-    assert any(item["reason"] == "first_appears_inside_corridor" for item in diagnostics)
+    assert any(item["reason"] == "first_appears_inside_arc" for item in diagnostics)
 
 
 def test_one_frame_path_overlap():
-    offsets = [5, 5, 5, 0, 5, 5, 5]
+    offsets = [12, 12, 12, 0, 12, 12, 12]
     events, _ = _events(
-        _recording([[_object("o1", "car", 6, y)] for y in offsets])
+        _recording([[_object("o1", "car", 15, y)] for y in offsets])
     )
     assert not _scenario(events, "crossed_by_vehicle")
 
 
 def test_curved_ego_path_crossing():
-    count = 14
+    count = 17
     ego_points = [
-        (10 * math.cos(0.04 * index), 10 * math.sin(0.04 * index))
+        (30 * math.cos(0.02 * index), 30 * math.sin(0.02 * index))
         for index in range(count)
     ]
-    anchor = ego_points[7]
-    tangent_angle = 0.04 * 7 + math.pi / 2
+    tangent_angle = 0.02 * 8 + math.pi / 2
+    crossing_point = (
+        ego_points[8][0] + 15.0 * math.cos(tangent_angle),
+        ego_points[8][1] + 15.0 * math.sin(tangent_angle),
+    )
     normal = (-math.sin(tangent_angle), math.cos(tangent_angle))
-    offsets = [5, 5, 5, 4, 3, 2, 1, 0, -1, -2, -3, -4, -4, -4]
+    offsets = [
+        12, 12, 12, 10, 8, 6, 4, 2, 0,
+        -2, -4, -6, -8, -10, -12, -12, -12,
+    ]
     frames = [
         [
             _object(
                 "o1",
                 "car",
-                anchor[0] + normal[0] * offset,
-                anchor[1] + normal[1] * offset,
-                heading_relative_rad=-math.pi / 2,
+                crossing_point[0] + normal[0] * offset,
+                crossing_point[1] + normal[1] * offset,
+                heading_relative_rad=(
+                    tangent_angle
+                    - math.pi / 2
+                    - math.atan2(
+                        (
+                            ego_points[min(index + 1, count - 1)][1]
+                            - ego_points[max(index - (index == count - 1), 0)][1]
+                        ),
+                        (
+                            ego_points[min(index + 1, count - 1)][0]
+                            - ego_points[max(index - (index == count - 1), 0)][0]
+                        ),
+                    )
+                ),
             )
         ]
-        for offset in offsets
+        for index, offset in enumerate(offsets)
     ]
     events, _ = _events(_recording(frames, ego_points=ego_points))
     assert _scenario(events, "crossed_by_vehicle")
@@ -381,7 +415,7 @@ def test_insufficient_lateral_displacement():
     config = copy.deepcopy(load_config())
     config["object_path_crossing_interactions"][
         "minimum_lateral_displacement_m"
-    ] = 12.0
+    ] = 30.0
     events, _ = _events(_recording(_clean_frames("car")), config)
     assert not _scenario(events, "crossed_by_vehicle")
 
@@ -424,6 +458,8 @@ def test_motorcycle_is_excluded_from_crossed_by_vehicle():
 def test_multiple_simultaneous_crossings_stay_separate():
     first = _clean_frames("car", "a")
     second = _clean_frames("car", "b", reverse=True)
+    for frame in second:
+        frame[0]["position_lcs_m"][0] += 1.0
     frames = [left + right for left, right in zip(first, second)]
     events, _ = _events(_recording(frames))
     vehicle_events = _scenario(events, "crossed_by_vehicle")
@@ -453,7 +489,19 @@ def test_duplicate_window_event_merging_and_distinct_object_preservation():
                 left + right
                 for left, right in zip(
                     _clean_frames("car", "a"),
-                    _clean_frames("car", "b", reverse=True),
+                    [
+                        [
+                            {
+                                **frame[0],
+                                "position_lcs_m": [
+                                    frame[0]["position_lcs_m"][0] + 1.0,
+                                    frame[0]["position_lcs_m"][1],
+                                    0.0,
+                                ],
+                            }
+                        ]
+                        for frame in _clean_frames("car", "b", reverse=True)
+                    ],
                 )
             ]
         )
@@ -467,8 +515,8 @@ def test_duplicate_window_event_merging_and_distinct_object_preservation():
 
 def test_irregular_timestamps():
     timestamps = [
-        0.0, 0.09, 0.21, 0.31, 0.42, 0.5, 0.62,
-        0.71, 0.83, 0.92, 1.04, 1.13, 1.25, 1.34,
+        0.0, 0.09, 0.21, 0.31, 0.42, 0.5, 0.62, 0.71, 0.83,
+        0.92, 1.04, 1.13, 1.25, 1.34, 1.46, 1.55, 1.67,
     ]
     events, _ = _events(
         _recording(_clean_frames("car"), timestamps=timestamps)
@@ -476,17 +524,17 @@ def test_irregular_timestamps():
     assert _scenario(events, "crossed_by_vehicle")
 
 
-def test_invalid_trajectory():
+def test_stationary_ego_uses_fixed_yaw_arc():
     frames = _clean_frames("car")
     recording = _recording(frames, ego_points=[(0.0, 0.0)] * len(frames))
     events, payload = _events(recording)
-    assert not _scenario(events, "crossed_by_vehicle")
-    assert (
-        payload["invalid_relation_counts"][
-            "invalid_or_short_forward_ego_path"
-        ]
-        > 0
-    )
+    assert _scenario(events, "crossed_by_vehicle")
+    modes = {
+        item["ego_motion_mode"]
+        for frame in payload["frames"]
+        for item in frame["objects"]
+    }
+    assert modes == {"stationary"}
 
 
 def test_empty_input():

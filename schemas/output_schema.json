@@ -4,7 +4,7 @@
   "required": [
     "schema_version",
     "recording_id",
-    "window_id",
+    "frame_id",
     "model_mode",
     "labels",
     "overall_quality",
@@ -13,12 +13,12 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "motional-scenario-model-output-v1"
+      "const": "motional-scenario-frame-output-v1"
     },
     "recording_id": {
       "type": "string"
     },
-    "window_id": {
+    "frame_id": {
       "type": "string"
     },
     "model_mode": {
