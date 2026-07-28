@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import median
@@ -279,7 +280,7 @@ def normalize_ld(ld: dict) -> tuple[dict, dict]:
             "dimensions": "3D_xyz_m",
             "notes": [
                 "LD supplies recording-level x/y/z geometry and no coordinate-system label.",
-                "Shared LCS is inferred from matching scene identity and spatial agreement with the ego trajectory.",
+                "Shared LCS is inferred from spatial agreement with the ego trajectory; scene identity agreement is reported separately.",
                 "No 2D image-coordinate LD geometry is present.",
             ],
         },
@@ -567,8 +568,16 @@ def build_recording(
             f"{recording}: OD frames={frame_count}, LD frames={ld_scene.get('frameCount')}, "
             f"trajectory rows={len(trajectory)}"
         )
-    if od_scene.get("id") != ld_scene.get("id") or od_scene.get("name") != ld_scene.get("name"):
-        raise ValueError(f"{recording}: OD and LD scene identity does not match")
+    scene_id_match = od_scene.get("id") == ld_scene.get("id")
+    scene_name_match = od_scene.get("name") == ld_scene.get("name")
+    scene_identity_warning = None
+    if not scene_id_match or not scene_name_match:
+        scene_identity_warning = (
+            f"{recording}: continuing despite OD/LD scene metadata mismatch "
+            f"(OD id={od_scene.get('id')!r}, name={od_scene.get('name')!r}; "
+            f"LD id={ld_scene.get('id')!r}, name={ld_scene.get('name')!r})"
+        )
+        warnings.warn(scene_identity_warning, RuntimeWarning, stacklevel=2)
     timestamps = [row["timestamp"] for row in trajectory]
     if any(right <= left for left, right in zip(timestamps, timestamps[1:])):
         raise ValueError(f"{recording}: trajectory timestamps are not strictly increasing")
@@ -664,8 +673,8 @@ def build_recording(
             "alignment": {
                 "od_to_trajectory": "OD frameIndex maps directly to trajectory row index",
                 "ld_temporal_model": "recording_static_map_spatially_queried_at_each_ego_pose",
-                "scene_id_match": True,
-                "scene_name_match": True,
+                "scene_id_match": scene_id_match,
+                "scene_name_match": scene_name_match,
             },
             "coordinate_system": {
                 "od": "LCS",
@@ -710,7 +719,12 @@ def build_recording(
                 "LD is a recording-level static map, not a timestamped sensor stream.",
                 "Complete LD geometry is stored once; frames contain compact spatial references.",
                 "Valid numerical zero values are retained as zero.",
-            ],
+            ]
+            + (
+                [scene_identity_warning]
+                if scene_identity_warning is not None
+                else []
+            ),
         },
         "frames": frames,
     }

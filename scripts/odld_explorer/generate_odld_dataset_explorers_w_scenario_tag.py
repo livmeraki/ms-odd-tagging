@@ -183,8 +183,8 @@ def compact_tag_evidence(value: object) -> object:
             "crossing_direction",
             "initial_side",
             "final_side",
-            "corridor_entry_frame",
-            "corridor_exit_frame",
+            "arc_entry_frame",
+            "arc_exit_frame",
             "source_side_confirmation_frame",
             "approach_start_frame",
             "target_side_confirmation_frame",
@@ -193,7 +193,7 @@ def compact_tag_evidence(value: object) -> object:
             "ground_displacement_m",
             "representative_speed_mps",
             "representative_path_normal_speed_mps",
-            "corridor_dwell_duration_s",
+            "arc_dwell_duration_s",
             "directional_motion_fraction",
             "projected_intersection_confirmations",
             "projected_intersection_lcs_m",
@@ -204,7 +204,7 @@ def compact_tag_evidence(value: object) -> object:
             "ego_time_to_intersection_s",
             "object_time_to_intersection_s",
             "time_to_intersection_difference_s",
-            "corridor_half_width_m",
+            "forward_arc",
         )
         return {key: value[key] for key in preferred if key in value}
     if isinstance(value, list):
@@ -457,7 +457,9 @@ def build_object_path_crossing_payload(canonical: dict) -> dict:
                 "signedLateralM": item.get("signed_lateral_distance_m"),
                 "pathDistanceM": item.get("nearest_path_distance_m"),
                 "pathProgressM": item.get("longitudinal_progress_m"),
-                "inside": item.get("inside_path_corridor") is True,
+                "inside": item.get("inside_forward_arc") is True,
+                "arcBearingDeg": item.get("arc_bearing_deg"),
+                "arcRangeM": item.get("arc_range_m"),
                 "side": item.get("side"),
                 "state": item.get("state"),
                 "valid": item.get("relation_valid") is True,
@@ -512,7 +514,7 @@ def build_object_path_crossing_payload(canonical: dict) -> dict:
         "schemaVersion": payload.get("schema_version"),
         "configVersion": config["config_version"],
         "sideSignConvention": payload.get("side_sign_convention"),
-        "corridor": payload.get("corridor"),
+        "arc": payload.get("arc"),
         "egoPath": [
             {
                 "frameIndex": item["frame_index"],
@@ -971,7 +973,7 @@ TAG_CONTROLS_HTML = """
       <label><input id="showRoadFeatureRelations" type="checkbox" checked /> Crosswalk / stopline relation overlay</label>
       <label><input id="showObjectRelations" type="checkbox" checked /> Nearby object relation overlay</label>
       <label><input id="showDynamicObjectVelocities" type="checkbox" checked /> Dynamic-object velocities and vectors</label>
-      <label><input id="showPathCrossingRelations" type="checkbox" checked /> Ego path-crossing corridor and states</label>
+      <label><input id="showPathCrossingRelations" type="checkbox" checked /> Ego forward arc and crossing states</label>
       <label><input id="showConfirmedCrossingsOnly" type="checkbox" checked /> Confirmed crossing objects only</label>
       <label>Crossing object
         <select id="pathCrossingObjectFilter">
@@ -1440,7 +1442,7 @@ function crossingRelationObjects() {
   return frame.objects.filter(item =>
     item.valid && (
       item.inside ||
-      ['APPROACHING_PATH', 'LEAVING_PATH'].includes(item.state)
+      ['APPROACHING_ARC', 'LEAVING_ARC'].includes(item.state)
     )
   );
 }
@@ -1454,22 +1456,24 @@ function localCrossingPath() {
   );
 }
 
-function crossingCorridorPolygon(path, halfWidth) {
-  if (path.length < 2) return {x: [], y: []};
-  const left = [], right = [];
-  for (let i = 0; i < path.length; i++) {
-    const prior = path[Math.max(0, i - 1)];
-    const next = path[Math.min(path.length - 1, i + 1)];
-    const dx = next.x - prior.x, dy = next.y - prior.y;
-    const length = Math.hypot(dx, dy);
-    if (!length) continue;
-    const nx = -dy / length, ny = dx / length;
-    left.push([path[i].x + nx * halfWidth, path[i].y + ny * halfWidth]);
-    right.push([path[i].x - nx * halfWidth, path[i].y - ny * halfWidth]);
+function crossingArcPolygon() {
+  const arc = pathCrossingRelations.arc;
+  if (!arc) return {x: [], y: []};
+  const centerX = traj.x[currentIndex], centerY = traj.y[currentIndex];
+  const heading = Number(traj.yaw_deg[currentIndex] || 0) * Math.PI / 180;
+  const halfAngle = Number(arc.half_angle_deg) * Math.PI / 180;
+  const inner = Number(arc.inner_radius_m), outer = Number(arc.outer_radius_m);
+  const points = [], samples = 32;
+  for (let i = 0; i <= samples; i++) {
+    const angle = heading + halfAngle - (2 * halfAngle * i / samples);
+    points.push([centerX + outer * Math.cos(angle), centerY + outer * Math.sin(angle)]);
   }
-  const polygon = [...left, ...right.reverse()];
-  if (polygon.length) polygon.push(polygon[0]);
-  return {x: polygon.map(point => point[0]), y: polygon.map(point => point[1])};
+  for (let i = samples; i >= 0; i--) {
+    const angle = heading + halfAngle - (2 * halfAngle * i / samples);
+    points.push([centerX + inner * Math.cos(angle), centerY + inner * Math.sin(angle)]);
+  }
+  points.push(points[0]);
+  return {x: points.map(point => point[0]), y: points.map(point => point[1])};
 }
 
 function crossingTrajectoryPoints(item) {
@@ -1501,30 +1505,28 @@ function crossingTrajectoryPoints(item) {
   return {x, y};
 }
 
-function pathCrossingRelationTraces() {
+function pathCrossingArcTraces() {
   if (!document.getElementById('showPathCrossingRelations').checked) return [];
-  const path = localCrossingPath();
-  if (path.length < 2) return [];
-  const halfWidth = Number(pathCrossingRelations.corridor.inside_limit_m);
-  const polygon = crossingCorridorPolygon(path, halfWidth);
+  const arc = pathCrossingRelations.arc;
+  if (!arc) return [];
+  const polygon = crossingArcPolygon();
   const traces = [{
-    type: 'scattergl', mode: 'lines', name: 'ego path crossing corridor',
+    type: 'scattergl', mode: 'lines', name: 'ego forward crossing arc',
     x: polygon.x, y: polygon.y, fill: 'toself',
     fillcolor: 'rgba(124,58,237,0.10)',
     line: {color: '#7c3aed', width: 1, dash: 'dot'},
-    hovertemplate: `ego path corridor · half width ${halfWidth.toFixed(2)} m<extra></extra>`
-  }, {
-    type: 'scattergl', mode: 'lines', name: 'time-local ego path',
-    x: path.map(point => point.x), y: path.map(point => point.y),
-    line: {color: '#4c1d95', width: 3},
-    hovertemplate: 'ordered ego path<br>x=%{x:.2f}; y=%{y:.2f}<extra></extra>'
+    hovertemplate:
+      `forward arc ${Number(arc.inner_radius_m).toFixed(1)}–` +
+      `${Number(arc.outer_radius_m).toFixed(1)} m; ±` +
+      `${Number(arc.half_angle_deg).toFixed(0)}°<extra></extra>`
   }];
   const relevant = crossingRelationObjects();
   const confirmedIds = visibleCrossingTrackIds();
   for (const item of relevant) {
     const trajectory = crossingTrajectoryPoints(item);
     if (trajectory.x.length) traces.push({
-      type: 'scattergl', mode: 'lines', name: `${item.className} crossing trajectory`,
+      type: 'scattergl', mode: 'lines',
+      name: `${item.className} crossing trajectory`,
       x: trajectory.x, y: trajectory.y,
       line: {
         color: OBJECT_CATEGORY_COLORS[item.category] || '#475569',
@@ -1532,24 +1534,32 @@ function pathCrossingRelationTraces() {
       },
       hovertemplate: `${item.className} trajectory<extra></extra>`
     });
+    const relationX = [item.x], relationY = [item.y];
+    if (item.intersectionX != null && item.intersectionY != null) {
+      relationX.push(item.intersectionX);
+      relationY.push(item.intersectionY);
+    }
     traces.push({
-      type: 'scattergl', mode: 'lines+markers', name: `${item.className} path relation`,
-      x: [item.x, item.nearestX], y: [item.y, item.nearestY],
-      line: {color: OBJECT_CATEGORY_COLORS[item.category] || '#475569', width: 2},
+      type: 'scattergl', mode: 'lines+markers',
+      name: `${item.className} arc relation`,
+      x: relationX, y: relationY,
+      line: {
+        color: OBJECT_CATEGORY_COLORS[item.category] || '#475569',
+        width: 2
+      },
       marker: {size: [13, 6], symbol: ['diamond', 'circle-open']},
-      customdata: [[
-        item.className, item.state, item.side, item.signedLateralM,
-        item.pathNormalSpeedMps, item.speedMps
-      ], [
-        item.className, item.state, item.side, item.signedLateralM,
-        item.pathNormalSpeedMps, item.speedMps
-      ]],
+      customdata: relationX.map(() => [
+        item.className, item.state, item.side, item.arcBearingDeg,
+        item.arcRangeM, item.pathNormalSpeedMps, item.speedMps,
+        item.projectionRejectionReason || 'synchronized intersection'
+      ]),
       hovertemplate:
         '%{customdata[0]}' +
         '<br>crossing state=%{customdata[1]}; side=%{customdata[2]}' +
-        '<br>signed path distance=%{customdata[3]:.2f} m' +
-        '<br>path-normal speed=%{customdata[4]:.2f} m/s' +
-        '<br>object speed=%{customdata[5]:.2f} m/s<extra></extra>'
+        '<br>arc bearing=%{customdata[3]:.1f}°; range=%{customdata[4]:.2f} m' +
+        '<br>ego-lateral speed=%{customdata[5]:.2f} m/s' +
+        '<br>object speed=%{customdata[6]:.2f} m/s' +
+        '<br>projection=%{customdata[7]}<extra></extra>'
     });
   }
   return traces;
@@ -1572,13 +1582,14 @@ function updatePathCrossingContext() {
         ? 'The selected crossing object is not observed at this frame.'
         : confirmedOnly
           ? 'No confirmed crossing is active. Select a crossing object to jump to its entry frame.'
-          : 'No object is approaching, inside, or leaving the corridor.');
+          : 'No object is approaching, inside, or leaving the forward arc.');
     return;
   }
   const lines = relevant.map(item =>
     `${item.className}: ${item.state.replaceAll('_', ' ').toLowerCase()} · ` +
-    `${item.side.toLowerCase()} · signed ${Number(item.signedLateralM).toFixed(2)} m · ` +
-    `normal speed ${item.pathNormalSpeedMps == null ? 'n/a' : Number(item.pathNormalSpeedMps).toFixed(2) + ' m/s'}`
+    `${item.side.toLowerCase()} · bearing ${Number(item.arcBearingDeg).toFixed(1)}° · ` +
+    `range ${Number(item.arcRangeM).toFixed(1)} m · lateral speed ` +
+    `${item.pathNormalSpeedMps == null ? 'n/a' : Number(item.pathNormalSpeedMps).toFixed(2) + ' m/s'}`
   );
   const mode = selected
     ? 'isolated confirmed crossing'
@@ -1982,7 +1993,7 @@ def scene_html(data: dict) -> str:
         "  traces.unshift(...roadFeatureRelationTraces());\n"
         "  traces.unshift(...objectRelationTraces());\n"
         "  traces.unshift(...dynamicObjectVelocityTraces());\n"
-        "  traces.unshift(...pathCrossingRelationTraces());\n"
+        "  traces.unshift(...pathCrossingArcTraces());\n"
         "  updateLdContext();\n"
         "  updateTagContext();\n"
         "  updateRoadFeatureContext();\n"
@@ -2013,7 +2024,7 @@ def scene_html(data: dict) -> str:
         "for (const id of ['showFootprints','showObjects','showEgoMarkers','showObjectHeadings','persistStatic','showLaneLines','showIntersectionLines','showBoundaries','showRoadmarks','showTopology','topologyFilter','showLaneAnchors','showNearbyLd','showTags','showRoadFeatureRelations','showObjectRelations','showDynamicObjectVelocities','showPathCrossingRelations','showConfirmedCrossingsOnly']) document.getElementById(id).addEventListener('change', render);\n"
         "document.getElementById('pathCrossingObjectFilter').addEventListener('change', () => {\n"
         "  const event = selectedCrossingEvent();\n"
-        "  if (event) setFrame(event.evidence.corridor_entry_frame ?? event.startFrame);\n"
+        "  if (event) setFrame(event.evidence.arc_entry_frame ?? event.startFrame);\n"
         "  else render();\n"
         "});\n"
         "document.getElementById('tagScenarioFilter').addEventListener('change', renderTagTimeline);",

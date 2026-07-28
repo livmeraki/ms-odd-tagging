@@ -103,7 +103,7 @@ def test_stale_window_events_are_replaced_by_current_detection(
         explorer, "detect_recording_events", lambda canonical, config: ([current], {})
     )
     payload = explorer.build_tag_payload("sample", tmp_path, _canonical())
-    assert payload["configVersion"] == "phase3c-forward-path-crossing-v2"
+    assert payload["configVersion"] == "phase3c-forward-arc-crossing-v3"
     assert payload["sourceKind"] == (
         "canonical_per_frame_rule_events_stale_window_replaced"
     )
@@ -113,7 +113,7 @@ def test_stale_window_events_are_replaced_by_current_detection(
 def test_relation_payload_contains_geometry_states_and_footprint() -> None:
     payload = explorer.build_road_feature_payload(_canonical())
     assert payload["schemaVersion"] == "road-feature-relations-v1"
-    assert payload["configVersion"] == "phase3c-forward-path-crossing-v2"
+    assert payload["configVersion"] == "phase3c-forward-arc-crossing-v3"
     assert payload["egoFootprint"] == {"length_m": 4.8, "width_m": 2.0}
     assert payload["tracks"][0]["trackId"] == "crosswalk:cw1"
     assert payload["tracks"][0]["x"]
@@ -158,7 +158,7 @@ def test_phase3a_object_payload_and_overlay_hooks() -> None:
     ]
     payload = explorer.build_object_relation_payload(canonical)
     assert payload["schemaVersion"] == "ego-object-relations-v1"
-    assert payload["configVersion"] == "phase3c-forward-path-crossing-v2"
+    assert payload["configVersion"] == "phase3c-forward-arc-crossing-v3"
     assert payload["frames"][0]["objects"][0]["category"] == "pedestrian"
     assert payload["frames"][0]["objects"][0]["annotationType"] == "dynamic"
     assert payload["frames"][0]["objects"][0]["speedMps"] == 5.0
@@ -218,23 +218,24 @@ def test_phase3c_path_crossing_payload_controls_and_colors() -> None:
         ]
     payload = explorer.build_object_path_crossing_payload(canonical)
     assert payload["schemaVersion"] == (
-        "object-ego-forward-path-crossing-relations-v2"
+        "object-ego-forward-arc-crossing-relations-v3"
     )
-    assert payload["configVersion"] == "phase3c-forward-path-crossing-v2"
-    assert payload["corridor"]["inside_limit_m"] > 0
+    assert payload["configVersion"] == "phase3c-forward-arc-crossing-v3"
+    assert payload["arc"]["outer_radius_m"] == 30.0
+    assert payload["arc"]["half_angle_deg"] == 30.0
     assert payload["egoPath"]
     assert payload["frames"][0]["objects"][0]["category"] == "bicycle"
     assert 'id="showPathCrossingRelations"' in explorer.TAG_CONTROLS_HTML
     assert 'id="showConfirmedCrossingsOnly"' in explorer.TAG_CONTROLS_HTML
     assert 'id="pathCrossingObjectFilter"' in explorer.TAG_CONTROLS_HTML
     assert 'id="pathCrossingContext"' in explorer.TAG_CONTROLS_HTML
-    assert "pathCrossingRelationTraces()" in explorer.TAG_SCRIPT_FUNCTIONS
-    assert "crossingCorridorPolygon" in explorer.TAG_SCRIPT_FUNCTIONS
+    assert "pathCrossingArcTraces()" in explorer.TAG_SCRIPT_FUNCTIONS
+    assert "crossingArcPolygon" in explorer.TAG_SCRIPT_FUNCTIONS
     assert "currentPathCrossingFrame()" in explorer.TAG_SCRIPT_FUNCTIONS
     assert "visibleConfirmedCrossingEvents()" in explorer.TAG_SCRIPT_FUNCTIONS
     assert "crossingRelationObjects()" in explorer.TAG_SCRIPT_FUNCTIONS
     assert "crossingTrajectoryPoints(item)" in explorer.TAG_SCRIPT_FUNCTIONS
-    assert "setFrame(event.evidence.corridor_entry_frame" in inspect.getsource(
+    assert "setFrame(event.evidence.arc_entry_frame" in inspect.getsource(
         explorer.scene_html
     )
     for label in (

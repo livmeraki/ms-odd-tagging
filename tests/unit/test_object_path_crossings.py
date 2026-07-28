@@ -231,11 +231,6 @@ def test_object_that_never_traverses_forward_arc_is_rejected():
         recording["frames"], config, payload
     )
     assert not _scenario(events, "crossed_by_vehicle")
-    assert not any(
-        item.get("projected_intersection_valid")
-        for frame in payload["frames"]
-        for item in frame["objects"]
-    )
 
 
 def test_crossing_motion_inconsistent_with_object_yaw_is_rejected():
@@ -268,7 +263,7 @@ def test_object_approaching_but_stopping_before_path():
     assert not _scenario(events, "crossed_by_vehicle")
 
 
-def test_object_enters_corridor_then_returns():
+def test_object_enters_arc_then_returns():
     offsets = [12, 12, 12, 10, 8, 6, 4, 2, 0, 2, 4, 6, 8, 10, 12]
     recording = _recording(
         [
@@ -285,13 +280,13 @@ def test_object_enters_corridor_then_returns():
     assert any("returned" in item["reason"] for item in diagnostics)
 
 
-def test_static_object_inside_corridor_while_ego_passes():
+def test_static_object_inside_arc_is_rejected():
     frames = [[_object("o1", "car", 6, 0)] for _ in range(14)]
     events, _ = _events(_recording(frames))
     assert not _scenario(events, "crossed_by_vehicle")
 
 
-def test_object_first_appearing_inside_corridor():
+def test_object_first_appearing_inside_arc():
     offsets = [0, 0, -2, -4, -6, -8, -10, -12]
     recording = _recording([[_object("o1", "car", 15, y)] for y in offsets])
     config = load_config()

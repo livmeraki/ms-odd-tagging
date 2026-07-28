@@ -359,7 +359,6 @@ def build_object_path_crossing_relations(
                     if coordinates is not None
                     else None
                 ),
-                "inside_path_corridor": inside,
                 "inside_forward_arc": inside,
                 "side": side,
                 "state": state,
@@ -475,14 +474,6 @@ def build_object_path_crossing_relations(
             "half_angle_deg": float(settings["arc_half_angle_deg"]),
             "stationary_supported": True,
             "future_pose_synchronized": True,
-        },
-        # Keep this alias temporarily so existing explorer consumers fail
-        # gracefully while transitioning from the legacy corridor payload.
-        "corridor": {
-            "geometry": "forward_arc",
-            "inner_radius_m": float(settings["arc_inner_radius_m"]),
-            "outer_radius_m": float(settings["arc_outer_radius_m"]),
-            "half_angle_deg": float(settings["arc_half_angle_deg"]),
         },
         "ego_path": [
             {

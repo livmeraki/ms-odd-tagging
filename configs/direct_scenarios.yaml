@@ -134,7 +134,7 @@
     "side_stability_duration_s": 0.2,
     "target_side_stability_duration_s": 0.2,
     "minimum_crossing_duration_s": 0.3,
-    "minimum_corridor_dwell_duration_s": 0.2,
+    "minimum_arc_dwell_duration_s": 0.2,
     "maximum_crossing_duration_s": 10.0,
     "minimum_lateral_displacement_m": 3.0,
     "minimum_path_normal_speed_mps": 0.5,

@@ -300,7 +300,7 @@ def detect_object_path_crossings(
                 crossing_duration = _duration(
                     observations, approach_index, target_end
                 )
-                corridor_dwell_duration = _duration(
+                arc_dwell_duration = _duration(
                     observations, entry_index, exit_index
                 )
                 initial_signed = float(
@@ -375,11 +375,11 @@ def detect_object_path_crossings(
                 ):
                     reason = "crossing_too_short"
                 elif (
-                    corridor_dwell_duration
-                    < float(settings["minimum_corridor_dwell_duration_s"])
+                    arc_dwell_duration
+                    < float(settings["minimum_arc_dwell_duration_s"])
                     - 1e-9
                 ):
-                    reason = "corridor_dwell_too_short"
+                    reason = "arc_dwell_too_short"
                 elif (
                     crossing_duration
                     > float(settings["maximum_crossing_duration_s"]) + 1e-9
@@ -434,8 +434,8 @@ def detect_object_path_crossings(
                             "exit_frame": observations[exit_index]["frame_index"],
                             "lateral_displacement_m": round(lateral_displacement, 4),
                             "ground_displacement_m": round(ground_displacement, 4),
-                            "corridor_dwell_duration_s": round(
-                                corridor_dwell_duration, 4
+                            "arc_dwell_duration_s": round(
+                                arc_dwell_duration, 4
                             ),
                             "directional_motion_fraction": round(
                                 directional_fraction, 4
@@ -512,8 +512,8 @@ def detect_object_path_crossings(
                             "crossing_direction": direction,
                             "initial_side": source_side,
                             "final_side": target_side,
-                            "corridor_entry_frame": entry_frame,
-                            "corridor_exit_frame": observations[exit_index][
+                            "arc_entry_frame": entry_frame,
+                            "arc_exit_frame": observations[exit_index][
                                 "frame_index"
                             ],
                             "source_side_confirmation_frame": observations[
@@ -540,8 +540,8 @@ def detect_object_path_crossings(
                             "representative_path_normal_speed_mps": round(
                                 representative_normal_speed, 4
                             ),
-                            "corridor_dwell_duration_s": round(
-                                corridor_dwell_duration, 4
+                            "arc_dwell_duration_s": round(
+                                arc_dwell_duration, 4
                             ),
                             "directional_motion_fraction": round(
                                 directional_fraction, 4
