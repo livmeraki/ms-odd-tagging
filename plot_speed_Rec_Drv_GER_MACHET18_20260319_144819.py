@@ -8,6 +8,8 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
+from ms_odd_tagging.common.config import DATA_RAW
+
 
 def read_trajectory(path: Path) -> list[tuple[float, float, float, float]]:
     rows: list[tuple[float, float, float, float]] = []
@@ -119,11 +121,11 @@ def plot_speed(
 
 
 def main() -> None:
-    trajectory_path = Path("data/01_raw/Rec_Drv_GER_MACHET18_20260319_152119/traj_lcs.txt")
+    trajectory_path = DATA_RAW / "Rec_Drv_GER_MACHET18_20260319_152119" / "traj_lcs.txt"
     if not trajectory_path.exists():
         raise FileNotFoundError(
             f"Trajectory file not found: {trajectory_path}\n"
-            "Please update the path or add the recording to data/01_raw."
+            "Please update MS_ODD_DATA_ROOT or add the recording under its 01_raw folder."
         )
 
     rows = read_trajectory(trajectory_path)

@@ -16,9 +16,10 @@ from ms_odd_tagging.tagger.rule_based.registry import (
     detect_recording_events,
     load_config,
 )
+from ms_odd_tagging.common.config import SCENARIO_EXPLORERS
 
 
-DEFAULT_OUTPUT_DIR = Path("outputs/07_scenario_explorers")
+DEFAULT_OUTPUT_DIR = SCENARIO_EXPLORERS
 TEMPLATE_PATH = Path(__file__).with_name("templates") / "scenario_explorer.html"
 
 

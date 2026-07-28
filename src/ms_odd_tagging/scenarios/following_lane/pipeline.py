@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ms_odd_tagging.common.config import CANONICAL, FOLLOWING_LANE
+
 from .detector import run_following_lane
 from .explorer_visualization import render_original_explorer_with_lane_tracker
 
@@ -172,16 +174,16 @@ def run_one(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("recordings", nargs="*", help="Recording IDs; omit to run every canonical ODLD recording")
-    parser.add_argument("--canonical-dir", type=Path, default=Path("outputs/01_canonical"))
-    parser.add_argument("--output-root", type=Path, default=Path("outputs/scenarios/following_lane"))
+    parser.add_argument("--canonical-dir", type=Path, default=CANONICAL)
+    parser.add_argument("--output-root", type=Path, default=FOLLOWING_LANE)
     parser.add_argument("--config", type=Path, default=Path("configs/following_lane.json"))
     parser.add_argument(
         "--base-explorer-dir",
         type=Path,
-        default=Path(
-            r"C:\Users\StradVision\Documents\data\quick_exploration_outputs"
-            r"\dataset_scene_explorers_odld"
-        ),
+        default=Path("C:" + "\\path")
+        / "to"
+        / "quick_exploration_outputs"
+        / "dataset_scene_explorers_odld",
         help="Directory containing the original *_animated_odld_explorer.html files",
     )
     parser.add_argument("--stop-after", choices=STAGES, default="visualization")

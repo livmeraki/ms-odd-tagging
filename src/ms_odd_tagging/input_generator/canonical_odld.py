@@ -17,13 +17,15 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from statistics import median
 
+from ms_odd_tagging.common.config import CANONICAL, DATA_RAW
+
 from . import canonical as od
 
 
 SCHEMA_VERSION = "odld-trajectory-canonical-frame-v1"
 MANIFEST_SCHEMA_VERSION = "odld-trajectory-canonical-manifest-v1"
-DEFAULT_SOURCE_ROOT = Path("data/01_raw")
-DEFAULT_OUTPUT_ROOT = Path("outputs/01_canonical")
+DEFAULT_SOURCE_ROOT = DATA_RAW
+DEFAULT_OUTPUT_ROOT = CANONICAL
 
 
 def portable_path(path: Path) -> str:

@@ -10,6 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from ms_odd_tagging.common.config import CANONICAL, DATA_GT, FOLLOWING_LANE, GT_COMPARISON
 from ms_odd_tagging.gt_comparison.labels import SPEED_LABELS, TAXONOMY
 from ms_odd_tagging.tagger.rule_based.dynamics import classify_speed_band
 from ms_odd_tagging.tagger.rule_based.registry import (
@@ -320,20 +321,20 @@ def write_reports(output_dir: Path, summary: dict[str, Any], details: list[dict[
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gt-dir", type=Path, default=Path("data/02_gt"))
+    parser.add_argument("--gt-dir", type=Path, default=DATA_GT)
     parser.add_argument(
         "--recording",
         action="append",
         default=[],
         help="Recording ID to evaluate; repeat for multiple recordings. Defaults to all GT files.",
     )
-    parser.add_argument("--canonical-dir", type=Path, default=Path("outputs/01_canonical"))
+    parser.add_argument("--canonical-dir", type=Path, default=CANONICAL)
     parser.add_argument(
         "--following-tags-dir",
         type=Path,
-        default=Path("outputs/scenarios/following_lane/03_tags"),
+        default=FOLLOWING_LANE / "03_tags",
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/06_gt_comparison"))
+    parser.add_argument("--output-dir", type=Path, default=GT_COMPARISON)
     parser.add_argument(
         "--minimum-frame-index",
         type=int,

@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ms_odd_tagging.common.config import DATA_GT
+
 
 TAXONOMY = [
     "near_multiple_bikes",
@@ -303,14 +305,14 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help="Output GT JSON path. Defaults to data/02_gt/<recording>_gt.json.",
+        help="Output GT JSON path. Defaults to MS_ODD_DATA_ROOT/02_gt/<recording>_gt.json.",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    output = args.output or Path("data/02_gt") / f"{args.recording}_gt.json"
+    output = args.output or DATA_GT / f"{args.recording}_gt.json"
     payload = build_gt_payload(args.model_input_root, args.recording, output)
     write_json(output, payload)
     print(f"Wrote {output}")

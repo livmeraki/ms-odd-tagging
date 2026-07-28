@@ -12,6 +12,7 @@ from ms_odd_tagging.tagger.rule_based.registry import (
     detect_recording_events,
     load_config,
 )
+from ms_odd_tagging.common.config import CANONICAL, FRAME_INPUTS_REVISED
 
 from .frame_input import (
     DEFAULT_FRAMES_PER_SECOND,
@@ -25,8 +26,8 @@ from .model_input import ensure_dir, safe_name
 from .revised_bev import render_revised_bev_png
 
 
-DEFAULT_INPUT_DIR = Path("outputs/01_canonical")
-DEFAULT_OUTPUT_DIR = Path("outputs/02_frame_inputs_revised")
+DEFAULT_INPUT_DIR = CANONICAL
+DEFAULT_OUTPUT_DIR = FRAME_INPUTS_REVISED
 
 
 def build_recording(

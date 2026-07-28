@@ -42,8 +42,16 @@ Without installation, set `PYTHONPATH=src` (PowerShell: `$env:PYTHONPATH = "src"
 ## Run the per-frame input pipeline
 
 ```bash
-python run_pipeline.py --source-root data/01_raw \
-  Rec_Drv_GER_MACHET18_20260227_153128
+python run_pipeline.py Rec_Drv_GER_MACHET18_20260227_153128
+```
+
+By default, data and outputs are read/written under repo-local `data/` and
+`outputs/`. For a machine-specific external data disk, create ignored `.env`
+values or export them before running:
+
+```bash
+export MS_ODD_DATA_ROOT=/path/to/ms-odd-tagging-data/data
+export MS_ODD_OUTPUT_ROOT=/path/to/ms-odd-tagging-data/outputs
 ```
 
 Use `--odld` for a recording containing `annotations_OD.json`, `annotations_LD.json`, and `traj_lcs.txt`. Add `--frame-limit 1` for a fast smoke run or `--stop-after canonical` while debugging. BEV/model inputs are sampled by real timestamps at 1 frame per second by default. Change this with `--frames-per-second 2` or use `--all-frames` when full-frame output is required. Dynamic rule tagging still evaluates every canonical frame.
@@ -70,8 +78,6 @@ ego-heading-up camera while aligning OD/LD geometry handling with the explorer:
 
 ```bash
 python -m ms_odd_tagging.input_generator.frame_input_revised \
-  --input-dir outputs/01_canonical \
-  --output-dir outputs/02_frame_inputs_revised \
   --frames-per-second 1
 ```
 

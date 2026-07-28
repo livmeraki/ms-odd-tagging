@@ -11,14 +11,13 @@ from collections import defaultdict
 from pathlib import Path
 from urllib.parse import quote
 
+from ms_odd_tagging.common.config import DATA_GT, GT_COMPARISON, OUTPUT_ROOT
 
-DEFAULT_SOURCE_DIR = Path(
-    "outputs/scenarios/following_lane_tagged/04_visualization"
-)
-DEFAULT_OUTPUT_DIR = Path("outputs/07_odld_scenario_explorers_gt_comparison")
-DEFAULT_DETAILS = Path("outputs/06_gt_comparison/rule_based_gt_details.csv")
-DEFAULT_SUMMARY = Path("outputs/06_gt_comparison/rule_based_gt_summary.json")
-DEFAULT_GT_DIR = Path("data/02_gt")
+DEFAULT_SOURCE_DIR = OUTPUT_ROOT / "scenarios" / "following_lane_tagged" / "04_visualization"
+DEFAULT_OUTPUT_DIR = OUTPUT_ROOT / "07_odld_scenario_explorers_gt_comparison"
+DEFAULT_DETAILS = GT_COMPARISON / "rule_based_gt_details.csv"
+DEFAULT_SUMMARY = GT_COMPARISON / "rule_based_gt_summary.json"
+DEFAULT_GT_DIR = DATA_GT
 
 
 GT_STYLE = """

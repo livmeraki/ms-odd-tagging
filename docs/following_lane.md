@@ -103,7 +103,7 @@ python .\run_following_lane_pipeline.py
 By default, visualization uses the original explorers from:
 
 ```text
-C:\Users\StradVision\Documents\data\quick_exploration_outputs\dataset_scene_explorers_odld
+C:\path\to\quick_exploration_outputs\dataset_scene_explorers_odld
 ```
 
 Use `--base-explorer-dir <directory>` if those original explorers are in a

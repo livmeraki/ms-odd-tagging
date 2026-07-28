@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from statistics import median
 
+from ms_odd_tagging.common.config import CANONICAL, WINDOWS
+
 from ms_odd_tagging.tagger.rule_based.registry import (
     compact_window_summary,
     detect_events as detect_rule_events,
@@ -483,12 +485,12 @@ def main():
     parser.add_argument(
         "--canonical-dir",
         type=Path,
-        default=Path("outputs/01_canonical"),
+        default=CANONICAL,
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("outputs/02_windows"),
+        default=WINDOWS,
     )
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)

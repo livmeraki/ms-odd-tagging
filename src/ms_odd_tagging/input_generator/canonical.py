@@ -10,6 +10,8 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import median
 
+from ms_odd_tagging.common.config import CANONICAL, DATA_RAW
+
 
 DEFAULT_RECORDINGS = [
     "Rec_Drv_GER_MACHET18_20260319_152119",
@@ -587,12 +589,12 @@ def main():
     parser.add_argument(
         "--source-root",
         type=Path,
-        default=Path("data/01_raw"),
+        default=DATA_RAW,
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("outputs/01_canonical"),
+        default=CANONICAL,
     )
     parser.add_argument("recordings", nargs="*", default=DEFAULT_RECORDINGS)
     args = parser.parse_args()

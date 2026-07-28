@@ -13,6 +13,7 @@ from ms_odd_tagging.tagger.rule_based.registry import (
     detect_recording_events,
     load_config,
 )
+from ms_odd_tagging.common.config import CANONICAL, FRAME_INPUTS
 
 from .model_input import (
     DEFAULT_LD_LINE_PATTERNS,
@@ -27,8 +28,8 @@ from .model_input import (
 )
 
 
-DEFAULT_INPUT_DIR = Path("outputs/01_canonical")
-DEFAULT_OUTPUT_DIR = Path("outputs/02_frame_inputs")
+DEFAULT_INPUT_DIR = CANONICAL
+DEFAULT_OUTPUT_DIR = FRAME_INPUTS
 SCHEMA_VERSION = "odld-dynamic-frame-model-input-v1"
 BEV_SCHEMA_VERSION = "odld-per-frame-bev-v1"
 DEFAULT_FRAMES_PER_SECOND = 1.0

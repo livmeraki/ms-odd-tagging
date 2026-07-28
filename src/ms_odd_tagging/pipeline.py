@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ms_odd_tagging.common.config import DATA_RAW, OUTPUT_ROOT
+
 
 SRC_ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,8 +32,8 @@ def parse_args() -> argparse.Namespace:
         description="Run 01 canonical -> 02 timestamp-sampled frame inputs and BEVs."
     )
     parser.add_argument("recordings", nargs="+", help="Recording IDs to process.")
-    parser.add_argument("--source-root", type=Path, default=Path("data/01_raw"))
-    parser.add_argument("--output-root", type=Path, default=Path("outputs"))
+    parser.add_argument("--source-root", type=Path, default=DATA_RAW)
+    parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     parser.add_argument("--odld", action="store_true", help="Use OD+LD canonicalization.")
     parser.add_argument("--ld-radius-m", type=float, default=100.0)
     parser.add_argument("--frame-limit", type=int, default=None)

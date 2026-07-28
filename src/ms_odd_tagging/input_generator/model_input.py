@@ -18,9 +18,11 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
+from ms_odd_tagging.common.config import MODEL_INPUTS, WINDOWS
 
-DEFAULT_INPUT_DIR = Path("outputs/02_windows")
-DEFAULT_OUTPUT_DIR = Path("outputs/03_model_inputs")
+
+DEFAULT_INPUT_DIR = WINDOWS
+DEFAULT_OUTPUT_DIR = MODEL_INPUTS
 
 SCHEMA_VERSION = "od-motional-model-input-v2"
 BEV_SCHEMA_VERSION = "od-bev-keyframe-v2"

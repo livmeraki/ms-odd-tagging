@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ms_odd_tagging.common.config import DATA_GT, FRAME_GT_AUTHORING
 from ms_odd_tagging.gt_comparison.labels import (
     TAXONOMY,
     build_frame_gt_payload,
@@ -141,8 +142,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate efficient sampled-frame GT review pages.")
     parser.add_argument("recordings", nargs="*")
     parser.add_argument("--frame-input-root", type=Path, required=True)
-    parser.add_argument("--output-root", type=Path, default=Path("outputs/frame_gt_authoring"))
-    parser.add_argument("--gt-root", type=Path, default=Path("data/02_gt"), help="Existing frame GT JSON directory used to prefill reviews.")
+    parser.add_argument("--output-root", type=Path, default=FRAME_GT_AUTHORING)
+    parser.add_argument("--gt-root", type=Path, default=DATA_GT, help="Existing frame GT JSON directory used to prefill reviews.")
     parser.add_argument("--all", action="store_true", help="Generate reviewers for every recording under the frame-input root.")
     return parser.parse_args()
 
