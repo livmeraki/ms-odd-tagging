@@ -10,22 +10,14 @@ Rec_Drv_GER_MACHET18_20260227_153128
 
 Runs:
 
-1. Formula-only baseline from `preliminary_candidates.candidate_flags`.
-2. JSON-only Qwen3 2B Vision using `json_only_user_prompt.md`.
-3. JSON + BEV Qwen3 2B Vision using `json_bev_user_prompt.md`.
+1. Rule-based per-frame baseline from `recording_rule_events.json`.
+2. Per-frame JSON-only Qwen3 2B Vision using `json_only_user_prompt.md`.
+3. Per-frame JSON + current-frame BEV using `json_bev_user_prompt.md`.
 
 ## Bias control
 
-For the cleanest model test, strip these fields before sending to the model:
-
-```text
-preliminary_candidates.candidate_tags
-preliminary_candidates.candidate_flags
-preliminary_candidates.evidence
-```
-
-Keep them locally for later comparison. This prevents the model from simply
-copying formula outputs.
+Keep `recording_rule_events.json` separate from each `frame.json`. The frame
+generator already does this so formula labels cannot leak into model input.
 
 ## Suggested compact model input
 
@@ -33,20 +25,23 @@ Keep:
 
 - `schema_version`
 - `recording_id`
-- `source_window_id`
-- `time_window`
-- `bev_keyframes`
+- `frame_id`
+- `frame_index`
+- `time_since_start_s`
+- `bev`
 - `taxonomy`
-- `ego_summary`
-- `ego_series_sampled`
-- `per_frame_counts`
-- `relevant_objects`
+- `ego`
+- `scenario_signals`
+- `object_counts`
+- `objects`
+- `interaction_candidates`
+- `ld`
 - `data_notes`
 
 Remove:
 
-- formula/preliminary candidate outputs
-- long object tracks beyond selected samples
+- rule-based event outputs
+- samples from neighboring frames
 - any fields not used by the schema
 
 ## Output handling
@@ -57,11 +52,10 @@ Reject and retry if:
 - a required label is missing
 - label values are strings instead of booleans
 - confidence is outside `[0, 1]`
-- `recording_id`, `window_id`, or `model_mode` is missing
+- `recording_id`, `frame_id`, or `model_mode` is missing
 
 Retry prompt suffix:
 
 ```text
 Your previous response did not match the required JSON schema. Return only valid JSON. Do not include markdown or explanation outside the JSON object.
 ```
-

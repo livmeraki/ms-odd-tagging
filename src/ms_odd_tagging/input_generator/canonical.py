@@ -16,18 +16,48 @@ DEFAULT_RECORDINGS = [
 ]
 
 SCENARIO_TAXONOMY = [
+    "near_multiple_bikes",
+    "near_multiple_vehicles",
+    "near_multiple_motorcycle",
+    "accelerating_at_crosswalk",
+    "stationary_at_crosswalk",
+    "stopping_at_crosswalk",
+    "high_lateral_acceleration",
+    "near_high_speed_vehicle",
+    "near_long_vehicle",
+    "near_multiple_pedestrians",
+    "near_pedestrian_on_crosswalk",
+    "near_pedestrian_on_crosswalk_with_ego",
+    "starting_high_speed_turn",
+    "starting_low_speed_turn",
+    "traversing_crosswalk",
+    "on_stopline_crosswalk",
+    "high_magnitude_jerk",
     "stationary",
     "high_magnitude_speed",
     "low_magnitude_speed",
     "medium_magnitude_speed",
-    "following_lane_with_lead",
-    "following_lane_without_lead",
     "starting_left_turn",
     "starting_right_turn",
+    "changing_lane",
+    "changing_lane_to_left",
+    "changing_lane_to_right",
+    "accelerating_at_traffic_light_with_lead",
+    "accelerating_at_traffic_light_without_lead",
+    "following_lane_with_lead",
+    "following_lane_with_slow_lead",
+    "following_lane_without_lead",
+    "stationary_at_traffic_light_with_lead",
+    "stationary_at_traffic_light_without_lead",
+    "stopping_at_traffic_light_with_lead",
+    "stopping_at_traffic_light_without_lead",
     "stopping_with_lead",
     "stopping_without_lead",
-    "near_multiple_pedestrians",
-    "near_multiple_motorcycle",
+    "behind_bike",
+    "behind_long_vehicle",
+    "behind_motorcycle",
+    "changing_lane_with_lead",
+    "changing_lane_with_trail",
 ]
 
 MOTIONAL_CLASSES = {
@@ -81,12 +111,21 @@ def wrap_angle(value):
 
 
 def central_derivative(values, timestamps, index):
+    """Calculate derivative using adjacent differences only.
+
+    This uses immediate neighbor spacing instead of averaging across two steps.
+    The result is a single-step derivative, which avoids smoothing artifacts
+    from central averaging and matches adjacent-difference speed.
+    """
     if len(values) < 2:
         return None
-    left = max(0, index - 1)
-    right = min(len(values) - 1, index + 1)
-    dt = timestamps[right] - timestamps[left]
-    return None if dt <= 0 else (values[right] - values[left]) / dt
+
+    if index == 0:
+        dt = timestamps[1] - timestamps[0]
+        return None if dt <= 0 else (values[1] - values[0]) / dt
+
+    dt = timestamps[index] - timestamps[index - 1]
+    return None if dt <= 0 else (values[index] - values[index - 1]) / dt
 
 
 def parse_trajectory(path):

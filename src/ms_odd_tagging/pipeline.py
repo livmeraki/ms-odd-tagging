@@ -27,16 +27,25 @@ def run_stage(module: str, arguments: list[str]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run stages 01 canonical -> 02 windows -> 03 model inputs."
+        description="Run 01 canonical -> 02 timestamp-sampled frame inputs and BEVs."
     )
     parser.add_argument("recordings", nargs="+", help="Recording IDs to process.")
     parser.add_argument("--source-root", type=Path, default=Path("data/01_raw"))
     parser.add_argument("--output-root", type=Path, default=Path("outputs"))
     parser.add_argument("--odld", action="store_true", help="Use OD+LD canonicalization.")
     parser.add_argument("--ld-radius-m", type=float, default=100.0)
-    parser.add_argument("--window-limit", type=int, default=None)
+    parser.add_argument("--frame-limit", type=int, default=None)
+    sampling = parser.add_mutually_exclusive_group()
+    sampling.add_argument(
+        "--frames-per-second", type=float, default=1.0,
+        help="BEV/model-input sampling rate (default: 1.0).",
+    )
+    sampling.add_argument(
+        "--all-frames", action="store_true",
+        help="Generate a BEV and model input for every canonical frame.",
+    )
     parser.add_argument(
-        "--stop-after", choices=("canonical", "windows", "model-inputs"), default="model-inputs"
+        "--stop-after", choices=("canonical", "frame-inputs"), default="frame-inputs"
     )
     return parser.parse_args()
 
@@ -44,8 +53,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     canonical_root = args.output_root / "01_canonical"
-    window_root = args.output_root / "02_windows"
-    model_input_root = args.output_root / "03_model_inputs"
+    frame_input_root = args.output_root / "02_frame_inputs"
     canonical_module = (
         "ms_odd_tagging.input_generator.canonical_odld"
         if args.odld
@@ -62,19 +70,16 @@ def main() -> int:
     if args.stop_after == "canonical":
         return 0
 
-    run_stage(
-        "ms_odd_tagging.input_generator.windows",
-        ["--canonical-dir", str(canonical_root), "--output-dir", str(window_root)],
-    )
-    if args.stop_after == "windows":
-        return 0
-
-    model_args = ["--input-dir", str(window_root), "--output-dir", str(model_input_root)]
+    model_args = ["--input-dir", str(canonical_root), "--output-dir", str(frame_input_root)]
     for recording in args.recordings:
         model_args.extend(["--recording", recording])
-    if args.window_limit is not None:
-        model_args.extend(["--window-limit", str(args.window_limit)])
-    run_stage("ms_odd_tagging.input_generator.model_input", model_args)
+    if args.frame_limit is not None:
+        model_args.extend(["--frame-limit", str(args.frame_limit)])
+    if args.all_frames:
+        model_args.append("--all-frames")
+    else:
+        model_args.extend(["--frames-per-second", str(args.frames_per_second)])
+    run_stage("ms_odd_tagging.input_generator.frame_input", model_args)
     return 0
 
 

@@ -1,8 +1,7 @@
 data_root: ./data/01_raw
 output_root: ./outputs
 canonical_root: ./outputs/01_canonical
-window_root: ./outputs/02_windows
-model_input_root: ./outputs/03_model_inputs
+frame_input_root: ./outputs/02_frame_inputs
 tagging_root: ./outputs/04_tagging
 validation_root: ./outputs/05_validation
 gt_comparison_root: ./outputs/06_gt_comparison

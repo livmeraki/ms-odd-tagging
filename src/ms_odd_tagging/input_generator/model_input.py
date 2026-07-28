@@ -738,6 +738,9 @@ def build_refined_json(
         "taxonomy": recording.get("scenario_taxonomy"),
         "ego_summary": r4(window.get("ego_summary")),
         "ego_series_sampled": compact_ego_series(window),
+        "rule_based_summary": r4(window.get("rule_based_summary", {
+            "active_labels": [], "events": [], "rule_config_version": None
+        })),
         "ld_summary": ld_summary,
         "ld_series_sampled": ld_series_sampled,
         "per_frame_counts": per_frame_counts,

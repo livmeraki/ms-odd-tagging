@@ -1,14 +1,14 @@
-Evaluate this driving window.
+Evaluate this driving frame.
 
 Required taxonomy labels:
 
 {{TAXONOMY_JSON}}
 
-Window metadata:
+Frame metadata:
 
 {
   "recording_id": "{{RECORDING_ID}}",
-  "window_id": "{{WINDOW_ID}}",
+  "frame_id": "{{FRAME_ID}}",
   "model_mode": "{{MODE}}"
 }
 

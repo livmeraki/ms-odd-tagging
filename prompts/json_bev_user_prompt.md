@@ -1,26 +1,19 @@
-Evaluate this driving window.
+Evaluate this driving frame.
 
 Required taxonomy labels:
 
 {{TAXONOMY_JSON}}
 
-Window metadata:
+Frame metadata:
 
 {
   "recording_id": "{{RECORDING_ID}}",
-  "window_id": "{{WINDOW_ID}}",
+  "frame_id": "{{FRAME_ID}}",
   "model_mode": "{{MODE}}"
 }
 
-BEV image order:
-1. start
-2. middle
-3. end
-
-BEV convention:
-- Forward is up.
-- Ego-left is screen-left.
-- Use BEV only to validate spatial and temporal context.
+The single BEV image is the current frame. Forward is up and ego-left is
+screen-left. Use it only for same-frame spatial evidence.
 
 Input JSON:
 

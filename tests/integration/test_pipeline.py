@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from ms_odd_tagging.input_generator.canonical import build_recording as build_canonical
+from ms_odd_tagging.input_generator.frame_input import build_recording as build_frames
 from ms_odd_tagging.tagger.model_based.local_vllm import (
     load_gt_labels,
     output_window_ids,
@@ -15,11 +16,9 @@ from ms_odd_tagging.tagger.model_based.local_vllm import (
     validate_output,
 )
 from ms_odd_tagging.gt_comparison.labels import build_gt_payload
-from ms_odd_tagging.input_generator.model_input import build_refined_json
-from ms_odd_tagging.validator.schema import validate_refined
+from ms_odd_tagging.validator.frame_schema import validate_frame_file
 from ms_odd_tagging.input_generator.windows import (
     build_candidates,
-    build_recording as build_windows,
 )
 
 
@@ -49,10 +48,9 @@ def test_cli_help_works() -> None:
     env = {**os.environ, "PYTHONPATH": str(repo / "src")}
     for module in (
         "ms_odd_tagging.input_generator.canonical",
-        "ms_odd_tagging.input_generator.windows",
-        "ms_odd_tagging.input_generator.model_input",
+        "ms_odd_tagging.input_generator.frame_input",
         "ms_odd_tagging.tagger.model_based.local_vllm",
-        "ms_odd_tagging.validator.schema",
+        "ms_odd_tagging.validator.frame_schema",
     ):
         result = subprocess.run(
             [sys.executable, "-m", module, "--help"],
@@ -93,7 +91,9 @@ def test_run_pipeline_script_works_without_pythonpath(tmp_path: Path) -> None:
             "--output-root",
             str(output_root),
             "--stop-after",
-            "windows",
+            "frame-inputs",
+            "--frame-limit",
+            "2",
             RECORDING,
         ],
         cwd=repo,
@@ -105,48 +105,41 @@ def test_run_pipeline_script_works_without_pythonpath(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert (
-        output_root / "02_windows" / f"{RECORDING}_motional_windows.json"
-    ).is_file()
+    recording_root = output_root / "02_frame_inputs" / RECORDING
+    assert (recording_root / "frame_000000" / "frame.json").is_file()
+    assert (recording_root / "frame_000000" / "bev.png").is_file()
+    assert (recording_root / "frame_000010" / "frame.json").is_file()
+    assert not (recording_root / "frame_000001").exists()
+    assert not (output_root / "02_windows").exists()
 
 
 def test_sample_pipeline_and_schema_validation(tmp_path: Path) -> None:
     source_root = tmp_path / "source"
     canonical_dir = tmp_path / "canonical"
-    windows_dir = tmp_path / "windows"
-    model_inputs_dir = tmp_path / "model_inputs"
+    frame_inputs_dir = tmp_path / "frame_inputs"
     write_synthetic_recording(source_root)
-    windows_dir.mkdir(parents=True)
 
     canonical_path, canonical = build_canonical(source_root, canonical_dir, RECORDING)
     assert canonical_path.is_file()
     assert canonical["recording"]["frame_count"] == 60
 
-    windows_path, windows = build_windows(canonical_path, windows_dir)
-    assert windows_path.is_file()
-    assert windows["windowing"]["window_count"] == 1
-    assert windows["windows"][0]["window_id"] == f"{RECORDING}:000-049"
-
-    recording = dict(windows)
-    recording["_source_file"] = windows_path
-    window = windows["windows"][0]
-    window_dir = model_inputs_dir / RECORDING / f"{RECORDING}_000-049"
-    window_dir.mkdir(parents=True)
-    keyframe_files = {
-        "start": {"frame_index": 0, "path": "bev_start.png", "format": "png"},
-        "middle": {"frame_index": 25, "path": "bev_middle.png", "format": "png"},
-        "end": {"frame_index": 49, "path": "bev_end.png", "format": "png"},
-    }
-    for keyframe in keyframe_files.values():
-        (window_dir / keyframe["path"]).write_bytes(b"synthetic-png-placeholder")
-    refined = build_refined_json(recording, window, keyframe_files, max_objects=24, include_preliminary_candidates=False)
-    assert refined["ld_summary"]["available"] is False
-    assert refined["ld_series_sampled"]
-    refined_path = window_dir / "refined.json"
-    refined_path.write_text(json.dumps(refined), encoding="utf-8")
-
-    errors = validate_refined(refined_path, {window["window_id"]: window})
-    assert errors == []
+    manifest, count = build_frames(
+        canonical_path,
+        frame_inputs_dir,
+        extent=(45.0, 45.0, 25.0, 95.0),
+        size=(320, 288),
+        ld_filters={"roadmark_classes": {"line"}, "line_patterns": {"solid"}},
+        max_objects=24,
+        frame_limit=2,
+    )
+    assert count == 2
+    assert manifest["generated_frame_count"] == 2
+    frame_path = frame_inputs_dir / RECORDING / "frame_000000" / "frame.json"
+    payload = json.loads(frame_path.read_text(encoding="utf-8"))
+    assert payload["frame_id"] == f"{RECORDING}:frame-000000"
+    assert payload["bev"]["frame_index"] == payload["frame_index"]
+    assert validate_frame_file(frame_path) == []
+    assert not (tmp_path / "windows").exists()
 
 
 def test_ld_context_gates_following_lane_candidates() -> None:
@@ -190,6 +183,9 @@ def test_output_schema_loads() -> None:
     schema = json.loads((repo / "schemas" / "output_schema.json").read_text(encoding="utf-8"))
     assert schema["properties"]["labels"]["required"]
     assert "stationary" in schema["properties"]["labels"]["required"]
+    assert "frame_id" in schema["required"]
+    assert "window_id" not in schema["properties"]
+    assert schema["properties"]["schema_version"]["const"] == "motional-scenario-frame-output-v1"
     decision_schema = schema["$defs"]["label_decision"]["properties"]
     assert decision_schema["evidence_frames"]["maxItems"] == 3
     assert decision_schema["object_ids"]["maxItems"] == 2
@@ -210,15 +206,15 @@ def test_model_output_rejects_long_evidence_arrays() -> None:
         for label in label_names
     }
     output = {
-        "schema_version": "motional-scenario-model-output-v1",
+        "schema_version": "motional-scenario-frame-output-v1",
         "recording_id": RECORDING,
-        "window_id": f"{RECORDING}:000-049",
+        "frame_id": f"{RECORDING}:frame-000025",
         "model_mode": "json_bev",
         "labels": labels,
         "overall_quality": {"confidence": 0.5, "data_issues": []},
         "review_priority": "low",
     }
-    refined = {"ego_summary": {"median_speed_mps": 0.0, "minimum_speed_mps": 0.0}}
+    refined = {"frame_id": f"{RECORDING}:frame-000025", "ego": {"speed_mps": 0.0}}
 
     errors = validate_output(output, RECORDING, f"{RECORDING}_000-049", "json_bev", refined)
 
@@ -243,15 +239,15 @@ def test_speed_band_labels_reject_frame_and_object_evidence() -> None:
     labels["high_magnitude_speed"]["evidence_frames"] = [0]
     labels["high_magnitude_speed"]["object_ids"] = ["1"]
     output = {
-        "schema_version": "motional-scenario-model-output-v1",
+        "schema_version": "motional-scenario-frame-output-v1",
         "recording_id": RECORDING,
-        "window_id": f"{RECORDING}:000-049",
+        "frame_id": f"{RECORDING}:frame-000025",
         "model_mode": "json_bev",
         "labels": labels,
         "overall_quality": {"confidence": 0.5, "data_issues": []},
         "review_priority": "low",
     }
-    refined = {"ego_summary": {"median_speed_mps": 0.0, "minimum_speed_mps": 0.0}}
+    refined = {"frame_id": f"{RECORDING}:frame-000025", "ego": {"speed_mps": 0.0}}
 
     errors = validate_output(output, RECORDING, f"{RECORDING}_000-049", "json_bev", refined)
 
@@ -276,15 +272,15 @@ def test_false_labels_reject_default_frame_and_object_evidence() -> None:
     labels["following_lane_with_lead"]["evidence_frames"] = [5, 25, 49]
     labels["following_lane_with_lead"]["object_ids"] = ["1", "4"]
     output = {
-        "schema_version": "motional-scenario-model-output-v1",
+        "schema_version": "motional-scenario-frame-output-v1",
         "recording_id": RECORDING,
-        "window_id": f"{RECORDING}:000-049",
+        "frame_id": f"{RECORDING}:frame-000025",
         "model_mode": "json_bev",
         "labels": labels,
         "overall_quality": {"confidence": 0.5, "data_issues": []},
         "review_priority": "low",
     }
-    refined = {"ego_summary": {"median_speed_mps": 0.0, "minimum_speed_mps": 0.0}}
+    refined = {"frame_id": f"{RECORDING}:frame-000025", "ego": {"speed_mps": 0.0}}
 
     errors = validate_output(output, RECORDING, f"{RECORDING}_000-049", "json_bev", refined)
 
@@ -314,15 +310,15 @@ def test_ego_only_labels_reject_object_ids() -> None:
         "object_ids": ["1"],
     }
     output = {
-        "schema_version": "motional-scenario-model-output-v1",
+        "schema_version": "motional-scenario-frame-output-v1",
         "recording_id": RECORDING,
-        "window_id": f"{RECORDING}:000-049",
+        "frame_id": f"{RECORDING}:frame-000025",
         "model_mode": "json_bev",
         "labels": labels,
         "overall_quality": {"confidence": 0.5, "data_issues": []},
         "review_priority": "low",
     }
-    refined = {"ego_summary": {"median_speed_mps": 0.0, "minimum_speed_mps": 0.0}}
+    refined = {"frame_id": f"{RECORDING}:frame-000025", "ego": {"speed_mps": 0.0}}
 
     errors = validate_output(output, RECORDING, f"{RECORDING}_000-049", "json_bev", refined)
 

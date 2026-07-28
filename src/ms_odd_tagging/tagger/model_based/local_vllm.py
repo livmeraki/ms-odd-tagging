@@ -40,7 +40,7 @@ TAXONOMY = [
 REPORT_COLUMNS = [
     "Run",
     "Recording",
-    "Window",
+    "Frame",
     "Model",
     "Mode",
     "Prompt_Profile",
@@ -71,11 +71,13 @@ def find_refined_files(root: Path, recording: str, limit: int | None) -> list[Pa
     recording_root = root / recording
     if not recording_root.exists():
         raise FileNotFoundError(f"Recording model-input folder not found: {recording_root}")
-    files = sorted(recording_root.rglob("refined.json"))
+    files = sorted(recording_root.rglob("frame.json"))
+    if not files:
+        files = sorted(recording_root.rglob("refined.json"))
     if limit is not None:
         files = files[:limit]
     if not files:
-        raise FileNotFoundError(f"No refined.json files found under {recording_root}")
+        raise FileNotFoundError(f"No frame.json or legacy refined.json files found under {recording_root}")
     return files
 
 
@@ -117,6 +119,15 @@ def minimal_object_track(obj: dict, keyframes: set[int]) -> dict:
 
 def refined_for_prompt(refined: dict, profile: str) -> dict:
     """Keep the model input faithful while controlling prompt size."""
+    if "frame_id" in refined:
+        if profile == "full":
+            return refined
+        keep = dict(refined)
+        objects = keep.get("objects") or []
+        keep["objects"] = objects if profile == "compact" else objects[:24]
+        interactions = keep.get("interaction_candidates") or []
+        keep["interaction_candidates"] = interactions if profile == "compact" else interactions[:12]
+        return keep
     keyframes = {
         info.get("frame_index")
         for info in (refined.get("bev_keyframes") or {}).values()
@@ -164,6 +175,8 @@ def render_user_prompt(mode: str, payload: dict) -> str:
     template = USER_PROMPT_PATHS[mode].read_text(encoding="utf-8").strip()
     return (
         template.replace("{{TAXONOMY_JSON}}", json.dumps(TAXONOMY, ensure_ascii=False))
+        .replace("{{RECORDING_ID}}", str(payload.get("recording_id", "")))
+        .replace("{{FRAME_ID}}", str(payload.get("frame_id", payload.get("source_window_id", ""))))
         .replace("{{MODE}}", mode)
         .replace("{{REFINED_JSON}}", json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
     )
@@ -180,13 +193,18 @@ def build_user_content(
     text = render_user_prompt(mode, payload)
     content: list[dict] = [{"type": "text", "text": text}]
     if mode == "json_bev":
+        image_sources = (
+            {"current": refined.get("bev")}
+            if isinstance(refined.get("bev"), dict)
+            else refined.get("bev_keyframes", {})
+        )
         for label in image_keyframes:
-            info = refined.get("bev_keyframes", {}).get(label)
+            info = image_sources.get(label)
             if not isinstance(info, dict):
                 continue
             image_path = refined_path.parent / info.get("path", "")
             if image_path.exists():
-                content.append({"type": "text", "text": f"BEV keyframe: {label}"})
+                content.append({"type": "text", "text": f"BEV frame: {label}"})
                 content.append(
                     {
                         "type": "image_url",
@@ -370,6 +388,40 @@ def gt_labels_for_window(payload: dict, recording: str, window_id: str) -> dict[
     return result
 
 
+def gt_labels_for_frame(payload: dict, recording: str, frame_id: str) -> dict[str, bool] | None:
+    """Return boolean GT labels for one exact source frame."""
+    if payload.get("recording_id") not in (None, recording):
+        raise ValueError(f"GT recording_id should be {recording}")
+    frames = payload.get("frames")
+    if isinstance(frames, list):
+        frames = {
+            str(item.get("frame_id")): item
+            for item in frames
+            if isinstance(item, dict) and item.get("frame_id") is not None
+        }
+    if not isinstance(frames, dict) or frame_id not in frames:
+        return None
+    frame = frames[frame_id]
+    labels = frame.get("labels") if isinstance(frame, dict) else None
+    if not isinstance(labels, dict):
+        raise ValueError(f"GT frame {frame_id} has no labels object")
+    result = {}
+    for label in TAXONOMY:
+        value = labels.get(label)
+        if isinstance(value, bool):
+            result[label] = value
+        elif value is not None:
+            raise ValueError(f"GT label {frame_id}.{label} must be true, false, or null")
+    return result
+
+
+def gt_labels_for_item(payload: dict, recording: str, item_id: str) -> dict[str, bool] | None:
+    """Prefer active frame GT, then fall back to legacy window GT."""
+    if "frames" in payload:
+        return gt_labels_for_frame(payload, recording, item_id)
+    return gt_labels_for_window(payload, recording, item_id)
+
+
 def load_gt_labels(path: Path, recording: str, window_id: str) -> dict[str, bool] | None:
     return gt_labels_for_window(load_gt_file(path), recording, window_id)
 
@@ -478,12 +530,13 @@ def validate_model_output(
         return {"ok": False, "errors": errors or ["missing parsed model output"], "warnings": warnings}
 
     recording_id = refined.get("recording_id")
-    window_id = refined.get("source_window_id")
-    output_window_id = parsed_output.get("window_id")
+    frame_input = refined.get("frame_id") is not None
+    window_id = refined.get("frame_id", refined.get("source_window_id"))
+    output_window_id = parsed_output.get("frame_id") if frame_input else parsed_output.get("window_id")
     if parsed_output.get("recording_id") not in (None, recording_id):
         errors.append(f"recording_id should be {recording_id}")
     if output_window_id not in (window_id, None):
-        errors.append(f"window_id should be {window_id}")
+        errors.append(f"{'frame_id' if frame_input else 'window_id'} should be {window_id}")
     if parsed_output.get("model_mode") not in (None, mode):
         errors.append(f"model_mode should be {mode}")
 
@@ -596,7 +649,7 @@ def report_row(
     return {
         "Run": run_id,
         "Recording": recording,
-        "Window": window_id,
+        "Frame": window_id,
         "Model": model,
         "Mode": mode,
         "Prompt_Profile": prompt_profile,
@@ -658,7 +711,7 @@ def safe_name(text: str) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run a local vLLM eval over refined model-input windows."
+        description="Run a local vLLM eval over per-frame model inputs."
     )
     parser.add_argument("--recording", required=True)
     parser.add_argument(
@@ -682,8 +735,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--image-keyframes",
-        default="start,middle,end",
-        help="Comma-separated BEV keyframes to send in json_bev mode.",
+        default="current",
+        help="Comma-separated BEV images to send. Per-frame inputs use current.",
     )
     parser.add_argument(
         "--gt-labels",
@@ -719,7 +772,7 @@ def main() -> int:
         ],
         "endpoint": args.endpoint,
         "model": args.model,
-        "window_count": len(refined_files),
+        "frame_count": len(refined_files),
         "outputs": [],
     }
     report_rows = []
@@ -735,7 +788,7 @@ def main() -> int:
 
     for index, refined_path in enumerate(refined_files, 1):
         refined = load_json(refined_path)
-        window_id = refined.get("source_window_id") or refined_path.parent.name
+        window_id = refined.get("frame_id") or refined.get("source_window_id") or refined_path.parent.name
         safe_window_id = safe_name(window_id)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -760,8 +813,8 @@ def main() -> int:
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "endpoint": args.endpoint,
             "recording_id": args.recording,
-            "window_id": window_id,
-            "refined_json": str(refined_path),
+            "frame_id": window_id,
+            "frame_json": str(refined_path),
             "mode": args.mode,
             "prompt_profile": args.prompt_profile,
             "image_keyframes": manifest["image_keyframes"],
@@ -787,14 +840,14 @@ def main() -> int:
             )
             gt_labels = None
             if gt_payload is not None:
-                gt_labels = gt_labels_for_window(gt_payload, args.recording, window_id)
+                gt_labels = gt_labels_for_item(gt_payload, args.recording, window_id)
             gt_validation = validate_against_gt(model_output, gt_labels)
             validation["gt_validation"] = gt_validation
             result = {
                 "recording_id": args.recording,
-                "window_id": window_id,
+                "frame_id": window_id,
                 "mode": args.mode,
-                "refined_json": str(refined_path),
+                "frame_json": str(refined_path),
                 "latency_s": round(time.time() - started, 3),
                 "validation_ok": validation["ok"],
             }
@@ -819,15 +872,15 @@ def main() -> int:
             }
             gt_labels = None
             if gt_payload is not None:
-                gt_labels = gt_labels_for_window(gt_payload, args.recording, window_id)
+                gt_labels = gt_labels_for_item(gt_payload, args.recording, window_id)
             gt_validation = validate_against_gt(None, gt_labels)
             validation["gt_validation"] = gt_validation
             result = {
                 "recording_id": args.recording,
-                "window_id": window_id,
+                "frame_id": window_id,
                 "mode": args.mode,
                 "prompt_profile": args.prompt_profile,
-                "refined_json": str(refined_path),
+                "frame_json": str(refined_path),
                 "latency_s": round(time.time() - started, 3),
                 "validation_ok": False,
             }
@@ -844,17 +897,17 @@ def main() -> int:
             gt_labels = None
             if gt_payload is not None:
                 try:
-                    gt_labels = gt_labels_for_window(gt_payload, args.recording, window_id)
+                    gt_labels = gt_labels_for_item(gt_payload, args.recording, window_id)
                 except Exception:
                     gt_labels = None
             gt_validation = validate_against_gt(None, gt_labels)
             validation["gt_validation"] = gt_validation
             result = {
                 "recording_id": args.recording,
-                "window_id": window_id,
+                "frame_id": window_id,
                 "mode": args.mode,
                 "prompt_profile": args.prompt_profile,
-                "refined_json": str(refined_path),
+                "frame_json": str(refined_path),
                 "latency_s": round(time.time() - started, 3),
                 "validation_ok": False,
             }
@@ -892,7 +945,7 @@ def main() -> int:
         report_rows.append(row)
         manifest["outputs"].append(
             {
-                "window_id": window_id,
+                "frame_id": window_id,
                 "run_directory": str(run_window_dir),
                 "latest_directory": str(latest_window_dir),
                 "ok": validation["ok"],

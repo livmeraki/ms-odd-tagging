@@ -30,6 +30,9 @@ data/01_raw/*
 data/01_raw/Rec_Drv_GER_MACHET18_20260319_152119/*
 !data/01_raw/Rec_Drv_GER_MACHET18_20260319_152119/annotations_LD.json
 !data/01_raw/Rec_Drv_GER_MACHET18_20260319_152119/traj_lcs.txt
+
+# Ignore large raw OD annotation JSON files
+data/01_raw_odld/**/*.json
 data/external/
 data/production/
 outputs/*

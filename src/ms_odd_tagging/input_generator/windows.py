@@ -8,6 +8,13 @@ import json
 from pathlib import Path
 from statistics import median
 
+from ms_odd_tagging.tagger.rule_based.registry import (
+    compact_window_summary,
+    detect_events as detect_rule_events,
+    events_overlapping_window,
+    load_config as load_rule_config,
+)
+
 
 CONFIG = {
     "window_duration_s": 5.0,
@@ -375,6 +382,9 @@ def build_recording(source_path, output_dir):
         canonical = json.load(handle)
     has_ld = "ld_feature_store" in canonical
     frames = canonical["frames"]
+    rule_config = load_rule_config()
+    rule_events, rule_quality = detect_rule_events(frames, rule_config)
+    serialized_rule_events = [event.to_dict() for event in rule_events]
     frame_interval = canonical["recording"]["median_frame_interval_s"]
     window_count = required_samples(CONFIG["window_duration_s"], frame_interval)
     stride_count = required_samples(CONFIG["window_stride_s"], frame_interval)
@@ -384,6 +394,9 @@ def build_recording(source_path, output_dir):
     windows = []
     for start in range(0, len(frames) - window_count + 1, stride_count):
         selected = frames[start : start + window_count]
+        overlapping_rule_events = events_overlapping_window(
+            serialized_rule_events, selected[0]["frame_index"], selected[-1]["frame_index"]
+        )
         windows.append(
             {
                 "window_id": f"{canonical['recording_id']}:{start:03d}-{start + window_count - 1:03d}",
@@ -417,6 +430,10 @@ def build_recording(source_path, output_dir):
                 "preliminary_candidates": build_candidates(
                     selected, turn_events, stop_events, frame_interval
                 ),
+                "rule_based_events": overlapping_rule_events,
+                "rule_based_summary": compact_window_summary(
+                    overlapping_rule_events, rule_config["config_version"]
+                ),
                 "frames": selected,
             }
         )
@@ -432,6 +449,9 @@ def build_recording(source_path, output_dir):
             "turn_onsets": turn_events,
             "stopping_events": stop_events,
         },
+        "rule_config_version": rule_config["config_version"],
+        "rule_based_events": serialized_rule_events,
+        "rule_based_data_quality": rule_quality,
         "windowing": {
             "window_duration_target_s": CONFIG["window_duration_s"],
             "window_stride_target_s": CONFIG["window_stride_s"],
