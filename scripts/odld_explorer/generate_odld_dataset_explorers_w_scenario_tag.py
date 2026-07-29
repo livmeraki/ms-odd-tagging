@@ -19,6 +19,7 @@ from collections import Counter
 from pathlib import Path
 
 import generate_dataset_explorers as base
+from ms_odd_tagging.common.progress import ProgressReporter
 from ms_odd_tagging.features.road_feature_relations import (
     build_road_feature_relations,
 )
@@ -29,6 +30,10 @@ from ms_odd_tagging.features.object_path_crossing_relations import (
 from ms_odd_tagging.tagger.rule_based.registry import (
     detect_recording_events,
     load_config,
+)
+from ms_odd_tagging.scenarios.following_lane.detector import run_following_lane
+from ms_odd_tagging.scenarios.following_lane.explorer_visualization import (
+    render_original_explorer_with_lane_tracker,
 )
 
 
@@ -47,6 +52,8 @@ DEFAULT_OUTPUT_DIR = Path(
 DEFAULT_INDEX_PATH = Path(
     "quick_exploration_outputs/dataset_odld_explorer_w_scenario_tag_index.html"
 )
+EXPLORER_DATA_MARKER = re.compile(r"const DATA = (\{.*?\});\s*const ", re.DOTALL)
+HIDDEN_VISUALIZATION_SCENARIOS = {"high_magnitude_jerk"}
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -260,6 +267,11 @@ def build_tag_payload(recording: str, window_dir: Path, canonical: dict) -> dict
         )
         config_version = config["config_version"]
 
+    events = [
+        event
+        for event in events
+        if event["scenario"] not in HIDDEN_VISUALIZATION_SCENARIOS
+    ]
     scenarios = sorted({event["scenario"] for event in events})
     return {
         "available": bool(events),
@@ -1036,7 +1048,7 @@ if (!crossingEvents.length) {
 TAG_SCRIPT_FUNCTIONS = r"""
 const TAG_COLORS = {
   stationary: '#475569', low_magnitude_speed: '#0ea5e9', medium_magnitude_speed: '#2563eb',
-  high_magnitude_speed: '#7c3aed', high_lateral_acceleration: '#f59e0b', high_magnitude_jerk: '#dc2626',
+  high_magnitude_speed: '#7c3aed', high_lateral_acceleration: '#f59e0b',
   starting_left_turn: '#16a34a', starting_right_turn: '#db2777',
   starting_low_speed_turn: '#0d9488', starting_high_speed_turn: '#9333ea',
   changing_lane: '#0891b2', changing_lane_to_left: '#15803d',
@@ -2045,9 +2057,9 @@ def scene_html(data: dict) -> str:
     return page
 
 
-def index_html(rows: list[dict]) -> str:
-    cards = "\n".join(
-        f"""<a class="card" href="dataset_scene_explorers_odld_w_scenario_tag/{html.escape(row['file'])}">
+def index_cards_html(rows: list[dict]) -> str:
+    return "\n".join(
+        f"""<a class="card" href="{html.escape(row['file'])}" data-recording="{html.escape(row['recording'])}">
   <div class="route">{row['thumbnail']}</div>
   <h2>{html.escape(row['recording'])}</h2>
   <div class="metrics"><span>{row['frames']} frames</span><span>{row['duration']:.1f}s</span><span>{row['objects']} objects</span></div>
@@ -2057,12 +2069,149 @@ def index_html(rows: list[dict]) -> str:
 </a>"""
         for row in rows
     )
+
+
+def index_html(rows: list[dict]) -> str:
+    cards = index_cards_html(rows)
+    scenario_options = sorted(
+        {
+            scenario
+            for row in rows
+            for scenario in row.get("tagScenarioList", [])
+        }
+    )
+    scenario_items = "".join(
+        f'<label class="scenarioChoice"><input type="checkbox" value="{html.escape(scenario)}"><span>{html.escape(scenario)}</span></label>'
+        for scenario in scenario_options
+    )
+    row_json = json.dumps(rows, ensure_ascii=True, separators=(",", ":")).replace(
+        "</", "<\\/"
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OD + LD + Ego Trajectory Explorers</title>
 <style>
-body{{margin:0;font-family:Arial,sans-serif;background:#f1f5f9;color:#17202a}}header{{padding:22px 28px;background:#17324d;color:white}}header h1{{margin:0 0 6px;font-size:24px}}header p{{margin:0;opacity:.88}}main{{padding:22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}.card{{display:block;background:white;border:1px solid #cbd5e1;border-radius:10px;padding:15px;text-decoration:none;color:inherit;box-shadow:0 2px 8px rgba(15,23,42,.06)}}.card:hover{{border-color:#2563eb;box-shadow:0 5px 18px rgba(37,99,235,.14)}}h2{{font-size:16px;margin:10px 0}}.route{{height:120px;background:#f8fafc;border-radius:7px;overflow:hidden}}.route svg{{width:100%;height:100%}}.metrics{{display:flex;gap:8px;flex-wrap:wrap;margin:7px 0}}.metrics span{{background:#e2e8f0;border-radius:999px;padding:4px 8px;font-size:12px}}p{{font-size:12px;color:#475569;line-height:1.45}}
-</style></head><body><header><h1>OD + LD + Ego Trajectory Explorers</h1><p>Synchronized scene viewers with OD tracks, complete LD map layers, scenario-tag intervals, frame-local context, playback, timelines, and notes.</p></header><main>{cards}</main></body></html>"""
+body{{margin:0;font-family:Arial,sans-serif;background:#eef2f6;color:#17202a}}header{{padding:20px 28px 18px;background:#17324d;color:white}}header h1{{margin:0 0 5px;font-size:22px;font-weight:700}}header p{{margin:0;opacity:.84;font-size:13px}}.toolbar{{position:sticky;top:0;z-index:5;background:#f8fafc;border-bottom:1px solid #cbd5e1;padding:14px 22px 12px;box-shadow:0 6px 18px rgba(15,23,42,.06)}}.controlRow{{display:grid;grid-template-columns:minmax(260px,2fr) minmax(110px,.7fr) minmax(130px,.8fr) minmax(150px,1fr) minmax(130px,.8fr) auto auto;gap:10px;align-items:end}}label{{display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase}}input,select{{height:34px;border:1px solid #cbd5e1;border-radius:6px;background:white;color:#17202a;padding:0 9px;font-size:13px}}button{{height:34px;border:1px solid #94a3b8;border-radius:6px;background:#ffffff;color:#334155;padding:0 12px;font-size:13px;cursor:pointer}}button:hover{{border-color:#2563eb;color:#1d4ed8}}.count{{font-size:13px;color:#334155;white-space:nowrap;padding-bottom:9px}}.scenarioPanel{{margin-top:11px;border:1px solid #d7dee8;border-radius:8px;background:white}}.scenarioHeader{{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-bottom:1px solid #e2e8f0;color:#475569;font-size:12px}}.scenarioHeader strong{{color:#334155}}.scenarioChoices{{max-height:82px;overflow:auto;padding:8px;display:flex;gap:6px;flex-wrap:wrap;align-content:flex-start}}.scenarioChoice{{display:flex;align-items:center;gap:5px;border:1px solid #cbd5e1;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:400;color:#17202a;text-transform:none;white-space:nowrap;background:#f8fafc}}.scenarioChoice:has(input:checked){{background:#dbeafe;border-color:#60a5fa;color:#1e3a8a}}.scenarioChoice input{{width:13px;height:13px;padding:0;margin:0}}main{{padding:18px 22px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}}.card{{display:block;background:white;border:1px solid #d7dee8;border-radius:8px;padding:12px;text-decoration:none;color:inherit;box-shadow:0 1px 4px rgba(15,23,42,.05)}}.card:hover{{border-color:#2563eb;box-shadow:0 5px 16px rgba(37,99,235,.12)}}h2{{font-size:15px;margin:9px 0 8px;overflow-wrap:anywhere;line-height:1.25}}.route{{height:96px;background:#f8fafc;border-radius:6px;overflow:hidden;border:1px solid #eef2f7}}.route svg{{width:100%;height:100%}}.metrics{{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}}.metrics span{{background:#edf2f7;border-radius:999px;padding:3px 7px;font-size:11px;color:#334155}}p{{font-size:12px;color:#64748b;line-height:1.4;margin:8px 0 0}}.empty{{padding:28px;color:#64748b}}@media (max-width:1060px){{.controlRow{{grid-template-columns:1fr 1fr 1fr}}.count{{padding-bottom:0}}}}@media (max-width:680px){{header{{padding:16px}}.toolbar{{padding:12px}}.controlRow{{grid-template-columns:1fr}}main{{grid-template-columns:1fr;padding:12px}}}}
+</style></head><body><header><h1>OD + LD + Ego Trajectory Explorers</h1><p>Synchronized scene viewers with OD tracks, complete LD map layers, scenario-tag intervals, frame-local context, playback, timelines, and notes.</p></header>
+<section class="toolbar">
+  <div class="controlRow">
+    <label>Search<input id="recordingSearch" type="search" autocomplete="off"></label>
+    <label>Min objects<input id="minObjectsFilter" type="number" min="0" step="1"></label>
+    <label>Min tag events<input id="minTagEventsFilter" type="number" min="0" step="1"></label>
+    <label>Sort<select id="sortField"><option value="recording">Recording</option><option value="frames">Frames</option><option value="duration">Duration</option><option value="objects">Objects</option><option value="tagEvents">Tag intervals</option><option value="tagScenarios">Tagged scenarios</option></select></label>
+    <label>Order<select id="sortDirection"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
+    <button id="clearFilters" type="button">Clear</button>
+    <div id="resultCount" class="count"></div>
+  </div>
+  <div class="scenarioPanel">
+    <div class="scenarioHeader"><strong>Scenario tags</strong><span>matches all selected</span></div>
+    <div id="scenarioFilter" class="scenarioChoices">{scenario_items}</div>
+  </div>
+</section>
+<main id="recordingGrid">{cards}</main>
+<script>
+const INDEX_ROWS = {row_json};
+const grid = document.getElementById('recordingGrid');
+const count = document.getElementById('resultCount');
+const controls = ['recordingSearch','scenarioFilter','minObjectsFilter','minTagEventsFilter','sortField','sortDirection'].map(id => document.getElementById(id));
+function escapeHtml(value) {{
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[ch]));
+}}
+function numericValue(id) {{
+  const value = Number(document.getElementById(id).value);
+  return Number.isFinite(value) ? value : 0;
+}}
+function cardHtml(row) {{
+  return `<a class="card" href="${{escapeHtml(row.file)}}" data-recording="${{escapeHtml(row.recording)}}">
+  <div class="route">${{row.thumbnail || ''}}</div>
+  <h2>${{escapeHtml(row.recording)}}</h2>
+  <div class="metrics"><span>${{row.frames}} frames</span><span>${{Number(row.duration).toFixed(1)}}s</span><span>${{row.objects}} objects</span></div>
+  <div class="metrics"><span>${{row.lines}} lane lines</span><span>${{row.boundaries}} boundaries</span><span>${{row.roadmarks}} roadmarks</span></div>
+  <div class="metrics"><span>${{row.tagScenarios}} tagged scenarios</span><span>${{row.tagEvents}} tag intervals</span></div>
+  <p>${{escapeHtml(row.topClasses)}}</p>
+</a>`;
+}}
+function applyIndexFilters() {{
+  const query = document.getElementById('recordingSearch').value.trim().toLowerCase();
+  const selectedScenarios = [...document.querySelectorAll('#scenarioFilter input:checked')].map(input => input.value);
+  const minObjects = numericValue('minObjectsFilter');
+  const minTagEvents = numericValue('minTagEventsFilter');
+  const sortField = document.getElementById('sortField').value;
+  const direction = document.getElementById('sortDirection').value === 'desc' ? -1 : 1;
+  const filtered = INDEX_ROWS.filter(row => {{
+    if (query && !String(row.recording).toLowerCase().includes(query)) return false;
+    if (selectedScenarios.length && !selectedScenarios.every(scenario => (row.tagScenarioList || []).includes(scenario))) return false;
+    if (Number(row.objects) < minObjects) return false;
+    if (Number(row.tagEvents) < minTagEvents) return false;
+    return true;
+  }}).sort((a, b) => {{
+    const av = a[sortField];
+    const bv = b[sortField];
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * direction;
+    return String(av).localeCompare(String(bv), undefined, {{numeric: true}}) * direction;
+  }});
+  grid.innerHTML = filtered.length ? filtered.map(cardHtml).join('') : '<div class="empty">No matching recordings</div>';
+  count.textContent = `${{filtered.length}} / ${{INDEX_ROWS.length}} recordings`;
+}}
+for (const control of controls) control.addEventListener('input', applyIndexFilters);
+for (const control of controls) control.addEventListener('change', applyIndexFilters);
+document.getElementById('clearFilters').addEventListener('click', () => {{
+  document.getElementById('recordingSearch').value = '';
+  document.getElementById('minObjectsFilter').value = '';
+  document.getElementById('minTagEventsFilter').value = '';
+  document.getElementById('sortField').value = 'recording';
+  document.getElementById('sortDirection').value = 'asc';
+  for (const input of document.querySelectorAll('#scenarioFilter input')) input.checked = false;
+  applyIndexFilters();
+}});
+applyIndexFilters();
+</script></body></html>"""
+
+
+def inject_lane_tracker(output_path: Path, canonical: dict) -> None:
+    result = run_following_lane(canonical)
+    render_original_explorer_with_lane_tracker(output_path, result, output_path)
+
+
+def row_from_explorer(output_path: Path) -> dict:
+    match = EXPLORER_DATA_MARKER.search(output_path.read_text(encoding="utf-8"))
+    if match is None:
+        raise ValueError(f"Unable to read explorer payload: {output_path}")
+    data = json.loads(match.group(1))
+    try:
+        return {
+            "recording": data["summary"]["recording"],
+            "file": output_path.name,
+            "frames": data["summary"]["frames"],
+            "duration": data["summary"]["durationSec"],
+            "objects": data["summary"]["objects"],
+            "lines": data["ld"]["summary"]["laneLines"],
+            "boundaries": data["ld"]["summary"]["roadBoundaries"],
+            "roadmarks": data["ld"]["summary"]["roadmarks"],
+            "tagScenarios": len(data["tags"]["scenarios"]),
+            "tagEvents": len(data["tags"]["events"]),
+            "tagScenarioList": data["tags"]["scenarios"],
+            "topClasses": ", ".join(
+                f"{key}:{value}"
+                for key, value in list(data["summary"]["classCounts"].items())[:6]
+            ),
+            "thumbnail": base.thumbnail_svg(data),
+        }
+    finally:
+        del data
+
+
+def existing_rows_by_recording(output_dir: Path) -> dict[str, dict]:
+    rows = {}
+    output_paths = sorted(output_dir.glob("*_animated_odld_explorer.html"))
+    progress = ProgressReporter("explorer-index", len(output_paths), "recording")
+    progress.start()
+    for output_path in output_paths:
+        row = row_from_explorer(output_path)
+        rows[row["recording"]] = row
+        progress.advance(row["recording"])
+        gc.collect()
+    return rows
 
 
 def main() -> None:
@@ -2077,43 +2226,20 @@ def main() -> None:
         action="store_true",
         help="Rebuild the index/manifest from already generated explorer HTML.",
     )
+    parser.add_argument(
+        "--regenerate-existing",
+        action="store_true",
+        help="Regenerate explorer HTML even when the output file already exists.",
+    )
     parser.add_argument("recordings", nargs="*")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.index_from_existing:
-        rows = []
-        marker = re.compile(r"const DATA = (\{.*?\});\s*const ", re.DOTALL)
-        for output_path in sorted(
-            args.output_dir.glob("*_animated_odld_explorer.html")
-        ):
-            match = marker.search(output_path.read_text(encoding="utf-8"))
-            if match is None:
-                raise ValueError(f"Unable to read explorer payload: {output_path}")
-            data = json.loads(match.group(1))
-            rows.append(
-                {
-                    "recording": data["summary"]["recording"],
-                    "file": output_path.name,
-                    "frames": data["summary"]["frames"],
-                    "duration": data["summary"]["durationSec"],
-                    "objects": data["summary"]["objects"],
-                    "lines": data["ld"]["summary"]["laneLines"],
-                    "boundaries": data["ld"]["summary"]["roadBoundaries"],
-                    "roadmarks": data["ld"]["summary"]["roadmarks"],
-                    "tagScenarios": len(data["tags"]["scenarios"]),
-                    "tagEvents": len(data["tags"]["events"]),
-                    "topClasses": ", ".join(
-                        f"{key}:{value}"
-                        for key, value in list(
-                            data["summary"]["classCounts"].items()
-                        )[:6]
-                    ),
-                    "thumbnail": base.thumbnail_svg(data),
-                }
-            )
-            del data
-            gc.collect()
+        rows = sorted(
+            existing_rows_by_recording(args.output_dir).values(),
+            key=lambda row: row["recording"],
+        )
         args.index_path.parent.mkdir(parents=True, exist_ok=True)
         args.index_path.write_text(index_html(rows), encoding="utf-8")
         manifest_path = args.output_dir / "manifest.json"
@@ -2158,8 +2284,22 @@ def main() -> None:
             for path in canonical_paths
             if path.name.removesuffix("_canonical_odld_frames.json") in requested
         ]
-    rows = []
+    rows_by_recording = existing_rows_by_recording(args.output_dir)
+    generation_progress = ProgressReporter(
+        "odld-explorers", len(canonical_paths), "recording"
+    )
+    generation_progress.start()
     for index, canonical_path in enumerate(canonical_paths, 1):
+        recording = canonical_path.name.removesuffix("_canonical_odld_frames.json")
+        output_name = f"{recording}_animated_odld_explorer.html"
+        output_path = args.output_dir / output_name
+        if output_path.is_file() and not args.regenerate_existing:
+            if recording not in rows_by_recording:
+                rows_by_recording[recording] = row_from_explorer(output_path)
+            print(f"[{index}/{len(canonical_paths)}] {recording}: skipped existing explorer")
+            generation_progress.advance(f"{recording}: skipped")
+            gc.collect()
+            continue
         with canonical_path.open(encoding="utf-8") as handle:
             canonical = json.load(handle)
         recording = canonical["recording_id"]
@@ -2175,29 +2315,27 @@ def main() -> None:
             recording, args.window_dir, canonical
         )
         debug_counts = write_debug_payloads(scene_dir, canonical, args.output_dir)
-        output_name = f"{recording}_animated_odld_explorer.html"
-        output_path = args.output_dir / output_name
         output_path.write_text(scene_html(data), encoding="utf-8")
+        inject_lane_tracker(output_path, canonical)
         top_classes = ", ".join(
             f"{key}:{value}"
             for key, value in list(data["summary"]["classCounts"].items())[:6]
         )
-        rows.append(
-            {
-                "recording": recording,
-                "file": output_name,
-                "frames": data["summary"]["frames"],
-                "duration": data["summary"]["durationSec"],
-                "objects": data["summary"]["objects"],
-                "lines": data["ld"]["summary"]["laneLines"],
-                "boundaries": data["ld"]["summary"]["roadBoundaries"],
-                "roadmarks": data["ld"]["summary"]["roadmarks"],
-                "tagScenarios": len(data["tags"]["scenarios"]),
-                "tagEvents": len(data["tags"]["events"]),
-                "topClasses": top_classes,
-                "thumbnail": base.thumbnail_svg(data),
-            }
-        )
+        rows_by_recording[recording] = {
+            "recording": recording,
+            "file": output_name,
+            "frames": data["summary"]["frames"],
+            "duration": data["summary"]["durationSec"],
+            "objects": data["summary"]["objects"],
+            "lines": data["ld"]["summary"]["laneLines"],
+            "boundaries": data["ld"]["summary"]["roadBoundaries"],
+            "roadmarks": data["ld"]["summary"]["roadmarks"],
+            "tagScenarios": len(data["tags"]["scenarios"]),
+            "tagEvents": len(data["tags"]["events"]),
+            "tagScenarioList": data["tags"]["scenarios"],
+            "topClasses": top_classes,
+            "thumbnail": base.thumbnail_svg(data),
+        }
         print(
             f"[{index}/{len(canonical_paths)}] {recording}: "
             f"{data['summary']['objects']} objects, "
@@ -2207,11 +2345,13 @@ def main() -> None:
             f"{len(data['tags']['events'])} intervals, "
             f"{debug_counts['od']} OD + {debug_counts['ld']} LD debug records"
         )
+        generation_progress.advance(f"{recording}: generated")
         # Each recording can embed tens of MB of OD/LD payload. Release it
         # before loading the next scene so all-recording regeneration remains
         # reliable on Windows.
         del canonical, data
         gc.collect()
+    rows = sorted(rows_by_recording.values(), key=lambda row: row["recording"])
     args.index_path.parent.mkdir(parents=True, exist_ok=True)
     args.index_path.write_text(index_html(rows), encoding="utf-8")
     manifest = {

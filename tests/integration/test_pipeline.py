@@ -111,6 +111,49 @@ def test_run_pipeline_script_works_without_pythonpath(tmp_path: Path) -> None:
     assert (recording_root / "frame_000010" / "frame.json").is_file()
     assert not (recording_root / "frame_000001").exists()
     assert not (output_root / "02_windows").exists()
+    assert not (output_root / "02_frame_inputs" / "profiling").exists()
+
+
+def test_run_pipeline_profile_generation_writes_artifacts(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[2]
+    source_root = tmp_path / "source"
+    output_root = tmp_path / "outputs"
+    write_synthetic_recording(source_root)
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo / "run_pipeline.py"),
+            "--source-root",
+            str(source_root),
+            "--output-root",
+            str(output_root),
+            "--frame-limit",
+            "2",
+            "--profile-generation",
+            RECORDING,
+        ],
+        cwd=repo,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    profiling = output_root / "02_frame_inputs" / "profiling"
+    assert (profiling / "generation_metrics.csv").is_file()
+    assert (profiling / "generation_summary.json").is_file()
+    assert (profiling / "generation_time_graph.png").is_file()
+    assert (profiling / "processing_fps_graph.png").is_file()
+    assert (profiling / "cumulative_output_size_graph.png").is_file()
+    summary = json.loads((profiling / "generation_summary.json").read_text(encoding="utf-8"))
+    assert summary["total_processed_frames"] == 2
+    assert summary["total_generated_output_size_bytes"] > 0
+    assert "Generation profile:" in result.stdout
 
 
 def test_sample_pipeline_and_schema_validation(tmp_path: Path) -> None:

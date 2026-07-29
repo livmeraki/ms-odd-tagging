@@ -19,6 +19,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from ms_odd_tagging.common.config import MODEL_INPUTS, WINDOWS
+from ms_odd_tagging.common.progress import ProgressReporter
 
 
 DEFAULT_INPUT_DIR = WINDOWS
@@ -1305,12 +1306,20 @@ def main():
         },
         "recordings": [],
     }
-    for path in files:
+    selected_files = [
+        path
+        for path in files
+        if not recordings or motional_recording_id(path) in recordings
+    ]
+
+    recording_progress = ProgressReporter(
+        "model-input recordings", len(selected_files), "recording"
+    )
+    recording_progress.start()
+    for path in selected_files:
         data = json.loads(path.read_text(encoding="utf-8"))
         data["_source_file"] = str(path)
         recording_id = data["recording_id"]
-        if recordings and recording_id not in recordings:
-            continue
         recording_dir = args.output_dir / safe_name(recording_id)
         ensure_dir(recording_dir)
         windows = data["windows"]
@@ -1322,6 +1331,10 @@ def main():
             "window_count": len(windows),
             "windows": [],
         }
+        window_progress = ProgressReporter(
+            f"model-input {recording_id}", len(windows), "window"
+        )
+        window_progress.start()
         for window in windows:
             window_dir = recording_dir / safe_name(window["window_id"])
             ensure_dir(window_dir)
@@ -1369,8 +1382,10 @@ def main():
                     },
                 }
             )
+            window_progress.advance(window["window_id"])
         manifest["recordings"].append(recording_summary)
         converted.append((recording_id, len(windows)))
+        recording_progress.advance(f"{recording_id}: {len(windows)} windows")
     manifest_path = args.output_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2),

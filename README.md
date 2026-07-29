@@ -56,6 +56,9 @@ export MS_ODD_OUTPUT_ROOT=/path/to/ms-odd-tagging-data/outputs
 
 Use `--odld` for a recording containing `annotations_OD.json`, `annotations_LD.json`, and `traj_lcs.txt`. Add `--frame-limit 1` for a fast smoke run or `--stop-after canonical` while debugging. BEV/model inputs are sampled by real timestamps at 1 frame per second by default. Change this with `--frames-per-second 2` or use `--all-frames` when full-frame output is required. Dynamic rule tagging still evaluates every canonical frame.
 
+Add `--profile-generation` to write optional generation timing, processing FPS,
+and storage metrics under `outputs/02_frame_inputs/profiling/`.
+
 Each stage is also independently executable:
 
 ```bash
@@ -83,7 +86,7 @@ python -m ms_odd_tagging.input_generator.frame_input_revised \
 
 It does not replace the current generator. It also writes
 `outputs/02_frame_inputs_revised/revised_bev_review.html`. Revised BEVs annotate
-ego and object speed/velocity, the latest logical-lane and stable-lead
+ego speed/velocity, the latest logical-lane and stable-lead
 assignments, and the configured 30.0 m ego-footprint proximity boundary.
 
 Generate standalone tagged-scenario explorers from canonical JSON or a raw trajectory:

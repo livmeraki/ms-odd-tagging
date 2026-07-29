@@ -9,6 +9,7 @@ from pathlib import Path
 from statistics import median
 
 from ms_odd_tagging.common.config import CANONICAL, WINDOWS
+from ms_odd_tagging.common.progress import ProgressReporter
 
 from ms_odd_tagging.tagger.rule_based.registry import (
     compact_window_summary,
@@ -507,6 +508,8 @@ def main():
             *args.canonical_dir.glob("*_canonical_odld_frames.json"),
         }
     )
+    progress = ProgressReporter("motional-windows", len(canonical_paths), "recording")
+    progress.start()
     for source_path in canonical_paths:
         output_path, result = build_recording(source_path, args.output_dir)
         tag_counts = {
@@ -525,6 +528,9 @@ def main():
             }
         )
         print(f"Wrote {output_path}")
+        progress.advance(
+            f"{result['recording_id']}: {len(result['windows'])} windows"
+        )
 
     manifest_path = args.output_dir / "manifest.json"
     with manifest_path.open("w", encoding="utf-8") as handle:

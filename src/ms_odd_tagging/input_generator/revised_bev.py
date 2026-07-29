@@ -141,44 +141,15 @@ def _velocity_text(vector: Any) -> tuple[str, float | None]:
 def _annotate_kinematics(
     output_path: Path,
     frame: dict[str, Any],
-    visible_objects: list[tuple[dict[str, Any], tuple[float, float]]],
-    screen,
     lane_context: dict[str, Any] | None,
     proximity_radius_m: float,
 ) -> None:
     image = Image.open(output_path).convert("RGB")
     draw = ImageDraw.Draw(image)
     try:
-        font = ImageFont.truetype("DejaVuSans.ttf", 13)
         bold = ImageFont.truetype("DejaVuSans-Bold.ttf", 14)
     except OSError:
-        font = ImageFont.load_default()
-        bold = font
-
-    lane_objects = {
-        str(item.get("object_id")): item
-        for item in (lane_context or {}).get("objects", [])
-    }
-    lead_id = str(((lane_context or {}).get("lead") or {}).get("object_id") or "")
-    for obj, center_ego in visible_objects:
-        object_id = str(obj.get("object_id"))
-        velocity, _ = _velocity_text(obj.get("velocity_lcs_mps"))
-        lane_id = lane_objects.get(object_id, {}).get("logical_lane_id")
-        prefix = "LEAD " if object_id == lead_id else ""
-        label = (
-            f"{prefix}#{object_id} {obj.get('class') or 'unknown'} | {velocity}"
-            f" | lane={lane_id or 'n/a'}"
-        )
-        x, y = screen(center_ego)
-        box = draw.textbbox((x + 7, y - 8), label, font=font, anchor="lm")
-        draw.rounded_rectangle(
-            (box[0] - 3, box[1] - 2, box[2] + 3, box[3] + 2),
-            radius=3,
-            fill=(255, 255, 255, 220),
-            outline=(220, 38, 38) if object_id == lead_id else (100, 116, 139),
-            width=2 if object_id == lead_id else 1,
-        )
-        draw.text((x + 7, y - 8), label, fill=(15, 23, 42), font=font, anchor="lm")
+        bold = ImageFont.load_default()
 
     ego = frame.get("ego") or {}
     ego_velocity, calculated_speed = _velocity_text(ego.get("velocity_lcs_mps"))
@@ -291,7 +262,6 @@ def render_revised_bev_png(
             color, line_width, alpha = LANE_STYLES.get(pattern, LANE_STYLES["unknown"])
             _draw_feature(canvas, _feature_points(feature, points_by_id), ego_position, ego_yaw, screen, extent, color, line_width, alpha)
 
-    visible_objects = []
     lead_id = str(((lane_context or {}).get("lead") or {}).get("object_id") or "")
     for obj in frame.get("objects", []):
         position = obj.get("position_lcs_m")
@@ -300,7 +270,6 @@ def render_revised_bev_png(
         center_ego = lcs_to_ego(position, ego_position, ego_yaw)
         if not visible(center_ego):
             continue
-        visible_objects.append((obj, center_ego))
         color = hex_to_rgb(CLASS_COLORS.get(obj.get("class"), "#64748b"))
         corners_lcs = _object_corners_lcs(obj, ego_yaw)
         if corners_lcs:
@@ -331,8 +300,6 @@ def render_revised_bev_png(
     _annotate_kinematics(
         output_path,
         frame,
-        visible_objects,
-        screen,
         lane_context,
         proximity_radius_m,
     )

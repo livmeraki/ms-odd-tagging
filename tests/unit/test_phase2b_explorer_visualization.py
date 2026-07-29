@@ -15,6 +15,154 @@ import generate_odld_dataset_explorers_w_scenario_tag as explorer  # noqa: E402
 from ms_odd_tagging.tagger.rule_based.scenario_event import ScenarioEvent  # noqa: E402
 
 
+def test_index_links_to_same_output_directory() -> None:
+    page = explorer.index_html(
+        [
+            {
+                "file": "sample_animated_odld_explorer.html",
+                "thumbnail": "<svg></svg>",
+                "recording": "sample",
+                "frames": 4,
+                "duration": 0.3,
+                "objects": 1,
+                "lines": 2,
+                "boundaries": 1,
+                "roadmarks": 1,
+                "tagScenarios": 1,
+                "tagEvents": 1,
+                "tagScenarioList": ["stationary"],
+                "topClasses": "car:1",
+            }
+        ]
+    )
+    assert 'href="sample_animated_odld_explorer.html"' in page
+    assert "const INDEX_ROWS =" in page
+    assert 'id="recordingSearch"' in page
+    assert 'id="scenarioFilter"' in page
+    assert 'id="sortField"' in page
+    assert '<input type="checkbox" value="stationary">' in page
+    assert "selectedScenarios.every" in page
+    assert "dataset_scene_explorers_odld_w_scenario_tag/" not in page
+
+
+def test_row_from_existing_explorer_payload(tmp_path: Path) -> None:
+    output = tmp_path / "sample_animated_odld_explorer.html"
+    data = {
+        "summary": {
+            "recording": "sample",
+            "frames": 4,
+            "durationSec": 0.3,
+            "objects": 1,
+            "classCounts": {"car": 1},
+        },
+        "trajectory": {"x": [0], "y": [0]},
+        "objects": [],
+        "ld": {
+            "summary": {"laneLines": 2, "roadBoundaries": 1, "roadmarks": 1},
+        },
+        "tags": {"scenarios": ["stationary"], "events": [{"scenario": "stationary"}]},
+    }
+    output.write_text(
+        f"<script>const DATA = {json.dumps(data)};\nconst x = 1;</script>",
+        encoding="utf-8",
+    )
+
+    row = explorer.row_from_explorer(output)
+
+    assert row["recording"] == "sample"
+    assert row["file"] == output.name
+    assert row["tagScenarios"] == 1
+    assert row["tagEvents"] == 1
+    assert row["tagScenarioList"] == ["stationary"]
+    assert row["topClasses"] == "car:1"
+
+
+def test_existing_rows_by_recording_reads_all_generated_explorers(tmp_path: Path) -> None:
+    for recording in ("rec-a", "rec-b"):
+        data = {
+            "summary": {
+                "recording": recording,
+                "frames": 4,
+                "durationSec": 0.3,
+                "objects": 1,
+                "classCounts": {"car": 1},
+            },
+            "trajectory": {"x": [0], "y": [0]},
+            "objects": [],
+            "ld": {
+                "summary": {"laneLines": 2, "roadBoundaries": 1, "roadmarks": 1},
+            },
+            "tags": {"scenarios": [], "events": []},
+        }
+        (tmp_path / f"{recording}_animated_odld_explorer.html").write_text(
+            f"<script>const DATA = {json.dumps(data)};\nconst x = 1;</script>",
+            encoding="utf-8",
+        )
+
+    rows = explorer.existing_rows_by_recording(tmp_path)
+
+    assert sorted(rows) == ["rec-a", "rec-b"]
+
+
+def test_main_skip_reuses_existing_row_without_reparse(
+    tmp_path: Path, monkeypatch
+) -> None:
+    canonical_dir = tmp_path / "canonical"
+    output_dir = tmp_path / "explorers"
+    canonical_dir.mkdir()
+    output_dir.mkdir()
+    recording = "sample"
+    (canonical_dir / f"{recording}_canonical_odld_frames.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (output_dir / f"{recording}_animated_odld_explorer.html").write_text(
+        "<html></html>", encoding="utf-8"
+    )
+    cached_row = {
+        "recording": recording,
+        "file": f"{recording}_animated_odld_explorer.html",
+        "frames": 4,
+        "duration": 0.3,
+        "objects": 1,
+        "lines": 2,
+        "boundaries": 1,
+        "roadmarks": 1,
+        "tagScenarios": 1,
+        "tagEvents": 1,
+        "tagScenarioList": ["stationary"],
+        "topClasses": "car:1",
+        "thumbnail": "<svg></svg>",
+    }
+    monkeypatch.setattr(
+        explorer,
+        "existing_rows_by_recording",
+        lambda path: {recording: cached_row},
+    )
+    monkeypatch.setattr(
+        explorer,
+        "row_from_explorer",
+        lambda path: (_ for _ in ()).throw(AssertionError("reparsed skipped explorer")),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_odld_dataset_explorers_w_scenario_tag.py",
+            "--canonical-dir",
+            str(canonical_dir),
+            "--output-dir",
+            str(output_dir),
+            "--index-path",
+            str(tmp_path / "index.html"),
+        ],
+    )
+
+    explorer.main()
+
+    assert (tmp_path / "index.html").is_file()
+    assert (output_dir / "manifest.json").is_file()
+
+
 def _canonical() -> dict:
     roadmark = {
         "roadmark_id": "cw1",
@@ -108,6 +256,41 @@ def test_stale_window_events_are_replaced_by_current_detection(
         "canonical_per_frame_rule_events_stale_window_replaced"
     )
     assert payload["scenarios"] == ["traversing_crosswalk"]
+
+
+def test_unreliable_jerk_events_are_hidden_from_visualization(
+    tmp_path: Path, monkeypatch
+) -> None:
+    current = [
+        ScenarioEvent(
+            "high_magnitude_jerk",
+            0,
+            1,
+            0.0,
+            0.1,
+            0.1,
+            detector_version="phase2-motion-v1",
+        ),
+        ScenarioEvent(
+            "traversing_crosswalk",
+            2,
+            3,
+            0.2,
+            0.3,
+            0.1,
+            detector_version="phase2b-crosswalk-v1",
+        ),
+    ]
+    monkeypatch.setattr(
+        explorer, "detect_recording_events", lambda canonical, config: (current, {})
+    )
+
+    payload = explorer.build_tag_payload("sample", tmp_path, _canonical())
+
+    assert payload["scenarios"] == ["traversing_crosswalk"]
+    assert [event["scenario"] for event in payload["events"]] == [
+        "traversing_crosswalk"
+    ]
 
 
 def test_relation_payload_contains_geometry_states_and_footprint() -> None:

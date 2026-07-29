@@ -13,6 +13,11 @@ from ms_odd_tagging.tagger.rule_based.registry import (
     load_config,
 )
 from ms_odd_tagging.common.config import CANONICAL, FRAME_INPUTS_REVISED
+from ms_odd_tagging.common.progress import ProgressReporter
+from ms_odd_tagging.input_generator.generation_profile import (
+    GenerationProfiler,
+    finalize_profile,
+)
 
 from .frame_input import (
     DEFAULT_FRAMES_PER_SECOND,
@@ -39,9 +44,12 @@ def build_recording(
     max_objects: int,
     frames_per_second: float | None = DEFAULT_FRAMES_PER_SECOND,
     frame_limit: int | None = None,
+    profiler: GenerationProfiler | None = None,
 ) -> tuple[dict, int]:
     recording = json.loads(canonical_path.read_text(encoding="utf-8"))
     recording_id = recording["recording_id"]
+    if profiler is not None:
+        profiler.start_recording(recording_id, [canonical_path])
     selected_frames = sample_frames_by_rate(recording.get("frames", []), frames_per_second)
     if frame_limit is not None:
         selected_frames = selected_frames[:frame_limit]
@@ -56,7 +64,8 @@ def build_recording(
     lane_frames = {
         item["frame_index"]: item for item in lane_result.get("frames", [])
     }
-    (recording_dir / "recording_rule_events.json").write_text(
+    rule_path = recording_dir / "recording_rule_events.json"
+    rule_path.write_text(
         json.dumps(
             {
                 "schema_version": "rule-based-scenario-events-v1",
@@ -70,9 +79,16 @@ def build_recording(
         ),
         encoding="utf-8",
     )
+    if profiler is not None:
+        profiler.add_output_files([rule_path])
 
     rows = []
+    progress = ProgressReporter(
+        f"frame-input-revised {recording_id}", len(selected_frames), "frame"
+    )
+    progress.start()
     for frame in selected_frames:
+        sample_start = profiler.sample_start() if profiler is not None else 0.0
         index = frame["frame_index"]
         frame_dir = recording_dir / f"frame_{index:06d}"
         ensure_dir(frame_dir)
@@ -108,7 +124,6 @@ def build_recording(
                 "orientation": "ego-heading-up",
                 "annotations": [
                     "ego_speed_and_velocity",
-                    "object_speed_and_velocity",
                     "latest_lane_and_lead_assignment",
                     "footprint_proximity_boundary",
                 ],
@@ -125,10 +140,15 @@ def build_recording(
         )
         frame_path = frame_dir / "frame.json"
         frame_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        (frame_dir / "gt_reference.json").write_text(
+        gt_reference_path = frame_dir / "gt_reference.json"
+        gt_reference_path.write_text(
             json.dumps(derivation_context, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        if profiler is not None:
+            profiler.record_sample(
+                index, sample_start, [bev_path, frame_path, gt_reference_path]
+            )
         rows.append(
             {
                 "recording_id": recording_id,
@@ -140,6 +160,10 @@ def build_recording(
                 "relative_bev": bev_path.relative_to(output_dir).as_posix(),
             }
         )
+        progress.advance(f"frame {index}")
+
+    if profiler is not None:
+        profiler.finish_recording()
 
     return {
         "recording_id": recording_id,
@@ -194,6 +218,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--right-m", type=float, default=45.0)
     parser.add_argument("--back-m", type=float, default=25.0)
     parser.add_argument("--forward-m", type=float, default=95.0)
+    parser.add_argument(
+        "--profile-generation",
+        action="store_true",
+        help="Write optional time and storage profiling artifacts under output_dir/profiling.",
+    )
     return parser.parse_args()
 
 
@@ -213,6 +242,11 @@ def main() -> int:
         "recordings": [],
     }
     review_rows = []
+    profiler = GenerationProfiler(args.output_dir) if args.profile_generation else None
+    recording_progress = ProgressReporter(
+        "frame-input-revised recordings", len(files), "recording"
+    )
+    recording_progress.start()
     for path in files:
         summary, _ = build_recording(
             path,
@@ -222,13 +256,18 @@ def main() -> int:
             max_objects=args.max_objects,
             frames_per_second=None if args.all_frames else args.frames_per_second,
             frame_limit=args.frame_limit,
+            profiler=profiler,
         )
         manifest["recordings"].append(summary)
         review_rows.extend(summary["frames"])
+        recording_progress.advance(
+            f"{summary['recording_id']}: {summary['generated_frame_count']} frames"
+        )
     (args.output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     review_path = write_review_html(args.output_dir, review_rows)
     print(f"Generated {len(review_rows)} revised BEV(s).")
     print(f"Review: {review_path}")
+    finalize_profile(profiler)
     return 0
 
 

@@ -6,6 +6,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from ms_odd_tagging.common.config import DATA_RAW, OUTPUT_ROOT
@@ -14,9 +15,10 @@ from ms_odd_tagging.common.config import DATA_RAW, OUTPUT_ROOT
 SRC_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_stage(module: str, arguments: list[str]) -> None:
+def run_stage(index: int, total: int, module: str, arguments: list[str]) -> None:
     command = [sys.executable, "-m", module, *arguments]
-    print(f"\n==> {' '.join(command)}", flush=True)
+    print(f"\n==> Stage {index}/{total}: {module}", flush=True)
+    print(f"    {' '.join(command)}", flush=True)
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
@@ -24,7 +26,10 @@ def run_stage(module: str, arguments: list[str]) -> None:
         if not existing_pythonpath
         else f"{SRC_ROOT}{os.pathsep}{existing_pythonpath}"
     )
+    start = time.monotonic()
     subprocess.run(command, check=True, env=env)
+    elapsed = time.monotonic() - start
+    print(f"<== Stage {index}/{total} complete in {elapsed:.1f}s", flush=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -49,6 +54,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stop-after", choices=("canonical", "frame-inputs"), default="frame-inputs"
     )
+    parser.add_argument(
+        "--profile-generation",
+        action="store_true",
+        help="Write optional frame-generation profiling artifacts under output-root/02_frame_inputs/profiling.",
+    )
     return parser.parse_args()
 
 
@@ -68,7 +78,8 @@ def main() -> int:
     if args.odld:
         canonical_args.extend(["--ld-radius-m", str(args.ld_radius_m)])
     canonical_args.extend(args.recordings)
-    run_stage(canonical_module, canonical_args)
+    stage_total = 1 if args.stop_after == "canonical" else 2
+    run_stage(1, stage_total, canonical_module, canonical_args)
     if args.stop_after == "canonical":
         return 0
 
@@ -81,7 +92,9 @@ def main() -> int:
         model_args.append("--all-frames")
     else:
         model_args.extend(["--frames-per-second", str(args.frames_per_second)])
-    run_stage("ms_odd_tagging.input_generator.frame_input", model_args)
+    if args.profile_generation:
+        model_args.append("--profile-generation")
+    run_stage(2, stage_total, "ms_odd_tagging.input_generator.frame_input", model_args)
     return 0
 
 

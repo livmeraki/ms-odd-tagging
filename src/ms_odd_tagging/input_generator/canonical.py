@@ -11,6 +11,7 @@ from pathlib import Path
 from statistics import median
 
 from ms_odd_tagging.common.config import CANONICAL, DATA_RAW
+from ms_odd_tagging.common.progress import ProgressReporter
 
 
 DEFAULT_RECORDINGS = [
@@ -604,6 +605,8 @@ def main():
         "scenario_taxonomy": SCENARIO_TAXONOMY,
         "recordings": [],
     }
+    progress = ProgressReporter("canonical", len(args.recordings), "recording")
+    progress.start()
     for recording in args.recordings:
         path, output = build_recording(args.source_root, args.output_root, recording)
         manifest["recordings"].append(
@@ -615,6 +618,7 @@ def main():
             }
         )
         print(f"Wrote {path}")
+        progress.advance(f"{recording} -> {path.name}")
 
     manifest_path = args.output_root / "manifest.json"
     with manifest_path.open("w", encoding="utf-8") as handle:

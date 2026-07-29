@@ -18,6 +18,7 @@ from pathlib import Path
 from statistics import median
 
 from ms_odd_tagging.common.config import CANONICAL, DATA_RAW
+from ms_odd_tagging.common.progress import ProgressReporter
 
 from . import canonical as od
 
@@ -770,7 +771,10 @@ def main() -> None:
         },
         "recordings": [],
     }
-    for recording in recording_names(args.source_root, args.recordings):
+    recordings = list(recording_names(args.source_root, args.recordings))
+    progress = ProgressReporter("canonical-odld", len(recordings), "recording")
+    progress.start()
+    for recording in recordings:
         output_path, result = build_recording(
             args.source_root,
             args.output_root,
@@ -787,6 +791,7 @@ def main() -> None:
             }
         )
         print(f"Wrote {output_path}")
+        progress.advance(f"{recording} -> {output_path.name}")
 
     manifest_path = args.output_root / "manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)

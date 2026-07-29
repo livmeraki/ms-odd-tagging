@@ -14,6 +14,11 @@ from ms_odd_tagging.tagger.rule_based.registry import (
     load_config,
 )
 from ms_odd_tagging.common.config import CANONICAL, FRAME_INPUTS
+from ms_odd_tagging.common.progress import ProgressReporter
+from ms_odd_tagging.input_generator.generation_profile import (
+    GenerationProfiler,
+    finalize_profile,
+)
 
 from .model_input import (
     DEFAULT_LD_LINE_PATTERNS,
@@ -259,10 +264,13 @@ def build_recording(
     max_objects: int,
     frames_per_second: float | None = DEFAULT_FRAMES_PER_SECOND,
     frame_limit: int | None = None,
+    profiler: GenerationProfiler | None = None,
 ) -> tuple[dict[str, Any], int]:
     recording = json.loads(canonical_path.read_text(encoding="utf-8"))
     recording["_source_file"] = str(canonical_path)
     recording_id = recording["recording_id"]
+    if profiler is not None:
+        profiler.start_recording(recording_id, [canonical_path])
     frames = sample_frames_by_rate(recording.get("frames", []), frames_per_second)
     if frame_limit is not None:
         frames = frames[:frame_limit]
@@ -293,9 +301,14 @@ def build_recording(
         ),
         encoding="utf-8",
     )
+    if profiler is not None:
+        profiler.add_output_files([rule_path])
 
     rows = []
+    progress = ProgressReporter(f"frame-input {recording_id}", len(frames), "frame")
+    progress.start()
     for frame in frames:
+        sample_start = profiler.sample_start() if profiler is not None else 0.0
         index = frame["frame_index"]
         directory = recording_dir / f"frame_{index:06d}"
         ensure_dir(directory)
@@ -330,10 +343,15 @@ def build_recording(
         frame_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        (directory / "gt_reference.json").write_text(
+        gt_reference_path = directory / "gt_reference.json"
+        gt_reference_path.write_text(
             json.dumps(derivation_context, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        if profiler is not None:
+            profiler.record_sample(
+                index, sample_start, [bev_path, frame_path, gt_reference_path]
+            )
         rows.append(
             {
                 "frame_id": payload["frame_id"],
@@ -344,6 +362,10 @@ def build_recording(
                 "bev": str(bev_path),
             }
         )
+        progress.advance(f"frame {index}")
+
+    if profiler is not None:
+        profiler.finish_recording()
 
     return {
         "recording_id": recording_id,
@@ -402,6 +424,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ld-line-patterns", default="solid,dashed")
     parser.add_argument("--ld-roadmark-classes", default="crosswalk,stopline")
     parser.add_argument("--ld-boundary-attributes", default="")
+    parser.add_argument(
+        "--profile-generation",
+        action="store_true",
+        help="Write optional time and storage profiling artifacts under output_dir/profiling.",
+    )
     return parser.parse_args()
 
 
@@ -431,6 +458,9 @@ def main() -> int:
         "recordings": [],
     }
     converted = []
+    profiler = GenerationProfiler(args.output_dir) if args.profile_generation else None
+    recording_progress = ProgressReporter("frame-input recordings", len(files), "recording")
+    recording_progress.start()
     for path in files:
         summary, count = build_recording(
             path,
@@ -441,9 +471,11 @@ def main() -> int:
             max_objects=args.max_objects,
             frames_per_second=None if args.all_frames else args.frames_per_second,
             frame_limit=args.frame_limit,
+            profiler=profiler,
         )
         manifest["recordings"].append(summary)
         converted.append((summary["recording_id"], count))
+        recording_progress.advance(f"{summary['recording_id']}: {count} frames")
     manifest_path = args.output_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -452,6 +484,7 @@ def main() -> int:
     print(f"Wrote {manifest_path}")
     for recording_id, count in converted:
         print(f"- {recording_id}: {count} frames / {count} BEVs")
+    finalize_profile(profiler)
     return 0
 
 
