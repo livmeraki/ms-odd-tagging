@@ -7,6 +7,10 @@ from pathlib import Path
 import pytest
 
 from ms_odd_tagging.input_generator.revised_bev import (
+    ACTIVE_OBJECT_COLOR,
+    CROSSWALK_COLOR,
+    FORWARD_ARC_COLOR,
+    PEDESTRIAN_COLOR,
     _clip_segment,
     _forward_arc_points,
     _footprint_buffer_points,
@@ -34,6 +38,16 @@ def test_phase3c_forward_arc_uses_configured_radii_and_angle() -> None:
     assert min(radii) == pytest.approx(2.0)
     assert max(radii) == pytest.approx(30.0)
     assert max(angles) == pytest.approx(30.0)
+
+
+def test_vlm_debug_colors_are_distinct_from_crosswalk_and_each_other() -> None:
+    colors = {
+        CROSSWALK_COLOR,
+        FORWARD_ARC_COLOR,
+        ACTIVE_OBJECT_COLOR,
+        PEDESTRIAN_COLOR,
+    }
+    assert len(colors) == 4
 
 
 def test_revised_bev_renders_png_with_requested_dimensions(tmp_path: Path) -> None:

@@ -29,6 +29,12 @@ LANE_STYLES = {
     "unknown": ("#64748b", 2, 0.58),
 }
 
+CROSSWALK_COLOR = "#e11d48"
+STOPLINE_COLOR = "#7c3aed"
+FORWARD_ARC_COLOR = "#111827"
+ACTIVE_OBJECT_COLOR = "#facc15"
+PEDESTRIAN_COLOR = "#f97316"
+
 
 def _feature_points(feature: dict[str, Any], points_by_id: dict[str, Any]) -> list:
     return ld_feature_lcs_points(feature, points_by_id)
@@ -197,6 +203,9 @@ def _annotate_kinematics(
         lines.append(
             f"forward crossing arc={inner:.1f}-{outer:.1f} m, +/-{half_angle:.0f} deg"
         )
+    lines.append(
+        "legend: ARC charcoal | ACTIVE yellow | PEDESTRIAN orange | CROSSWALK red"
+    )
     widths = [draw.textbbox((0, 0), line, font=bold)[2] for line in lines]
     panel_width = max(widths) + 22
     panel_height = len(lines) * 21 + 12
@@ -283,7 +292,13 @@ def render_revised_bev_png(
         feature = lookups["roadmarks"].get(str(feature_id))
         if feature:
             class_name = str(feature.get("class") or "unknown").lower()
-            color = "#e11d48" if "crosswalk" in class_name else "#f97316"
+            color = (
+                CROSSWALK_COLOR
+                if "crosswalk" in class_name
+                else STOPLINE_COLOR
+                if "stopline" in class_name
+                else "#64748b"
+            )
             _draw_feature(canvas, _feature_points(feature, points_by_id), ego_position, ego_yaw, screen, extent, color, 4, 0.88, closed=feature.get("shape_type") == "polygon")
 
     for feature_id in nearby.get("lane_lines", []):
@@ -300,7 +315,7 @@ def render_revised_bev_png(
             canvas.line(
                 *start,
                 *end,
-                hex_to_rgb("#db2777"),
+                hex_to_rgb(FORWARD_ARC_COLOR),
                 width=4,
                 alpha=0.95,
             )
@@ -322,12 +337,17 @@ def render_revised_bev_png(
         center_ego = lcs_to_ego(position, ego_position, ego_yaw)
         if not visible(center_ego):
             continue
-        color = hex_to_rgb(CLASS_COLORS.get(obj.get("class"), "#64748b"))
+        class_name = str(obj.get("class") or "").lower()
+        color = hex_to_rgb(
+            PEDESTRIAN_COLOR
+            if class_name == "pedestrian"
+            else CLASS_COLORS.get(class_name, "#64748b")
+        )
         corners_lcs = _object_corners_lcs(obj, ego_yaw)
         if corners_lcs:
             corners = [screen(lcs_to_ego(point, ego_position, ego_yaw)) for point in corners_lcs]
             outline = (
-                hex_to_rgb("#db2777")
+                hex_to_rgb(ACTIVE_OBJECT_COLOR)
                 if str(obj.get("object_id")) in active_object_ids
                 else hex_to_rgb("#dc2626")
                 if str(obj.get("object_id")) == lead_id

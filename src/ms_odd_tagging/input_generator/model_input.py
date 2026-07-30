@@ -44,7 +44,8 @@ CLASS_COLORS = {
     "motorcycle": "#4f9a38",
     "bicycle": "#0d9488",
     "rider_other": "#14b8a6",
-    "pedestrian": "#e11d48",
+    # Keep pedestrians visually separate from red crosswalk roadmarks.
+    "pedestrian": "#f97316",
     "traffic_sign": "#10b981",
     "traffic_sign_chevron": "#f97316",
     "traffic_light_car": "#0891b2",
