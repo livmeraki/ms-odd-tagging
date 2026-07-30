@@ -133,6 +133,22 @@ their detections are unreliable.
 Traffic-light splits, slow-lead semantics, stopping split by lead, and
 lane-change lead/trail semantics remain unknown until dedicated rules exist.
 
+To duplicate the full tagged ODLD + lane debugger and author GT directly at its
+current synchronized frame:
+
+```bash
+python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py \
+  --source-dir outputs/scenarios/following_lane_phase2_all_tags/04_visualization \
+  --output-dir outputs/07_odld_scenario_explorers_gt_authoring_all_tags \
+  --frame-input-root outputs/02_frame_inputs_revised \
+  --gt-dir data/02_gt \
+  --regenerate-existing
+```
+
+The integrated reviewer preserves the scenario filter and collapsed authoring
+groups while moving between recordings in the same browser tab. It can also add
+the explorer's exact current frame to the downloaded frame-GT JSON.
+
 ## Important contracts
 
 - Canonical schemas are `od-trajectory-canonical-frame-v1` and experimental `odld-trajectory-canonical-frame-v1`.

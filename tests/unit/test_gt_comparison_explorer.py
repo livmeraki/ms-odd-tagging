@@ -5,7 +5,10 @@ import sys
 SCRIPT_DIR = Path(__file__).resolve().parents[2] / "scripts" / "odld_explorer"
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from add_gt_comparison_to_tagged_explorers import inject  # noqa: E402
+from add_gt_comparison_to_tagged_explorers import (  # noqa: E402
+    inject,
+    inject_authoring,
+)
 
 
 def test_inject_adds_gt_panel_without_replacing_existing_timeline(tmp_path: Path) -> None:
@@ -47,6 +50,8 @@ def test_inject_can_add_synchronized_gt_authoring_panel(tmp_path: Path) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     page = """<title>Original</title><style></style>
+    <div class="panel"><div id="laneTrackerTimeline"></div></div>
+    <div class="panel"><div id="map"></div></div>
     <div class="panel"><div id="tagTimeline"></div></div>
 <script>
 const DEBUG_BASE = `debug/${encodeURIComponent(DATA.summary.recording)}`;
@@ -66,7 +71,12 @@ renderTagTimeline();
         "download_filename": "rec_frame_gt.json",
         "taxonomy": ["stationary", "low_magnitude_speed"],
         "scenario_groups": [
-            {"label": "motion", "implemented": True, "scenarios": ["stationary", "low_magnitude_speed"]}
+            {
+                "id": "motion",
+                "label": "motion",
+                "implemented": True,
+                "scenarios": ["stationary", "low_magnitude_speed"],
+            }
         ],
         "minimum_scored_frame_index": 5,
         "gt": {
@@ -100,9 +110,69 @@ renderTagTimeline();
         authoring_payload,
     )
     assert 'id="gtAuthoringPanel"' in result
+    assert 'class="gtAuthoringWorkspace"' in result
+    assert result.index('id="map"') < result.index('id="gtAuthoringPanel"')
+    assert result.index('id="gtAuthoringPanel"') < result.index('id="tagTimeline"')
     assert "const GT_AUTHORING =" in result
     assert "gtAuthoringByFrameIndex" in result
     assert "gtAuthoringInitialize();" in result
     assert "gtAuthoringRender();" in result
     assert "ms-odd-frame-gt:${GT_AUTHORING.recording_id}" in result
-    assert "Download GT JSON" in result
+    assert "Download JSON" in result
+    assert "Add current frame" in result
+    assert "gtAuthoringAddCurrentFrame" in result
+    assert "selectedScenarios" in result
+    assert "groupOpen" in result
+    assert "window.name" in result
+
+
+def test_authoring_only_duplicate_preserves_recent_explorer_debugger(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    page = """<title>Original</title><style></style>
+    <div class="panel"><div id="laneTrackerTimeline"></div></div>
+    <div class="panel"><div id="map"></div></div>
+    <div class="panel"><div id="tagTimeline"></div></div>
+<script>
+const DEBUG_BASE = `debug/${encodeURIComponent(DATA.summary.recording)}`;
+const DATA = {};
+function setFrame() {
+  updateTagTimelineCursor();
+}
+renderTagTimeline();
+</script>"""
+    payload = {
+        "recording_id": "rec",
+        "download_filename": "rec_frame_gt.json",
+        "taxonomy": ["stationary"],
+        "scenario_groups": [
+            {
+                "id": "motion",
+                "label": "motion",
+                "implemented": True,
+                "scenarios": ["stationary"],
+            }
+        ],
+        "minimum_scored_frame_index": 5,
+        "gt": {
+            "schema_version": "scenario-frame-gt-labels-v1",
+            "recording_id": "rec",
+            "formula_filled_label_fields": ["stationary"],
+            "frames": {},
+        },
+        "review_frames": [],
+    }
+    result = inject_authoring(page, "rec", payload, source_dir)
+    assert result.count('id="tagTimeline"') == 1
+    assert result.count('id="map"') == 1
+    assert result.count('id="laneTrackerTimeline"') == 1
+    assert 'class="panel gtRemovedLaneTrackerTimeline"' in result
+    assert result.count('id="gtAuthoringPanel"') == 1
+    assert 'class="gtAuthoringWorkspace"' in result
+    assert result.index('id="map"') < result.index('id="gtAuthoringPanel"')
+    assert result.index('id="gtAuthoringPanel"') < result.index('id="tagTimeline"')
+    assert "GT comparison" not in result
+    assert "gtAuthoringInitialize();" in result
+    assert "Add current frame" in result

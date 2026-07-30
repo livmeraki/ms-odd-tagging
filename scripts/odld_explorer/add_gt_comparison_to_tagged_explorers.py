@@ -32,18 +32,36 @@ GT_STYLE = """
 """
 
 GT_AUTHORING_STYLE = """
-  #gtAuthoringPanel { display:grid; gap:10px; }
-  .gtAuthoringHeader { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
-  .gtAuthoringHeader h2 { margin:0 auto 0 0; font-size:17px; }
+  .gtRemovedLaneTrackerTimeline { display:none; }
+  #gtAuthoringPanel { display:block; }
+  #gtAuthoringPanel > summary { cursor:pointer; font-size:17px; font-weight:700; padding:2px 0 8px; }
+  .gtAuthoringWorkspace { display:grid; grid-template-columns:minmax(0,1.55fr) minmax(340px,.9fr); gap:12px; align-items:start; }
+  .gtAuthoringWorkspace > .panel { min-width:0; }
+  .gtAuthoringWorkspace #gtAuthoringPanel[open] { max-height:608px; overflow:auto; }
+  .gtAuthoringBody { display:grid; gap:10px; }
+  .gtAuthoringHeader { display:grid; gap:7px; }
+  .gtAuthoringCommandRow { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+  .gtAuthoringFileRow { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
   .gtAuthoringHeader label { display:grid; gap:4px; font-size:11px; color:#64748b; text-transform:uppercase; font-weight:700; }
-  .gtAuthoringHeader select, .gtAuthoringHeader input { height:30px; min-width:150px; border:1px solid #cbd5e1; border-radius:5px; padding:0 7px; background:white; color:#172033; }
-  .gtAuthoringHeader button, .gtAuthoringActions button { height:30px; border:1px solid #94a3b8; border-radius:5px; background:white; color:#334155; padding:0 9px; cursor:pointer; }
+  .gtAuthoringHeader select, .gtAuthoringHeader input { width:auto; height:30px; min-width:150px; border:1px solid #cbd5e1; border-radius:5px; padding:0 7px; background:white; color:#172033; }
+  .gtAuthoringHeader button, .gtAuthoringActions button { width:auto; min-height:32px; height:auto; border:1px solid #94a3b8; border-radius:5px; background:white; color:#334155; padding:6px 9px; cursor:pointer; }
+  .gtAuthoringCommandRow button, .gtAuthoringFileRow button { width:100%; margin:0; }
   .gtAuthoringHeader button.primary, .gtAuthoringActions button.primary { background:#2458c6; border-color:#2458c6; color:white; }
   .gtAuthoringHeader button:disabled, .gtAuthoringActions button:disabled, .gtTri button:disabled { opacity:.45; cursor:not-allowed; }
   #gtAuthoringImport { display:none; }
   #gtAuthoringStatus { color:#475569; font-size:12px; line-height:1.45; }
   #gtAuthoringExclusion { color:#b42318; font-weight:700; font-size:12px; }
-  .gtAuthoringLabels { display:grid; grid-template-columns:minmax(180px,1fr) auto; gap:6px 10px; align-items:center; max-height:340px; overflow:auto; border-top:1px solid #e2e8f0; padding-top:8px; }
+  .gtScenarioPicker { position:relative; width:100%; }
+  .gtScenarioPicker > summary { cursor:pointer; min-height:32px; width:100%; box-sizing:border-box; border:1px solid #94a3b8; border-radius:5px; padding:7px 9px; background:white; color:#334155; list-style:none; }
+  .gtScenarioPickerMenu { position:absolute; z-index:12; left:0; right:0; min-width:330px; max-height:320px; overflow:auto; padding:9px; border:1px solid #94a3b8; border-radius:6px; background:white; box-shadow:0 8px 24px rgba(15,23,42,.16); }
+  .gtScenarioPickerActions { display:flex; gap:6px; margin-bottom:8px; }
+  .gtScenarioChoices { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:5px 10px; }
+  .gtScenarioChoice { display:flex !important; align-items:center; gap:6px !important; font-size:12px !important; color:#334155 !important; text-transform:none !important; font-weight:500 !important; }
+  .gtScenarioChoice input { width:14px; height:14px; min-width:0; }
+  .gtAuthoringLabels { max-height:430px; overflow:auto; border-top:1px solid #e2e8f0; padding-top:4px; }
+  .gtAuthoringGroup { border-bottom:1px solid #e2e8f0; padding:7px 0; }
+  .gtAuthoringGroup > summary { cursor:pointer; font-weight:700; color:#334155; }
+  .gtAuthoringGroupLabels { display:grid; grid-template-columns:minmax(180px,1fr) auto; gap:6px 10px; align-items:center; padding-top:7px; }
   .gtAuthoringLabel.predicted { color:#16803c; font-weight:700; }
   .gtTri { display:flex; }
   .gtTri button { min-width:32px; height:28px; border:1px solid #cbd5e1; border-left:0; background:white; color:#334155; cursor:pointer; }
@@ -57,20 +75,39 @@ GT_AUTHORING_STYLE = """
   .gtAuthoringFields input, .gtAuthoringFields select, .gtAuthoringFields textarea { width:100%; border:1px solid #cbd5e1; border-radius:5px; padding:6px 7px; background:white; color:#172033; font:13px system-ui,sans-serif; }
   .gtAuthoringFields textarea { min-height:54px; resize:vertical; }
   .gtAuthoringActions { display:flex; gap:7px; flex-wrap:wrap; }
+  @media (max-width:1250px) {
+    .gtAuthoringWorkspace { grid-template-columns:1fr; }
+    .gtAuthoringWorkspace #gtAuthoringPanel[open] { max-height:none; overflow:visible; }
+  }
 """
 
 
 def authoring_panel() -> str:
     return """
-    <div class="panel" id="gtAuthoringPanel">
+    <details class="panel" id="gtAuthoringPanel" open>
+      <summary>Frame GT authoring</summary>
+      <div class="gtAuthoringBody">
       <div class="gtAuthoringHeader">
-        <h2>Frame GT authoring</h2>
-        <label>Scenario<select id="gtAuthoringScenario"><option value="all">all scenarios</option></select></label>
-        <button id="gtAuthoringPrev" type="button">Previous review frame</button>
-        <button id="gtAuthoringNext" type="button">Next review frame</button>
-        <button id="gtAuthoringImportButton" type="button">Import GT JSON</button>
+        <details class="gtScenarioPicker" id="gtScenarioPicker">
+          <summary id="gtScenarioPickerSummary">Scenario filter</summary>
+          <div class="gtScenarioPickerMenu">
+            <div class="gtScenarioPickerActions">
+              <button id="gtScenarioSelectAll" type="button">Select all</button>
+              <button id="gtScenarioSelectNone" type="button">Select none</button>
+            </div>
+            <div id="gtScenarioChoices" class="gtScenarioChoices"></div>
+          </div>
+        </details>
+        <div class="gtAuthoringCommandRow">
+          <button id="gtAuthoringAddCurrent" class="primary" type="button">Add current frame</button>
+          <button id="gtAuthoringPrev" type="button">Previous</button>
+          <button id="gtAuthoringNext" type="button">Next</button>
+        </div>
+        <div class="gtAuthoringFileRow">
+          <button id="gtAuthoringImportButton" type="button">Import JSON</button>
+          <button id="gtAuthoringDownload" class="primary" type="button">Download JSON</button>
+        </div>
         <input id="gtAuthoringImport" type="file" accept="application/json">
-        <button id="gtAuthoringDownload" class="primary" type="button">Download GT JSON</button>
       </div>
       <div id="gtAuthoringStatus"></div>
       <div id="gtAuthoringExclusion"></div>
@@ -85,7 +122,8 @@ def authoring_panel() -> str:
         <label>Reviewer<input id="gtAuthoringReviewer"></label>
         <label>Notes<textarea id="gtAuthoringNotes"></textarea></label>
       </div>
-    </div>"""
+      </div>
+    </details>"""
 
 
 def authoring_script(payload: dict) -> str:
@@ -97,10 +135,54 @@ def authoring_script(payload: dict) -> str:
         + serialized
         + r""";
 const gtAuthoringStorageKey = `ms-odd-frame-gt:${GT_AUTHORING.recording_id}`;
+const gtAuthoringPreferenceKey = 'ms-odd-gt-authoring-preferences-v2';
 let gtAuthoring = GT_AUTHORING.gt;
 const gtAuthoringFrames = GT_AUTHORING.review_frames || [];
 const gtAuthoringByFrameIndex = new Map(gtAuthoringFrames.map(frame => [Number(frame.frame_index), frame]));
 const gtAuthoringFrameIndexes = gtAuthoringFrames.map(frame => Number(frame.frame_index)).sort((a, b) => a - b);
+let gtAuthoringPreferences = {
+  panelOpen: true,
+  pickerOpen: false,
+  selectedScenarios: [...GT_AUTHORING.taxonomy],
+  groupOpen: Object.fromEntries(GT_AUTHORING.scenario_groups.map(group => [group.id, true])),
+};
+function gtAuthoringLoadPreferences() {
+  try {
+    const local = JSON.parse(localStorage.getItem(gtAuthoringPreferenceKey) || 'null');
+    const carried = window.name.startsWith(`${gtAuthoringPreferenceKey}:`)
+      ? JSON.parse(window.name.slice(gtAuthoringPreferenceKey.length + 1))
+      : null;
+    const saved = carried || local;
+    if (saved && typeof saved === 'object') {
+      gtAuthoringPreferences = {
+        ...gtAuthoringPreferences,
+        ...saved,
+        groupOpen: {...gtAuthoringPreferences.groupOpen, ...(saved.groupOpen || {})},
+        selectedScenarios: Array.isArray(saved.selectedScenarios)
+          ? saved.selectedScenarios.filter(label => GT_AUTHORING.taxonomy.includes(label))
+          : gtAuthoringPreferences.selectedScenarios,
+      };
+    }
+  } catch (error) { console.warn(error); }
+}
+function gtAuthoringSavePreferences() {
+  const serialized = JSON.stringify(gtAuthoringPreferences);
+  localStorage.setItem(gtAuthoringPreferenceKey, serialized);
+  window.name = `${gtAuthoringPreferenceKey}:${serialized}`;
+}
+function gtAuthoringActiveLabelsAt(frameIndex) {
+  return (tags.events || [])
+    .filter(event => Number(event.startFrame) <= frameIndex && frameIndex <= Number(event.endFrame))
+    .map(event => event.scenario);
+}
+function gtAuthoringRegisterFrame(item) {
+  const index = Number(item.frame_index);
+  if (gtAuthoringByFrameIndex.has(index)) return;
+  gtAuthoringFrames.push(item);
+  gtAuthoringByFrameIndex.set(index, item);
+  gtAuthoringFrameIndexes.push(index);
+  gtAuthoringFrameIndexes.sort((a, b) => a - b);
+}
 function gtAuthoringRestore() {
   try {
     const saved = localStorage.getItem(gtAuthoringStorageKey);
@@ -119,13 +201,25 @@ function gtAuthoringNormalize() {
     const saved = gtAuthoring.frames[item.frame_id] || {};
     gtAuthoring.frames[item.frame_id] = {...baseline, ...saved, labels: {...(baseline.labels || {}), ...(saved.labels || {})}};
   }
+  for (const [frameId, saved] of Object.entries(gtAuthoring.frames)) {
+    const frameIndex = Number(saved.frame_index);
+    if (!Number.isFinite(frameIndex) || gtAuthoringByFrameIndex.has(frameIndex)) continue;
+    gtAuthoringRegisterFrame({
+      frame_id: frameId,
+      frame_index: frameIndex,
+      timestamp_unix_s: saved.timestamp_unix_s ?? null,
+      time_since_start_s: saved.time_since_start_s ?? traj.rel_t[frameIndex] ?? null,
+      reference: saved.reference || {},
+      derivation: {active_labels: gtAuthoringActiveLabelsAt(frameIndex), active_events: []},
+    });
+  }
 }
 function gtAuthoringSave() {
   localStorage.setItem(gtAuthoringStorageKey, JSON.stringify(gtAuthoring));
   gtAuthoringRender();
 }
-function gtAuthoringSelectedScenario() {
-  return document.getElementById('gtAuthoringScenario').value;
+function gtAuthoringSelectedScenarios() {
+  return new Set(gtAuthoringPreferences.selectedScenarios);
 }
 function currentGtAuthoringFrame() {
   return gtAuthoringByFrameIndex.get(Number(currentIndex)) || null;
@@ -135,8 +229,8 @@ function currentGtAuthoringGtFrame() {
   return item ? gtAuthoring.frames[item.frame_id] : null;
 }
 function gtAuthoringScenarioLabels(definition) {
-  const scenario = gtAuthoringSelectedScenario();
-  return scenario === 'all' ? definition.scenarios : definition.scenarios.filter(label => label === scenario);
+  const selected = gtAuthoringSelectedScenarios();
+  return definition.scenarios.filter(label => selected.has(label));
 }
 function gtAuthoringSetFrameByOffset(offset) {
   if (!gtAuthoringFrameIndexes.length) return;
@@ -155,6 +249,62 @@ function gtAuthoringSetFrameByOffset(offset) {
   }
   setFrame(target);
 }
+function gtAuthoringSpeedLabels(speed) {
+  const labels = {
+    stationary: null,
+    low_magnitude_speed: null,
+    medium_magnitude_speed: null,
+    high_magnitude_speed: null,
+  };
+  if (!Number.isFinite(speed) || speed < 0) return labels;
+  const active = speed >= 15 ? 'high_magnitude_speed'
+    : speed >= 5 ? 'medium_magnitude_speed'
+    : speed >= 0.5 ? 'low_magnitude_speed'
+    : 'stationary';
+  for (const label of Object.keys(labels)) labels[label] = label === active;
+  return labels;
+}
+function gtAuthoringAddCurrentFrame() {
+  const frameIndex = Number(currentIndex);
+  if (gtAuthoringByFrameIndex.has(frameIndex)) return;
+  const frameId = `${GT_AUTHORING.recording_id}:frame-${String(frameIndex).padStart(6, '0')}`;
+  const speed = Number(traj.speed?.[frameIndex]);
+  const labels = Object.fromEntries(GT_AUTHORING.taxonomy.map(label => [label, null]));
+  Object.assign(labels, gtAuthoringSpeedLabels(speed));
+  const time = Number(traj.rel_t?.[frameIndex]);
+  const item = {
+    frame_id: frameId,
+    frame_index: frameIndex,
+    timestamp_unix_s: null,
+    time_since_start_s: Number.isFinite(time) ? time : null,
+    reference: {
+      speed_mps: Number.isFinite(speed) ? speed : null,
+      speed_formula_label: Object.entries(labels).find(([label, value]) =>
+        value === true && ['stationary','low_magnitude_speed','medium_magnitude_speed','high_magnitude_speed'].includes(label)
+      )?.[0] || null,
+    },
+    derivation: {
+      active_labels: gtAuthoringActiveLabelsAt(frameIndex),
+      active_events: [],
+    },
+  };
+  gtAuthoringRegisterFrame(item);
+  gtAuthoring.frames[frameId] = {
+    frame_id: frameId,
+    frame_index: frameIndex,
+    timestamp_unix_s: null,
+    time_since_start_s: item.time_since_start_s,
+    reference: item.reference,
+    labels,
+    confidence: null,
+    needs_review: true,
+    notes: '',
+    reviewer: '',
+    reviewed_at: '',
+    excluded_from_evaluation: frameIndex < GT_AUTHORING.minimum_scored_frame_index,
+  };
+  gtAuthoringSave();
+}
 function gtAuthoringSetLabel(label, value) {
   const frame = currentGtAuthoringGtFrame();
   if (!frame || frame.excluded_from_evaluation) return;
@@ -167,12 +317,26 @@ function gtAuthoringRenderLabels(item, frame) {
   if (!item || !frame) return;
   const predicted = new Set(item.derivation.active_labels || []);
   for (const definition of GT_AUTHORING.scenario_groups) {
-    for (const label of gtAuthoringScenarioLabels(definition)) {
+    const visibleLabels = gtAuthoringScenarioLabels(definition);
+    if (!visibleLabels.length) continue;
+    const details = document.createElement('details');
+    details.className = 'gtAuthoringGroup';
+    details.open = gtAuthoringPreferences.groupOpen[definition.id] !== false;
+    details.addEventListener('toggle', () => {
+      gtAuthoringPreferences.groupOpen[definition.id] = details.open;
+      gtAuthoringSavePreferences();
+    });
+    const summary = document.createElement('summary');
+    summary.textContent = `${definition.label} (${visibleLabels.length})`;
+    details.appendChild(summary);
+    const labelsRoot = document.createElement('div');
+    labelsRoot.className = 'gtAuthoringGroupLabels';
+    for (const label of visibleLabels) {
       const name = document.createElement('span');
       name.className = 'gtAuthoringLabel';
       name.classList.toggle('predicted', predicted.has(label));
       name.textContent = label.replaceAll('_', ' ') + (predicted.has(label) ? ' · predicted' : '');
-      root.appendChild(name);
+      labelsRoot.appendChild(name);
       const group = document.createElement('div');
       group.className = 'gtTri';
       for (const [text, value] of [['Y', true], ['N', false], ['?', null]]) {
@@ -185,8 +349,10 @@ function gtAuthoringRenderLabels(item, frame) {
         button.onclick = () => gtAuthoringSetLabel(label, value);
         group.appendChild(button);
       }
-      root.appendChild(group);
+      labelsRoot.appendChild(group);
     }
+    details.appendChild(labelsRoot);
+    root.appendChild(details);
   }
 }
 function gtAuthoringRender() {
@@ -195,8 +361,9 @@ function gtAuthoringRender() {
   const sampledCount = gtAuthoringFrames.length;
   document.getElementById('gtAuthoringPrev').disabled = !sampledCount;
   document.getElementById('gtAuthoringNext').disabled = !sampledCount;
+  document.getElementById('gtAuthoringAddCurrent').disabled = Boolean(item);
   if (!item || !frame) {
-    document.getElementById('gtAuthoringStatus').textContent = `Frame ${currentIndex} is not a sampled review frame.`;
+    document.getElementById('gtAuthoringStatus').textContent = `Frame ${currentIndex} is not in GT yet. Use “Review/tag current frame” to label this exact time.`;
     document.getElementById('gtAuthoringExclusion').textContent = '';
     document.getElementById('gtAuthoringLabels').innerHTML = '';
     for (const id of ['gtAuthoringNeedsReview','gtAuthoringConfidence','gtAuthoringReviewer','gtAuthoringNotes','gtAuthoringUnknownFalse','gtAuthoringCopyPrevious']) document.getElementById(id).disabled = true;
@@ -222,16 +389,50 @@ function gtAuthoringDownload() {
   URL.revokeObjectURL(url);
 }
 function gtAuthoringInitialize() {
-  const scenario = document.getElementById('gtAuthoringScenario');
+  gtAuthoringLoadPreferences();
+  const panel = document.getElementById('gtAuthoringPanel');
+  const picker = document.getElementById('gtScenarioPicker');
+  panel.open = gtAuthoringPreferences.panelOpen !== false;
+  picker.open = gtAuthoringPreferences.pickerOpen === true;
+  panel.addEventListener('toggle', () => {
+    gtAuthoringPreferences.panelOpen = panel.open;
+    gtAuthoringSavePreferences();
+  });
+  picker.addEventListener('toggle', () => {
+    gtAuthoringPreferences.pickerOpen = picker.open;
+    gtAuthoringSavePreferences();
+  });
+  const choices = document.getElementById('gtScenarioChoices');
   for (const label of GT_AUTHORING.taxonomy) {
-    const option = document.createElement('option');
-    option.value = label;
-    option.textContent = label.replaceAll('_', ' ');
-    scenario.appendChild(option);
+    const choice = document.createElement('label');
+    choice.className = 'gtScenarioChoice';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = label;
+    input.checked = gtAuthoringPreferences.selectedScenarios.includes(label);
+    input.addEventListener('change', () => {
+      gtAuthoringPreferences.selectedScenarios = [...choices.querySelectorAll('input:checked')].map(item => item.value);
+      gtAuthoringSavePreferences();
+      gtAuthoringUpdateScenarioSummary();
+      gtAuthoringRender();
+    });
+    const text = document.createElement('span');
+    text.textContent = label.replaceAll('_', ' ');
+    choice.append(input, text);
+    choices.appendChild(choice);
   }
+  const setScenarioSelection = checked => {
+    for (const input of choices.querySelectorAll('input')) input.checked = checked;
+    gtAuthoringPreferences.selectedScenarios = checked ? [...GT_AUTHORING.taxonomy] : [];
+    gtAuthoringSavePreferences();
+    gtAuthoringUpdateScenarioSummary();
+    gtAuthoringRender();
+  };
+  document.getElementById('gtScenarioSelectAll').onclick = () => setScenarioSelection(true);
+  document.getElementById('gtScenarioSelectNone').onclick = () => setScenarioSelection(false);
   gtAuthoringRestore();
   gtAuthoringNormalize();
-  scenario.addEventListener('change', gtAuthoringRender);
+  gtAuthoringUpdateScenarioSummary();
   for (const id of ['gtAuthoringNeedsReview','gtAuthoringConfidence','gtAuthoringReviewer','gtAuthoringNotes']) {
     document.getElementById(id).addEventListener('change', event => {
       const frame = currentGtAuthoringGtFrame();
@@ -244,6 +445,7 @@ function gtAuthoringInitialize() {
   }
   document.getElementById('gtAuthoringPrev').onclick = () => gtAuthoringSetFrameByOffset(-1);
   document.getElementById('gtAuthoringNext').onclick = () => gtAuthoringSetFrameByOffset(1);
+  document.getElementById('gtAuthoringAddCurrent').onclick = gtAuthoringAddCurrentFrame;
   document.getElementById('gtAuthoringDownload').onclick = gtAuthoringDownload;
   document.getElementById('gtAuthoringImportButton').onclick = () => document.getElementById('gtAuthoringImport').click();
   document.getElementById('gtAuthoringImport').onchange = async event => {
@@ -259,8 +461,7 @@ function gtAuthoringInitialize() {
   document.getElementById('gtAuthoringUnknownFalse').onclick = () => {
     const frame = currentGtAuthoringGtFrame();
     if (!frame) return;
-    const selected = gtAuthoringSelectedScenario();
-    const labels = selected === 'all' ? GT_AUTHORING.taxonomy : [selected];
+    const labels = [...gtAuthoringSelectedScenarios()];
     for (const label of labels) if (frame.labels[label] === null) frame.labels[label] = false;
     gtAuthoringSave();
   };
@@ -271,12 +472,18 @@ function gtAuthoringInitialize() {
     const position = gtAuthoringFrameIndexes.indexOf(Number(item.frame_index));
     if (position <= 0) return;
     const previous = gtAuthoring.frames[gtAuthoringByFrameIndex.get(gtAuthoringFrameIndexes[position - 1]).frame_id];
-    const selected = gtAuthoringSelectedScenario();
-    if (selected === 'all') frame.labels = {...previous.labels};
-    else frame.labels[selected] = previous.labels?.[selected] ?? null;
+    const selected = [...gtAuthoringSelectedScenarios()];
+    for (const label of selected) frame.labels[label] = previous.labels?.[label] ?? null;
     gtAuthoringSave();
   };
   gtAuthoringRender();
+}
+function gtAuthoringUpdateScenarioSummary() {
+  const selected = gtAuthoringPreferences.selectedScenarios.length;
+  document.getElementById('gtScenarioPickerSummary').textContent =
+    selected === GT_AUTHORING.taxonomy.length
+      ? `Scenario filter · all ${selected}`
+      : `Scenario filter · ${selected}/${GT_AUTHORING.taxonomy.length}`;
 }
 """
     )
@@ -304,6 +511,47 @@ def comparison_panel(recording_summary: dict, quality: dict) -> str:
       <div id="gtComparisonTimeline"></div>
       <div id="gtComparisonReadout">Click a GT or prediction marker to inspect that source frame.</div>
     </div>"""
+
+
+def inject_authoring(
+    page: str,
+    recording: str,
+    authoring_payload: dict,
+    source_dir: Path,
+) -> str:
+    """Duplicate a current tagged explorer and add synchronized GT editing."""
+    markers = {
+        "</style>": GT_AUTHORING_STYLE + "\n</style>",
+        '    <div class="panel"><div id="laneTrackerTimeline"></div></div>':
+            '    <div class="panel gtRemovedLaneTrackerTimeline" aria-hidden="true">'
+            '<div id="laneTrackerTimeline"></div></div>',
+        '    <div class="panel"><div id="map"></div></div>':
+            '    <div class="gtAuthoringWorkspace">\n'
+            '      <div class="panel"><div id="map"></div></div>\n'
+            + authoring_panel()
+            + '\n    </div>',
+        "const DATA =":
+            authoring_script(authoring_payload) + "\nconst DATA =",
+        "  updateTagTimelineCursor();\n}":
+            "  updateTagTimelineCursor();\n"
+            "  if (typeof gtAuthoringRender === 'function') gtAuthoringRender();\n}",
+        "renderTagTimeline();\n":
+            "renderTagTimeline();\ngtAuthoringInitialize();\n",
+    }
+    for old, new in markers.items():
+        if page.count(old) != 1:
+            raise ValueError(
+                f"{recording}: expected one authoring marker {old!r}, "
+                f"found {page.count(old)}"
+            )
+        page = page.replace(old, new, 1)
+    source_debug = (source_dir / "debug").resolve().as_uri()
+    page = page.replace(
+        "const DEBUG_BASE = `debug/${encodeURIComponent(DATA.summary.recording)}`;",
+        f"const DEBUG_BASE = `{source_debug}/${{encodeURIComponent(DATA.summary.recording)}}`;",
+        1,
+    )
+    return page.replace("<title>", "<title>GT authoring - ", 1)
 
 
 GT_SCRIPT = r"""
@@ -433,8 +681,7 @@ def inject(
         "</style>": GT_STYLE + authoring_style + "\n</style>",
         '    <div class="panel"><div id="tagTimeline"></div></div>':
             '    <div class="panel"><div id="tagTimeline"></div></div>\n'
-            + comparison_panel(recording_summary, quality)
-            + authoring_html,
+            + comparison_panel(recording_summary, quality),
         "const DATA =": "const GT_COMPARE = "
             + json.dumps(
                 {
@@ -473,6 +720,17 @@ def inject(
             "document.getElementById('gtMismatchOnly').addEventListener('change', renderGtComparison);\n"
             + authoring_init,
     }
+    if authoring_payload is not None:
+        markers['    <div class="panel"><div id="laneTrackerTimeline"></div></div>'] = (
+            '    <div class="panel gtRemovedLaneTrackerTimeline" aria-hidden="true">'
+            '<div id="laneTrackerTimeline"></div></div>'
+        )
+        markers['    <div class="panel"><div id="map"></div></div>'] = (
+            '    <div class="gtAuthoringWorkspace">\n'
+            '      <div class="panel"><div id="map"></div></div>\n'
+            + authoring_html
+            + '\n    </div>'
+        )
     if authoring_cursor:
         markers["  updateTagTimelineCursor();\n  updateGtComparisonCursor();\n}"] = (
             "  updateTagTimelineCursor();\n  updateGtComparisonCursor();\n"
