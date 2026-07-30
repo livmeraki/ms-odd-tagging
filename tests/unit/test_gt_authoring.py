@@ -205,6 +205,16 @@ def test_reviewer_contains_efficient_frame_review_controls(tmp_path: Path) -> No
     assert "end keyframe" not in page.lower()
 
 
+def test_write_reviewer_uses_relative_bev_paths(tmp_path: Path) -> None:
+    frame_inputs = tmp_path / "outputs" / "02_frame_inputs_revised"
+    make_frame(frame_inputs, 0, 2.0)
+    output = tmp_path / "outputs" / "frame_gt_authoring" / "review.html"
+    write_reviewer(frame_inputs, RECORDING, output)
+    page = output.read_text(encoding="utf-8")
+    assert "file://" not in page
+    assert "../02_frame_inputs_revised/Rec_Test_001/frame_000000/bev.png" in page
+
+
 def test_frames_before_detection_reliability_boundary_are_excluded(
     tmp_path: Path,
 ) -> None:

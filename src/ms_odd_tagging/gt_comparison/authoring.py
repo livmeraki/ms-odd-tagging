@@ -7,6 +7,7 @@ import argparse
 import html
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -123,17 +124,29 @@ def discover_recordings(frame_input_root: Path) -> list[str]:
     )
 
 
-def image_uri(frame_path: Path, bev: dict[str, Any] | None) -> str | None:
+def image_uri(
+    frame_path: Path,
+    bev: dict[str, Any] | None,
+    image_base_dir: Path | None = None,
+) -> str | None:
     if not isinstance(bev, dict) or not bev.get("path"):
         return None
     image_path = frame_path.parent / str(bev["path"])
-    return image_path.resolve().as_uri() if image_path.is_file() else None
+    if not image_path.is_file():
+        return None
+    if image_base_dir is not None:
+        return os.path.relpath(image_path.resolve(), image_base_dir.resolve()).replace(
+            os.sep,
+            "/",
+        )
+    return image_path.resolve().as_uri()
 
 
 def build_review_payload(
     frame_input_root: Path,
     recording: str,
     existing_gt_path: Path | None = None,
+    image_base_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Build a compact browser payload for independent sampled frames."""
     gt = build_frame_gt_payload(frame_input_root, recording, existing_gt_path)
@@ -180,7 +193,7 @@ def build_review_payload(
                     "scenario_signals": frame.get("scenario_signals") or {},
                     "ld_summary": (frame.get("ld") or {}).get("summary") or {},
                 },
-                "image": image_uri(frame_path, frame.get("bev")),
+                "image": image_uri(frame_path, frame.get("bev"), image_base_dir),
             }
         )
     return {
@@ -298,8 +311,13 @@ def write_reviewer(
     output_path: Path,
     existing_gt_path: Path | None = None,
 ) -> Path:
-    payload = build_review_payload(frame_input_root, recording, existing_gt_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_review_payload(
+        frame_input_root,
+        recording,
+        existing_gt_path,
+        output_path.parent,
+    )
     output_path.write_text(reviewer_html(payload), encoding="utf-8")
     return output_path
 
@@ -335,7 +353,12 @@ def main() -> int:
     for recording in recordings:
         gt_path = args.gt_root / f"{recording}_frame_gt.json"
         output_path = args.output_root / f"{recording}_frame_gt_review.html"
-        payload = build_review_payload(args.frame_input_root, recording, gt_path if gt_path.exists() else None)
+        payload = build_review_payload(
+            args.frame_input_root,
+            recording,
+            gt_path if gt_path.exists() else None,
+            output_path.parent,
+        )
         output_path.write_text(reviewer_html(payload), encoding="utf-8")
         rows.append({"recording": recording, "file": output_path.name, "frames": len(payload["review_frames"])})
         print(f"Wrote {output_path} ({len(payload['review_frames'])} sampled frames)")
