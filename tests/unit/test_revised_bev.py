@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import math
 import struct
 from pathlib import Path
@@ -105,3 +106,8 @@ def test_revised_bev_renders_png_with_requested_dimensions(tmp_path: Path) -> No
     assert content.startswith(b"\x89PNG\r\n\x1a\n")
     width, height = struct.unpack(">II", content[16:24])
     assert (width, height) == (320, 288)
+
+
+def test_revised_bev_does_not_draw_top_information_box() -> None:
+    source = inspect.getsource(render_revised_bev_png)
+    assert "_annotate_kinematics(" not in source

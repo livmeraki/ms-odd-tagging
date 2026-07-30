@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from ms_odd_tagging.common.config import DATA_GT, GT_COMPARISON, OUTPUT_ROOT
+from ms_odd_tagging.gt_comparison.authoring import build_review_payload
 
 DEFAULT_SOURCE_DIR = OUTPUT_ROOT / "scenarios" / "following_lane_tagged" / "04_visualization"
 DEFAULT_OUTPUT_DIR = OUTPUT_ROOT / "07_odld_scenario_explorers_gt_comparison"
@@ -29,6 +30,256 @@ GT_STYLE = """
   #gtComparisonTimeline { min-height:650px; }
   #gtComparisonReadout { margin-top:8px; padding:8px; border-radius:6px; background:#f8fafc; color:#334155; font-size:12px; line-height:1.45; }
 """
+
+GT_AUTHORING_STYLE = """
+  #gtAuthoringPanel { display:grid; gap:10px; }
+  .gtAuthoringHeader { display:flex; gap:8px; align-items:end; flex-wrap:wrap; }
+  .gtAuthoringHeader h2 { margin:0 auto 0 0; font-size:17px; }
+  .gtAuthoringHeader label { display:grid; gap:4px; font-size:11px; color:#64748b; text-transform:uppercase; font-weight:700; }
+  .gtAuthoringHeader select, .gtAuthoringHeader input { height:30px; min-width:150px; border:1px solid #cbd5e1; border-radius:5px; padding:0 7px; background:white; color:#172033; }
+  .gtAuthoringHeader button, .gtAuthoringActions button { height:30px; border:1px solid #94a3b8; border-radius:5px; background:white; color:#334155; padding:0 9px; cursor:pointer; }
+  .gtAuthoringHeader button.primary, .gtAuthoringActions button.primary { background:#2458c6; border-color:#2458c6; color:white; }
+  .gtAuthoringHeader button:disabled, .gtAuthoringActions button:disabled, .gtTri button:disabled { opacity:.45; cursor:not-allowed; }
+  #gtAuthoringImport { display:none; }
+  #gtAuthoringStatus { color:#475569; font-size:12px; line-height:1.45; }
+  #gtAuthoringExclusion { color:#b42318; font-weight:700; font-size:12px; }
+  .gtAuthoringLabels { display:grid; grid-template-columns:minmax(180px,1fr) auto; gap:6px 10px; align-items:center; max-height:340px; overflow:auto; border-top:1px solid #e2e8f0; padding-top:8px; }
+  .gtAuthoringLabel.predicted { color:#16803c; font-weight:700; }
+  .gtTri { display:flex; }
+  .gtTri button { min-width:32px; height:28px; border:1px solid #cbd5e1; border-left:0; background:white; color:#334155; cursor:pointer; }
+  .gtTri button:first-child { border-left:1px solid #cbd5e1; border-radius:5px 0 0 5px; }
+  .gtTri button:last-child { border-radius:0 5px 5px 0; }
+  .gtTri button.active[data-value="true"] { background:#16803c; color:white; }
+  .gtTri button.active[data-value="false"] { background:#b42318; color:white; }
+  .gtTri button.active[data-value="null"] { background:#6b7280; color:white; }
+  .gtAuthoringFields { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; }
+  .gtAuthoringFields label { display:grid; gap:4px; font-size:11px; color:#64748b; text-transform:uppercase; font-weight:700; }
+  .gtAuthoringFields input, .gtAuthoringFields select, .gtAuthoringFields textarea { width:100%; border:1px solid #cbd5e1; border-radius:5px; padding:6px 7px; background:white; color:#172033; font:13px system-ui,sans-serif; }
+  .gtAuthoringFields textarea { min-height:54px; resize:vertical; }
+  .gtAuthoringActions { display:flex; gap:7px; flex-wrap:wrap; }
+"""
+
+
+def authoring_panel() -> str:
+    return """
+    <div class="panel" id="gtAuthoringPanel">
+      <div class="gtAuthoringHeader">
+        <h2>Frame GT authoring</h2>
+        <label>Scenario<select id="gtAuthoringScenario"><option value="all">all scenarios</option></select></label>
+        <button id="gtAuthoringPrev" type="button">Previous review frame</button>
+        <button id="gtAuthoringNext" type="button">Next review frame</button>
+        <button id="gtAuthoringImportButton" type="button">Import GT JSON</button>
+        <input id="gtAuthoringImport" type="file" accept="application/json">
+        <button id="gtAuthoringDownload" class="primary" type="button">Download GT JSON</button>
+      </div>
+      <div id="gtAuthoringStatus"></div>
+      <div id="gtAuthoringExclusion"></div>
+      <div id="gtAuthoringLabels" class="gtAuthoringLabels"></div>
+      <div class="gtAuthoringActions">
+        <button id="gtAuthoringUnknownFalse" type="button">Set unknown to false</button>
+        <button id="gtAuthoringCopyPrevious" type="button">Copy previous review frame</button>
+      </div>
+      <div class="gtAuthoringFields">
+        <label>Review status<select id="gtAuthoringNeedsReview"><option value="true">Needs review</option><option value="false">Reviewed</option></select></label>
+        <label>Confidence<select id="gtAuthoringConfidence"><option value="">Not set</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+        <label>Reviewer<input id="gtAuthoringReviewer"></label>
+        <label>Notes<textarea id="gtAuthoringNotes"></textarea></label>
+      </div>
+    </div>"""
+
+
+def authoring_script(payload: dict) -> str:
+    serialized = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).replace(
+        "</", "<\\/"
+    )
+    return (
+        "const GT_AUTHORING = "
+        + serialized
+        + r""";
+const gtAuthoringStorageKey = `ms-odd-frame-gt:${GT_AUTHORING.recording_id}`;
+let gtAuthoring = GT_AUTHORING.gt;
+const gtAuthoringFrames = GT_AUTHORING.review_frames || [];
+const gtAuthoringByFrameIndex = new Map(gtAuthoringFrames.map(frame => [Number(frame.frame_index), frame]));
+const gtAuthoringFrameIndexes = gtAuthoringFrames.map(frame => Number(frame.frame_index)).sort((a, b) => a - b);
+function gtAuthoringRestore() {
+  try {
+    const saved = localStorage.getItem(gtAuthoringStorageKey);
+    if (saved) {
+      const loaded = JSON.parse(saved);
+      if (loaded.schema_version === gtAuthoring.schema_version) gtAuthoring = loaded;
+    }
+  } catch (error) { console.warn(error); }
+}
+function gtAuthoringNormalize() {
+  gtAuthoring.label_fields = [...GT_AUTHORING.taxonomy];
+  gtAuthoring.formula_filled_label_fields = [...(GT_AUTHORING.gt.formula_filled_label_fields || [])];
+  gtAuthoring.frames = gtAuthoring.frames || {};
+  for (const item of gtAuthoringFrames) {
+    const baseline = GT_AUTHORING.gt.frames[item.frame_id] || {};
+    const saved = gtAuthoring.frames[item.frame_id] || {};
+    gtAuthoring.frames[item.frame_id] = {...baseline, ...saved, labels: {...(baseline.labels || {}), ...(saved.labels || {})}};
+  }
+}
+function gtAuthoringSave() {
+  localStorage.setItem(gtAuthoringStorageKey, JSON.stringify(gtAuthoring));
+  gtAuthoringRender();
+}
+function gtAuthoringSelectedScenario() {
+  return document.getElementById('gtAuthoringScenario').value;
+}
+function currentGtAuthoringFrame() {
+  return gtAuthoringByFrameIndex.get(Number(currentIndex)) || null;
+}
+function currentGtAuthoringGtFrame() {
+  const item = currentGtAuthoringFrame();
+  return item ? gtAuthoring.frames[item.frame_id] : null;
+}
+function gtAuthoringScenarioLabels(definition) {
+  const scenario = gtAuthoringSelectedScenario();
+  return scenario === 'all' ? definition.scenarios : definition.scenarios.filter(label => label === scenario);
+}
+function gtAuthoringSetFrameByOffset(offset) {
+  if (!gtAuthoringFrameIndexes.length) return;
+  const current = Number(currentIndex);
+  let target = gtAuthoringFrameIndexes[0];
+  if (offset < 0) {
+    for (const frameIndex of gtAuthoringFrameIndexes) {
+      if (frameIndex < current) target = frameIndex;
+      else break;
+    }
+  } else {
+    target = gtAuthoringFrameIndexes[gtAuthoringFrameIndexes.length - 1];
+    for (const frameIndex of gtAuthoringFrameIndexes) {
+      if (frameIndex > current) { target = frameIndex; break; }
+    }
+  }
+  setFrame(target);
+}
+function gtAuthoringSetLabel(label, value) {
+  const frame = currentGtAuthoringGtFrame();
+  if (!frame || frame.excluded_from_evaluation) return;
+  frame.labels[label] = value;
+  gtAuthoringSave();
+}
+function gtAuthoringRenderLabels(item, frame) {
+  const root = document.getElementById('gtAuthoringLabels');
+  root.innerHTML = '';
+  if (!item || !frame) return;
+  const predicted = new Set(item.derivation.active_labels || []);
+  for (const definition of GT_AUTHORING.scenario_groups) {
+    for (const label of gtAuthoringScenarioLabels(definition)) {
+      const name = document.createElement('span');
+      name.className = 'gtAuthoringLabel';
+      name.classList.toggle('predicted', predicted.has(label));
+      name.textContent = label.replaceAll('_', ' ') + (predicted.has(label) ? ' · predicted' : '');
+      root.appendChild(name);
+      const group = document.createElement('div');
+      group.className = 'gtTri';
+      for (const [text, value] of [['Y', true], ['N', false], ['?', null]]) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = text;
+        button.dataset.value = String(value);
+        button.disabled = Boolean(frame.excluded_from_evaluation);
+        button.classList.toggle('active', frame.labels[label] === value);
+        button.onclick = () => gtAuthoringSetLabel(label, value);
+        group.appendChild(button);
+      }
+      root.appendChild(group);
+    }
+  }
+}
+function gtAuthoringRender() {
+  const item = currentGtAuthoringFrame();
+  const frame = currentGtAuthoringGtFrame();
+  const sampledCount = gtAuthoringFrames.length;
+  document.getElementById('gtAuthoringPrev').disabled = !sampledCount;
+  document.getElementById('gtAuthoringNext').disabled = !sampledCount;
+  if (!item || !frame) {
+    document.getElementById('gtAuthoringStatus').textContent = `Frame ${currentIndex} is not a sampled review frame.`;
+    document.getElementById('gtAuthoringExclusion').textContent = '';
+    document.getElementById('gtAuthoringLabels').innerHTML = '';
+    for (const id of ['gtAuthoringNeedsReview','gtAuthoringConfidence','gtAuthoringReviewer','gtAuthoringNotes','gtAuthoringUnknownFalse','gtAuthoringCopyPrevious']) document.getElementById(id).disabled = true;
+    return;
+  }
+  const known = Object.values(frame.labels || {}).filter(value => typeof value === 'boolean').length;
+  document.getElementById('gtAuthoringStatus').textContent = `Review frame ${item.frame_index} · ${known}/${GT_AUTHORING.taxonomy.length} labels set`;
+  document.getElementById('gtAuthoringExclusion').textContent = frame.excluded_from_evaluation ? `Excluded from scoring: source frames below ${GT_AUTHORING.minimum_scored_frame_index} are unreliable.` : '';
+  for (const id of ['gtAuthoringNeedsReview','gtAuthoringConfidence','gtAuthoringReviewer','gtAuthoringNotes','gtAuthoringUnknownFalse','gtAuthoringCopyPrevious']) document.getElementById(id).disabled = Boolean(frame.excluded_from_evaluation);
+  document.getElementById('gtAuthoringNeedsReview').value = String(Boolean(frame.needs_review));
+  document.getElementById('gtAuthoringConfidence').value = frame.confidence ?? '';
+  document.getElementById('gtAuthoringReviewer').value = frame.reviewer ?? '';
+  document.getElementById('gtAuthoringNotes').value = frame.notes ?? '';
+  gtAuthoringRenderLabels(item, frame);
+}
+function gtAuthoringDownload() {
+  const blob = new Blob([JSON.stringify(gtAuthoring, null, 2) + '\n'], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = GT_AUTHORING.download_filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+function gtAuthoringInitialize() {
+  const scenario = document.getElementById('gtAuthoringScenario');
+  for (const label of GT_AUTHORING.taxonomy) {
+    const option = document.createElement('option');
+    option.value = label;
+    option.textContent = label.replaceAll('_', ' ');
+    scenario.appendChild(option);
+  }
+  gtAuthoringRestore();
+  gtAuthoringNormalize();
+  scenario.addEventListener('change', gtAuthoringRender);
+  for (const id of ['gtAuthoringNeedsReview','gtAuthoringConfidence','gtAuthoringReviewer','gtAuthoringNotes']) {
+    document.getElementById(id).addEventListener('change', event => {
+      const frame = currentGtAuthoringGtFrame();
+      if (!frame) return;
+      const key = {gtAuthoringNeedsReview:'needs_review',gtAuthoringConfidence:'confidence',gtAuthoringReviewer:'reviewer',gtAuthoringNotes:'notes'}[id];
+      frame[key] = id === 'gtAuthoringNeedsReview' ? event.target.value === 'true' : event.target.value || '';
+      if (id === 'gtAuthoringNeedsReview' && !frame.needs_review) frame.reviewed_at = new Date().toISOString();
+      gtAuthoringSave();
+    });
+  }
+  document.getElementById('gtAuthoringPrev').onclick = () => gtAuthoringSetFrameByOffset(-1);
+  document.getElementById('gtAuthoringNext').onclick = () => gtAuthoringSetFrameByOffset(1);
+  document.getElementById('gtAuthoringDownload').onclick = gtAuthoringDownload;
+  document.getElementById('gtAuthoringImportButton').onclick = () => document.getElementById('gtAuthoringImport').click();
+  document.getElementById('gtAuthoringImport').onchange = async event => {
+    const loaded = JSON.parse(await event.target.files[0].text());
+    if (loaded.recording_id !== GT_AUTHORING.recording_id || loaded.schema_version !== gtAuthoring.schema_version) {
+      alert('Recording or frame GT schema does not match');
+      return;
+    }
+    gtAuthoring = loaded;
+    gtAuthoringNormalize();
+    gtAuthoringSave();
+  };
+  document.getElementById('gtAuthoringUnknownFalse').onclick = () => {
+    const frame = currentGtAuthoringGtFrame();
+    if (!frame) return;
+    const selected = gtAuthoringSelectedScenario();
+    const labels = selected === 'all' ? GT_AUTHORING.taxonomy : [selected];
+    for (const label of labels) if (frame.labels[label] === null) frame.labels[label] = false;
+    gtAuthoringSave();
+  };
+  document.getElementById('gtAuthoringCopyPrevious').onclick = () => {
+    const item = currentGtAuthoringFrame();
+    const frame = currentGtAuthoringGtFrame();
+    if (!item || !frame) return;
+    const position = gtAuthoringFrameIndexes.indexOf(Number(item.frame_index));
+    if (position <= 0) return;
+    const previous = gtAuthoring.frames[gtAuthoringByFrameIndex.get(gtAuthoringFrameIndexes[position - 1]).frame_id];
+    const selected = gtAuthoringSelectedScenario();
+    if (selected === 'all') frame.labels = {...previous.labels};
+    else frame.labels[selected] = previous.labels?.[selected] ?? null;
+    gtAuthoringSave();
+  };
+  gtAuthoringRender();
+}
+"""
+    )
 
 
 def comparison_panel(recording_summary: dict, quality: dict) -> str:
@@ -163,12 +414,27 @@ def inject(
     recording_summary: dict,
     quality: dict,
     source_dir: Path,
+    authoring_payload: dict | None = None,
 ) -> str:
+    authoring_style = GT_AUTHORING_STYLE if authoring_payload is not None else ""
+    authoring_html = authoring_panel() if authoring_payload is not None else ""
+    authoring_data_script = (
+        authoring_script(authoring_payload) + "\n" if authoring_payload is not None else ""
+    )
+    authoring_cursor = (
+        "  if (typeof gtAuthoringRender === 'function') gtAuthoringRender();\n"
+        if authoring_payload is not None
+        else ""
+    )
+    authoring_init = (
+        "gtAuthoringInitialize();\n" if authoring_payload is not None else ""
+    )
     markers = {
-        "</style>": GT_STYLE + "\n</style>",
+        "</style>": GT_STYLE + authoring_style + "\n</style>",
         '    <div class="panel"><div id="tagTimeline"></div></div>':
             '    <div class="panel"><div id="tagTimeline"></div></div>\n'
-            + comparison_panel(recording_summary, quality),
+            + comparison_panel(recording_summary, quality)
+            + authoring_html,
         "const DATA =": "const GT_COMPARE = "
             + json.dumps(
                 {
@@ -183,6 +449,8 @@ def inject(
             )
             + ";\n"
             + GT_SCRIPT
+            + "\n"
+            + authoring_data_script
             + "\nconst DATA =",
         "  updateTagTimelineCursor();\n}":
             "  updateTagTimelineCursor();\n  updateGtComparisonCursor();\n}",
@@ -202,8 +470,15 @@ def inject(
             "}\n"
             "renderGtComparison();\n"
             "document.getElementById('gtScenarioFilter').addEventListener('change', renderGtComparison);\n"
-            "document.getElementById('gtMismatchOnly').addEventListener('change', renderGtComparison);\n",
+            "document.getElementById('gtMismatchOnly').addEventListener('change', renderGtComparison);\n"
+            + authoring_init,
     }
+    if authoring_cursor:
+        markers["  updateTagTimelineCursor();\n  updateGtComparisonCursor();\n}"] = (
+            "  updateTagTimelineCursor();\n  updateGtComparisonCursor();\n"
+            + authoring_cursor
+            + "}"
+        )
     for old, new in markers.items():
         if page.count(old) != 1:
             raise ValueError(f"{recording}: expected one marker {old!r}, found {page.count(old)}")
@@ -240,6 +515,15 @@ def main() -> int:
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
     parser.add_argument("--gt-dir", type=Path, default=DEFAULT_GT_DIR)
     parser.add_argument(
+        "--frame-input-root",
+        type=Path,
+        default=None,
+        help=(
+            "Optional revised frame-input root. When provided, duplicate explorers "
+            "also receive synchronized frame-level GT authoring controls."
+        ),
+    )
+    parser.add_argument(
         "--skip-index",
         action="store_true",
         help="Regenerate matching recording pages without replacing the existing index and manifest.",
@@ -261,6 +545,14 @@ def main() -> int:
         if not source.is_file():
             raise FileNotFoundError(source)
         recording_summary = summaries[recording]
+        authoring_payload = None
+        if args.frame_input_root is not None:
+            gt_path = args.gt_dir / f"{recording}_frame_gt.json"
+            authoring_payload = build_review_payload(
+                args.frame_input_root,
+                recording,
+                gt_path if gt_path.is_file() else None,
+            )
         output_name = f"{recording}_animated_odld_explorer_w_gt_comparison.html"
         output = args.output_dir / output_name
         output.write_text(
@@ -271,6 +563,7 @@ def main() -> int:
                 recording_summary,
                 summary["gt_quality"],
                 args.source_dir,
+                authoring_payload,
             ),
             encoding="utf-8",
         )
@@ -301,6 +594,7 @@ def main() -> int:
             **existing,
             "schema_version": "tagged-scenario-gt-comparison-explorers-v1",
             "source_dir": str(args.source_dir),
+            "frame_input_root": str(args.frame_input_root) if args.frame_input_root else None,
             "minimum_frame_index": summary["minimum_scored_frame_index"],
             "recordings": merged_records,
         }
@@ -319,6 +613,7 @@ def main() -> int:
                 {
                     "schema_version": "tagged-scenario-gt-comparison-explorers-v1",
                     "source_dir": str(args.source_dir),
+                    "frame_input_root": str(args.frame_input_root) if args.frame_input_root else None,
                     "minimum_frame_index": summary["minimum_scored_frame_index"],
                     "recordings": records,
                 },

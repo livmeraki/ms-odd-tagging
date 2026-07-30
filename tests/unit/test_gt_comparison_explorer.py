@@ -40,3 +40,69 @@ renderTagTimeline();
     assert "attachSharedTimeAxis('laneTrackerTimeline');" in result
     assert "renderGtComparison();" in result
     assert "updateGtComparisonCursor();" in result
+    assert 'id="gtAuthoringPanel"' not in result
+
+
+def test_inject_can_add_synchronized_gt_authoring_panel(tmp_path: Path) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    page = """<title>Original</title><style></style>
+    <div class="panel"><div id="tagTimeline"></div></div>
+<script>
+const DEBUG_BASE = `debug/${encodeURIComponent(DATA.summary.recording)}`;
+const DATA = {};
+function setFrame() {
+  updateTagTimelineCursor();
+}
+renderTagTimeline();
+</script>"""
+    summary = {
+        "exact_match_accuracy": 0.5,
+        "label_metrics": [{"label": "stationary"}],
+    }
+    authoring_payload = {
+        "schema_version": "scenario-frame-gt-review-v1",
+        "recording_id": "rec",
+        "download_filename": "rec_frame_gt.json",
+        "taxonomy": ["stationary", "low_magnitude_speed"],
+        "scenario_groups": [
+            {"label": "motion", "implemented": True, "scenarios": ["stationary", "low_magnitude_speed"]}
+        ],
+        "minimum_scored_frame_index": 5,
+        "gt": {
+            "schema_version": "scenario-frame-gt-labels-v1",
+            "recording_id": "rec",
+            "formula_filled_label_fields": [],
+            "frames": {
+                "rec:frame-000005": {
+                    "frame_index": 5,
+                    "labels": {"stationary": None, "low_magnitude_speed": True},
+                    "needs_review": True,
+                    "excluded_from_evaluation": False,
+                }
+            },
+        },
+        "review_frames": [
+            {
+                "frame_id": "rec:frame-000005",
+                "frame_index": 5,
+                "derivation": {"active_labels": ["low_magnitude_speed"]},
+            }
+        ],
+    }
+    result = inject(
+        page,
+        "rec",
+        [{"frameIndex": 10, "time": 1.0, "label": "stationary", "expected": True, "actual": True, "outcome": "tp"}],
+        summary,
+        {"status": "valid"},
+        source_dir,
+        authoring_payload,
+    )
+    assert 'id="gtAuthoringPanel"' in result
+    assert "const GT_AUTHORING =" in result
+    assert "gtAuthoringByFrameIndex" in result
+    assert "gtAuthoringInitialize();" in result
+    assert "gtAuthoringRender();" in result
+    assert "ms-odd-frame-gt:${GT_AUTHORING.recording_id}" in result
+    assert "Download GT JSON" in result

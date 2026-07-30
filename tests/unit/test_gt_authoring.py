@@ -184,6 +184,13 @@ def test_reviewer_contains_efficient_frame_review_controls(tmp_path: Path) -> No
     assert "Mark reviewed + next" in page
     assert "Jump to frame index" in page
     assert "localStorage" in page
+    assert 'id="scenarioFilter"' in page
+    assert "groupStateKey" in page
+    assert "restoreGroupState()" in page
+    assert "selectedScenario()" in page
+    assert "frameMatchesScenario" in page
+    assert "shownScenarios" in page
+    assert "gtFrame().labels[scenario]" in page
     assert "scenario-frame-gt-labels-v1" in page
     assert "phase3c_path_crossing" in page
     assert "crossed_by_vehicle" in page

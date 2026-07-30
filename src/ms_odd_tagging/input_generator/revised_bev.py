@@ -6,8 +6,6 @@ import math
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont
-
 from .model_input import (
     CLASS_COLORS,
     PngCanvas,
@@ -153,72 +151,6 @@ def _forward_arc_points(
         for angle in reversed(angles)
     ]
     return outer + inner
-
-
-def _velocity_text(vector: Any) -> tuple[str, float | None]:
-    if (
-        not isinstance(vector, (list, tuple))
-        or len(vector) < 2
-        or not all(isinstance(value, (int, float)) and math.isfinite(value) for value in vector[:2])
-    ):
-        return "v=n/a", None
-    vx, vy = float(vector[0]), float(vector[1])
-    speed = math.hypot(vx, vy)
-    return f"v={speed:.1f} m/s ({vx:.1f},{vy:.1f})", speed
-
-
-def _annotate_kinematics(
-    output_path: Path,
-    frame: dict[str, Any],
-    lane_context: dict[str, Any] | None,
-    proximity_radius_m: float,
-    crossing_arc: tuple[float, float, float] | None,
-) -> None:
-    image = Image.open(output_path).convert("RGB")
-    draw = ImageDraw.Draw(image)
-    try:
-        bold = ImageFont.truetype("DejaVuSans-Bold.ttf", 14)
-    except OSError:
-        bold = ImageFont.load_default()
-
-    ego = frame.get("ego") or {}
-    ego_velocity, calculated_speed = _velocity_text(ego.get("velocity_lcs_mps"))
-    speed = ego.get("speed_mps")
-    if not isinstance(speed, (int, float)) or not math.isfinite(speed):
-        speed = calculated_speed
-    ego_lane = ((lane_context or {}).get("ego_lane") or {}).get("logical_lane_id")
-    lead = (lane_context or {}).get("lead")
-    lead_summary = (
-        f"#{lead.get('object_id')} ({lead.get('class')})"
-        if isinstance(lead, dict)
-        else "none"
-    )
-    lines = [
-        f"EGO speed={speed:.1f} m/s | {ego_velocity}" if speed is not None else f"EGO speed=n/a | {ego_velocity}",
-        f"lane={ego_lane or 'n/a'} | lead={lead_summary}",
-        f"footprint proximity radius={proximity_radius_m:.1f} m",
-    ]
-    if crossing_arc is not None:
-        inner, outer, half_angle = crossing_arc
-        lines.append(
-            f"forward crossing arc={inner:.1f}-{outer:.1f} m, +/-{half_angle:.0f} deg"
-        )
-    lines.append(
-        "legend: ARC charcoal | ACTIVE yellow | PEDESTRIAN orange | CROSSWALK red"
-    )
-    widths = [draw.textbbox((0, 0), line, font=bold)[2] for line in lines]
-    panel_width = max(widths) + 22
-    panel_height = len(lines) * 21 + 12
-    draw.rounded_rectangle(
-        (10, 10, 10 + panel_width, 10 + panel_height),
-        radius=6,
-        fill=(255, 255, 255, 235),
-        outline=(14, 116, 144),
-        width=2,
-    )
-    for index, line in enumerate(lines):
-        draw.text((20, 18 + index * 21), line, fill=(15, 23, 42), font=bold)
-    image.save(output_path)
 
 
 def render_revised_bev_png(
@@ -372,10 +304,3 @@ def render_revised_bev_png(
     canvas.polygon([screen(point) for point in nose], hex_to_rgb("#166534"), hex_to_rgb("#166534"), alpha=0.9)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save_png(output_path)
-    _annotate_kinematics(
-        output_path,
-        frame,
-        lane_context,
-        proximity_radius_m,
-        crossing_arc,
-    )
