@@ -94,6 +94,13 @@ def build_recording(
         ensure_dir(frame_dir)
         bev_path = frame_dir / "bev_revised.png"
         lane_frame = lane_frames.get(index)
+        derivation_context = build_direct_derivation_context(
+            index,
+            events,
+            set(config["enabled_scenarios"]),
+            lane_frame,
+        )
+        crossing_config = config["object_path_crossing_interactions"]
         render_revised_bev_png(
             recording,
             frame,
@@ -104,6 +111,12 @@ def build_recording(
             proximity_radius_m=float(
                 config["object_relations"]["generic_proximity_radius_m"]
             ),
+            crossing_arc=(
+                float(crossing_config["arc_inner_radius_m"]),
+                float(crossing_config["arc_outer_radius_m"]),
+                float(crossing_config["arc_half_angle_deg"]),
+            ),
+            debug_context=derivation_context,
         )
         payload = build_frame_json(
             recording,
@@ -111,12 +124,6 @@ def build_recording(
             canonical_path,
             bev_path.name,
             max_objects=max_objects,
-        )
-        derivation_context = build_direct_derivation_context(
-            index,
-            events,
-            set(config["enabled_scenarios"]),
-            lane_frame,
         )
         payload["bev"].update(
             {
@@ -126,6 +133,8 @@ def build_recording(
                     "ego_speed_and_velocity",
                     "latest_lane_and_lead_assignment",
                     "footprint_proximity_boundary",
+                    "phase3c_forward_arc",
+                    "active_rule_object_highlight",
                 ],
                 "footprint_proximity_radius_m": float(
                     config["object_relations"]["generic_proximity_radius_m"]

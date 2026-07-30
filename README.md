@@ -125,6 +125,11 @@ start/middle/end keyframes are used. Legacy window helpers remain importable for
 old datasets but are not used by this reviewer or the active pipeline.
 Deterministic recording rules plus the current lane/lead tracker are stored in
 per-frame `gt_reference.json` sidecars and prefill directly derivable labels.
+The reviewer groups all implemented Phase 1–3C scenarios, keeps future taxonomy
+labels available but marked unsupported, and shows active-event evidence,
+ego/lane state, and nearby dynamic-object kinematics beside the synchronized
+BEV. Source frames 0–4 are visibly disabled and excluded from scoring because
+their detections are unreliable.
 Traffic-light splits, slow-lead semantics, stopping split by lead, and
 lane-change lead/trail semantics remain unknown until dedicated rules exist.
 

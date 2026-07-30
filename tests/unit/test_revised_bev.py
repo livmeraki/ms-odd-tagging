@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import math
 import struct
 from pathlib import Path
 
+import pytest
+
 from ms_odd_tagging.input_generator.revised_bev import (
     _clip_segment,
+    _forward_arc_points,
     _footprint_buffer_points,
     render_revised_bev_png,
 )
@@ -21,6 +25,15 @@ def test_footprint_proximity_boundary_uses_configured_buffer_radius() -> None:
     assert min(point[0] for point in points) == -32.4
     assert max(point[1] for point in points) == 31.0
     assert min(point[1] for point in points) == -31.0
+
+
+def test_phase3c_forward_arc_uses_configured_radii_and_angle() -> None:
+    points = _forward_arc_points(2.0, 30.0, 30.0)
+    radii = [(x * x + y * y) ** 0.5 for x, y in points]
+    angles = [abs(math.degrees(math.atan2(y, x))) for x, y in points]
+    assert min(radii) == pytest.approx(2.0)
+    assert max(radii) == pytest.approx(30.0)
+    assert max(angles) == pytest.approx(30.0)
 
 
 def test_revised_bev_renders_png_with_requested_dimensions(tmp_path: Path) -> None:
@@ -61,6 +74,18 @@ def test_revised_bev_renders_png_with_requested_dimensions(tmp_path: Path) -> No
             ],
         },
         proximity_radius_m=30.0,
+        crossing_arc=(2.0, 30.0, 30.0),
+        debug_context={
+            "rule_based_reference": {
+                "active_events": [
+                    {
+                        "evidence": {
+                            "source_object_ids": ["lead-1"],
+                        }
+                    }
+                ]
+            }
+        },
     )
     content = output.read_bytes()
     assert content.startswith(b"\x89PNG\r\n\x1a\n")

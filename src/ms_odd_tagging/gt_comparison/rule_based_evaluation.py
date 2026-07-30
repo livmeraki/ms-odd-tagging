@@ -338,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--minimum-frame-index",
         type=int,
-        default=0,
+        default=5,
         help="Exclude GT samples with a source frame index below this value.",
     )
     args = parser.parse_args(argv)

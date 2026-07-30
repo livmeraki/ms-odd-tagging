@@ -11,50 +11,114 @@ from typing import Any
 from ms_odd_tagging.common.config import DATA_GT
 
 
-TAXONOMY = [
-    "near_multiple_bikes",
-    "near_multiple_vehicles",
-    "near_multiple_motorcycle",
-    "accelerating_at_crosswalk",
-    "stationary_at_crosswalk",
-    "stopping_at_crosswalk",
-    "high_lateral_acceleration",
-    "near_high_speed_vehicle",
-    "near_long_vehicle",
-    "near_multiple_pedestrians",
-    "near_pedestrian_on_crosswalk",
-    "near_pedestrian_on_crosswalk_with_ego",
-    "starting_high_speed_turn",
-    "starting_low_speed_turn",
-    "traversing_crosswalk",
-    "on_stopline_crosswalk",
-    "high_magnitude_jerk",
-    "stationary",
-    "high_magnitude_speed",
-    "low_magnitude_speed",
-    "medium_magnitude_speed",
-    "starting_left_turn",
-    "starting_right_turn",
-    "changing_lane",
-    "changing_lane_to_left",
-    "changing_lane_to_right",
-    "accelerating_at_traffic_light_with_lead",
-    "accelerating_at_traffic_light_without_lead",
-    "following_lane_with_lead",
-    "following_lane_with_slow_lead",
-    "following_lane_without_lead",
-    "stationary_at_traffic_light_with_lead",
-    "stationary_at_traffic_light_without_lead",
-    "stopping_at_traffic_light_with_lead",
-    "stopping_at_traffic_light_without_lead",
-    "stopping_with_lead",
-    "stopping_without_lead",
-    "behind_bike",
-    "behind_long_vehicle",
-    "behind_motorcycle",
-    "changing_lane_with_lead",
-    "changing_lane_with_trail",
+SCENARIO_GROUPS = [
+    {
+        "id": "phase1_motion",
+        "label": "Phase 1 · Ego motion",
+        "implemented": True,
+        "scenarios": [
+            "stationary",
+            "low_magnitude_speed",
+            "medium_magnitude_speed",
+            "high_magnitude_speed",
+            "high_lateral_acceleration",
+            "high_magnitude_jerk",
+            "starting_left_turn",
+            "starting_right_turn",
+            "starting_low_speed_turn",
+            "starting_high_speed_turn",
+        ],
+    },
+    {
+        "id": "lane_relations",
+        "label": "Lane following and Phase 2 lane change",
+        "implemented": True,
+        "scenarios": [
+            "following_lane_with_lead",
+            "following_lane_without_lead",
+            "changing_lane",
+            "changing_lane_to_left",
+            "changing_lane_to_right",
+        ],
+    },
+    {
+        "id": "phase2b_crosswalk",
+        "label": "Phase 2B · Crosswalk and stopline",
+        "implemented": True,
+        "scenarios": [
+            "traversing_crosswalk",
+            "on_stopline_crosswalk",
+            "stationary_at_crosswalk",
+            "stopping_at_crosswalk",
+            "accelerating_at_crosswalk",
+        ],
+    },
+    {
+        "id": "phase3a_near_objects",
+        "label": "Phase 3A · Nearby objects",
+        "implemented": True,
+        "scenarios": [
+            "near_high_speed_vehicle",
+            "near_long_vehicle",
+            "near_multiple_bikes",
+            "near_multiple_motorcycle",
+            "near_multiple_pedestrians",
+            "near_multiple_vehicles",
+        ],
+    },
+    {
+        "id": "phase3b_pedestrian_crosswalk",
+        "label": "Phase 3B · Pedestrian and crosswalk",
+        "implemented": True,
+        "scenarios": [
+            "near_pedestrian_on_crosswalk",
+            "near_pedestrian_on_crosswalk_with_ego",
+        ],
+    },
+    {
+        "id": "phase3c_path_crossing",
+        "label": "Phase 3C · Crossing the ego path",
+        "implemented": True,
+        "scenarios": [
+            "crossed_by_bike",
+            "crossed_by_motorcycle",
+            "crossed_by_vehicle",
+        ],
+    },
+    {
+        "id": "future_taxonomy",
+        "label": "Future or unsupported taxonomy",
+        "implemented": False,
+        "scenarios": [
+            "accelerating_at_traffic_light_with_lead",
+            "accelerating_at_traffic_light_without_lead",
+            "following_lane_with_slow_lead",
+            "stationary_at_traffic_light_with_lead",
+            "stationary_at_traffic_light_without_lead",
+            "stopping_at_traffic_light_with_lead",
+            "stopping_at_traffic_light_without_lead",
+            "stopping_with_lead",
+            "stopping_without_lead",
+            "behind_bike",
+            "behind_long_vehicle",
+            "behind_motorcycle",
+            "changing_lane_with_lead",
+            "changing_lane_with_trail",
+        ],
+    },
 ]
+TAXONOMY = [
+    scenario
+    for group in SCENARIO_GROUPS
+    for scenario in group["scenarios"]
+]
+IMPLEMENTED_SCENARIOS = [
+    scenario
+    for group in SCENARIO_GROUPS
+    if group["implemented"]
+    for scenario in group["scenarios"]
+]
+MINIMUM_REVIEW_FRAME_INDEX = 5
 SPEED_LABELS = [
     "stationary",
     "high_magnitude_speed",
@@ -166,6 +230,10 @@ def build_frame_gt_payload(
             "notes": prior.get("notes", ""),
             "reviewer": prior.get("reviewer", ""),
             "reviewed_at": prior.get("reviewed_at", ""),
+            "excluded_from_evaluation": (
+                isinstance(frame.get("frame_index"), int)
+                and frame["frame_index"] < MINIMUM_REVIEW_FRAME_INDEX
+            ),
         }
     return {
         "schema_version": "scenario-frame-gt-labels-v1",
@@ -176,6 +244,7 @@ def build_frame_gt_payload(
             "Dynamic scenario intervals are not converted into review windows.",
         ],
         "label_fields": TAXONOMY,
+        "minimum_scored_frame_index": MINIMUM_REVIEW_FRAME_INDEX,
         "formula_filled_label_fields": [
             label for label in TAXONOMY if label in directly_derived_fields
         ],

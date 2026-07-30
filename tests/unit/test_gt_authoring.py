@@ -7,6 +7,9 @@ import pytest
 
 from ms_odd_tagging.gt_comparison.authoring import build_review_payload, discover_recordings, write_reviewer
 from ms_odd_tagging.gt_comparison.labels import (
+    IMPLEMENTED_SCENARIOS,
+    MINIMUM_REVIEW_FRAME_INDEX,
+    SCENARIO_GROUPS,
     SPEED_LABELS,
     TAXONOMY,
     labels_with_frame_speed,
@@ -50,11 +53,18 @@ def test_review_payload_exports_comparison_ready_frame_gt(tmp_path: Path) -> Non
 
 
 def test_full_requested_taxonomy_is_available_for_review() -> None:
-    assert len(TAXONOMY) == 42
-    assert TAXONOMY[0] == "near_multiple_bikes"
+    assert len(TAXONOMY) == 45
+    assert TAXONOMY[0] == "stationary"
     assert TAXONOMY[-1] == "changing_lane_with_trail"
     assert "accelerating_at_traffic_light_with_lead" in TAXONOMY
     assert "near_pedestrian_on_crosswalk_with_ego" in TAXONOMY
+    assert {
+        "crossed_by_bike",
+        "crossed_by_motorcycle",
+        "crossed_by_vehicle",
+    }.issubset(IMPLEMENTED_SCENARIOS)
+    assert len(TAXONOMY) == len(set(TAXONOMY))
+    assert SCENARIO_GROUPS[-1]["implemented"] is False
 
 
 def test_direct_references_fill_supported_labels_and_preserve_unknowns(
@@ -89,6 +99,80 @@ def test_direct_references_fill_supported_labels_and_preserve_unknowns(
     ]
 
 
+def test_review_payload_keeps_compact_event_and_nearby_object_debug(
+    tmp_path: Path,
+) -> None:
+    frame_inputs = tmp_path / "frame_inputs"
+    make_frame(frame_inputs, 10, 4.0)
+    frame_dir = frame_inputs / RECORDING / "frame_000010"
+    frame_path = frame_dir / "frame.json"
+    frame = json.loads(frame_path.read_text(encoding="utf-8"))
+    frame["objects"] = [
+        {
+            "object_id": "1202",
+            "class": "car",
+            "annotation_type": "dynamic",
+            "position_ego_m": {
+                "distance": 12.0,
+                "longitudinal": 8.0,
+                "lateral": -9.0,
+            },
+            "velocity_lcs_mps": [3.0, 4.0, 0.0],
+            "heading_relative_rad": 1.2,
+        },
+        {
+            "object_id": "far",
+            "class": "car",
+            "annotation_type": "dynamic",
+            "position_ego_m": {
+                "distance": 31.0,
+                "longitudinal": 31.0,
+                "lateral": 0.0,
+            },
+        },
+    ]
+    frame_path.write_text(json.dumps(frame), encoding="utf-8")
+    (frame_dir / "gt_reference.json").write_text(
+        json.dumps(
+            {
+                "directly_derived_labels": {"crossed_by_vehicle": True},
+                "rule_based_reference": {
+                    "active_labels": ["crossed_by_vehicle"],
+                    "active_events": [
+                        {
+                            "scenario": "crossed_by_vehicle",
+                            "start_frame": 8,
+                            "end_frame": 12,
+                            "evidence": {
+                                "object_track_id": "vehicle:1202",
+                                "crossing_angle_deg": 82.0,
+                                "large_geometry": [[0, 1]] * 100,
+                            },
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    review = build_review_payload(frame_inputs, RECORDING)["review_frames"][0]
+    assert review["derivation"]["active_events"][0]["evidence"] == {
+        "object_track_id": "vehicle:1202",
+        "crossing_angle_deg": 82.0,
+    }
+    assert review["debug"]["nearby_dynamic_objects"] == [
+        {
+            "object_id": "1202",
+            "class": "car",
+            "distance_m": 12.0,
+            "longitudinal_m": 8.0,
+            "lateral_m": -9.0,
+            "speed_mps": 5.0,
+            "heading_relative_rad": 1.2,
+        }
+    ]
+
+
 def test_reviewer_contains_efficient_frame_review_controls(tmp_path: Path) -> None:
     frame_inputs = tmp_path / "frame_inputs"
     make_frame(frame_inputs, 0, 2.0)
@@ -101,11 +185,30 @@ def test_reviewer_contains_efficient_frame_review_controls(tmp_path: Path) -> No
     assert "Jump to frame index" in page
     assert "localStorage" in page
     assert "scenario-frame-gt-labels-v1" in page
+    assert "phase3c_path_crossing" in page
+    assert "crossed_by_vehicle" in page
+    assert "Frame debug evidence" in page
+    assert "Dynamic objects within 30 m" in page
+    assert "Active rule events" in page
+    assert "Excluded from scoring" in page
     assert page.count("document.createElement('img')") == 1
     assert "median speed" not in page.lower()
     assert "start keyframe" not in page.lower()
     assert "middle keyframe" not in page.lower()
     assert "end keyframe" not in page.lower()
+
+
+def test_frames_before_detection_reliability_boundary_are_excluded(
+    tmp_path: Path,
+) -> None:
+    frame_inputs = tmp_path / "frame_inputs"
+    first = make_frame(frame_inputs, 0, 2.0)
+    reliable = make_frame(frame_inputs, MINIMUM_REVIEW_FRAME_INDEX, 2.0)
+    payload = build_review_payload(frame_inputs, RECORDING)
+    assert payload["minimum_scored_frame_index"] == 5
+    assert payload["gt"]["minimum_scored_frame_index"] == 5
+    assert payload["gt"]["frames"][first]["excluded_from_evaluation"] is True
+    assert payload["gt"]["frames"][reliable]["excluded_from_evaluation"] is False
 
 
 def test_existing_manual_frame_labels_are_preserved(tmp_path: Path) -> None:

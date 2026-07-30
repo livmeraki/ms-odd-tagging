@@ -126,6 +126,29 @@ def _footprint_buffer_points(
     return points
 
 
+def _forward_arc_points(
+    inner_radius_m: float,
+    outer_radius_m: float,
+    half_angle_deg: float,
+    samples: int = 28,
+) -> list[tuple[float, float]]:
+    """Return an ego-heading-up annular sector used by Phase 3C."""
+    half_angle = math.radians(half_angle_deg)
+    angles = [
+        -half_angle + 2.0 * half_angle * index / samples
+        for index in range(samples + 1)
+    ]
+    outer = [
+        (outer_radius_m * math.cos(angle), outer_radius_m * math.sin(angle))
+        for angle in angles
+    ]
+    inner = [
+        (inner_radius_m * math.cos(angle), inner_radius_m * math.sin(angle))
+        for angle in reversed(angles)
+    ]
+    return outer + inner
+
+
 def _velocity_text(vector: Any) -> tuple[str, float | None]:
     if (
         not isinstance(vector, (list, tuple))
@@ -143,6 +166,7 @@ def _annotate_kinematics(
     frame: dict[str, Any],
     lane_context: dict[str, Any] | None,
     proximity_radius_m: float,
+    crossing_arc: tuple[float, float, float] | None,
 ) -> None:
     image = Image.open(output_path).convert("RGB")
     draw = ImageDraw.Draw(image)
@@ -168,6 +192,11 @@ def _annotate_kinematics(
         f"lane={ego_lane or 'n/a'} | lead={lead_summary}",
         f"footprint proximity radius={proximity_radius_m:.1f} m",
     ]
+    if crossing_arc is not None:
+        inner, outer, half_angle = crossing_arc
+        lines.append(
+            f"forward crossing arc={inner:.1f}-{outer:.1f} m, +/-{half_angle:.0f} deg"
+        )
     widths = [draw.textbbox((0, 0), line, font=bold)[2] for line in lines]
     panel_width = max(widths) + 22
     panel_height = len(lines) * 21 + 12
@@ -192,6 +221,8 @@ def render_revised_bev_png(
     *,
     lane_context: dict[str, Any] | None = None,
     proximity_radius_m: float = 30.0,
+    crossing_arc: tuple[float, float, float] | None = None,
+    debug_context: dict[str, Any] | None = None,
 ) -> None:
     """Render source LCS geometry into an asymmetric ego-centered, heading-up view."""
     width, height = size
@@ -262,7 +293,28 @@ def render_revised_bev_png(
             color, line_width, alpha = LANE_STYLES.get(pattern, LANE_STYLES["unknown"])
             _draw_feature(canvas, _feature_points(feature, points_by_id), ego_position, ego_yaw, screen, extent, color, line_width, alpha)
 
+    if crossing_arc is not None:
+        arc_points = _forward_arc_points(*crossing_arc)
+        arc_screen = [screen(point) for point in arc_points]
+        for start, end in zip(arc_screen, arc_screen[1:] + arc_screen[:1]):
+            canvas.line(
+                *start,
+                *end,
+                hex_to_rgb("#db2777"),
+                width=4,
+                alpha=0.95,
+            )
+
     lead_id = str(((lane_context or {}).get("lead") or {}).get("object_id") or "")
+    active_object_ids = set()
+    for event in (debug_context or {}).get("rule_based_reference", {}).get(
+        "active_events", []
+    ):
+        evidence = event.get("evidence") or {}
+        for key in ("object_track_ids", "source_object_ids"):
+            active_object_ids.update(str(value) for value in evidence.get(key, []))
+        if evidence.get("object_track_id") is not None:
+            active_object_ids.add(str(evidence["object_track_id"]))
     for obj in frame.get("objects", []):
         position = obj.get("position_lcs_m")
         if not position:
@@ -275,7 +327,9 @@ def render_revised_bev_png(
         if corners_lcs:
             corners = [screen(lcs_to_ego(point, ego_position, ego_yaw)) for point in corners_lcs]
             outline = (
-                hex_to_rgb("#dc2626")
+                hex_to_rgb("#db2777")
+                if str(obj.get("object_id")) in active_object_ids
+                else hex_to_rgb("#dc2626")
                 if str(obj.get("object_id")) == lead_id
                 else color
             )
@@ -286,6 +340,7 @@ def render_revised_bev_png(
                 alpha=0.18,
                 outline_width=4
                 if str(obj.get("object_id")) == lead_id
+                or str(obj.get("object_id")) in active_object_ids
                 else 2,
             )
         sx, sy = screen(center_ego)
@@ -302,4 +357,5 @@ def render_revised_bev_png(
         frame,
         lane_context,
         proximity_radius_m,
+        crossing_arc,
     )
