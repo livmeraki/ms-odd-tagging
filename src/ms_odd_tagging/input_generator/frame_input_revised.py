@@ -28,7 +28,7 @@ from .frame_input import (
     select_canonical_files,
 )
 from .model_input import ensure_dir, safe_name
-from .revised_bev import render_revised_bev_png
+from .revised_bev import centered_extent, render_revised_bev_png
 
 
 DEFAULT_INPUT_DIR = CANONICAL
@@ -125,13 +125,13 @@ def build_recording(
             bev_path.name,
             max_objects=max_objects,
         )
+        centered_left, centered_right, centered_back, centered_forward = centered_extent(extent)
         payload["bev"].update(
             {
                 "renderer": "explorer-aligned-revised-v1",
                 "orientation": "ego-heading-up",
+                "ego_position": "center",
                 "annotations": [
-                    "ego_speed_and_velocity",
-                    "latest_lane_and_lead_assignment",
                     "footprint_proximity_boundary",
                     "phase3c_forward_arc",
                     "active_rule_object_highlight",
@@ -140,6 +140,12 @@ def build_recording(
                     config["object_relations"]["generic_proximity_radius_m"]
                 ),
                 "extent_m": {
+                    "left": centered_left,
+                    "right": centered_right,
+                    "behind": centered_back,
+                    "ahead": centered_forward,
+                },
+                "configured_extent_m": {
                     "left": extent[0],
                     "right": extent[1],
                     "behind": extent[2],

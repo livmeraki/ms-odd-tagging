@@ -153,6 +153,14 @@ def _forward_arc_points(
     return outer + inner
 
 
+def centered_extent(extent: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """Return symmetric left/right and behind/ahead bounds from configured totals."""
+    left_m, right_m, back_m, forward_m = extent
+    half_width = (float(left_m) + float(right_m)) / 2.0
+    half_length = (float(back_m) + float(forward_m)) / 2.0
+    return half_width, half_width, half_length, half_length
+
+
 def render_revised_bev_png(
     recording: dict[str, Any],
     frame: dict[str, Any],
@@ -165,19 +173,21 @@ def render_revised_bev_png(
     crossing_arc: tuple[float, float, float] | None = None,
     debug_context: dict[str, Any] | None = None,
 ) -> None:
-    """Render source LCS geometry into an asymmetric ego-centered, heading-up view."""
+    """Render source LCS geometry into a centered ego-heading-up view."""
     width, height = size
+    extent = centered_extent(extent)
     left_m, right_m, back_m, forward_m = extent
-    scale = min(width / (left_m + right_m), height / (back_m + forward_m))
-    center_x = left_m * scale + (width - (left_m + right_m) * scale) / 2
-    center_y = forward_m * scale + (height - (back_m + forward_m) * scale) / 2
+    scale_x = width / (left_m + right_m)
+    scale_y = height / (back_m + forward_m)
+    center_x = width / 2.0
+    center_y = height / 2.0
     ego = frame["ego"]
     ego_position = ego["position_lcs_m"]
     ego_yaw = ego_heading(ego)
 
     def screen(point):
         longitudinal, lateral = point
-        return center_x - lateral * scale, center_y - longitudinal * scale
+        return center_x - lateral * scale_x, center_y - longitudinal * scale_y
 
     def visible(point):
         longitudinal, lateral = point
