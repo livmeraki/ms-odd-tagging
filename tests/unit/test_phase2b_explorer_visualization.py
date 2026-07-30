@@ -15,6 +15,43 @@ import generate_odld_dataset_explorers_w_scenario_tag as explorer  # noqa: E402
 from ms_odd_tagging.tagger.rule_based.scenario_event import ScenarioEvent  # noqa: E402
 
 
+def _index_row(recording: str) -> dict:
+    return {
+        "recording": recording,
+        "file": f"{recording}_animated_odld_explorer.html",
+        "frames": 4,
+        "duration": 0.3,
+        "objects": 1,
+        "lines": 2,
+        "boundaries": 1,
+        "roadmarks": 1,
+        "tagScenarios": 1,
+        "tagEvents": 1,
+        "tagScenarioList": ["stationary"],
+        "topClasses": "car:1",
+        "thumbnail": "<svg></svg>",
+    }
+
+
+def _write_manifest(output_dir: Path, rows: list[dict]) -> None:
+    (output_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": explorer.MANIFEST_SCHEMA_VERSION,
+                "index": "index.html",
+                "recordings": rows,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_canonical(canonical_dir: Path, recording: str) -> None:
+    (canonical_dir / f"{recording}_canonical_odld_frames.json").write_text(
+        json.dumps({"recording_id": recording}), encoding="utf-8"
+    )
+
+
 def test_index_links_to_same_output_directory() -> None:
     page = explorer.index_html(
         [
@@ -77,6 +114,47 @@ def test_row_from_existing_explorer_payload(tmp_path: Path) -> None:
     assert row["topClasses"] == "car:1"
 
 
+def test_write_explorer_atomically_publishes_after_injection(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "sample_animated_odld_explorer.html"
+    seen = []
+
+    monkeypatch.setattr(explorer, "scene_html", lambda data: "base")
+
+    def inject(path: Path, canonical: dict) -> None:
+        seen.append((path.name, output.exists()))
+        path.write_text(path.read_text(encoding="utf-8") + "+injected", encoding="utf-8")
+
+    monkeypatch.setattr(explorer, "inject_lane_tracker", inject)
+
+    explorer.write_explorer_atomically(output, {}, {})
+
+    assert seen == [(f".{output.name}.tmp", False)]
+    assert output.read_text(encoding="utf-8") == "base+injected"
+    assert not (tmp_path / f".{output.name}.tmp").exists()
+
+
+def test_write_explorer_atomically_keeps_final_absent_on_injection_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output = tmp_path / "sample_animated_odld_explorer.html"
+    monkeypatch.setattr(explorer, "scene_html", lambda data: "base")
+    monkeypatch.setattr(
+        explorer,
+        "inject_lane_tracker",
+        lambda path, canonical: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    try:
+        explorer.write_explorer_atomically(output, {}, {})
+    except KeyboardInterrupt:
+        pass
+
+    assert not output.exists()
+    assert (tmp_path / f".{output.name}.tmp").is_file()
+
+
 def test_existing_rows_by_recording_reads_all_generated_explorers(tmp_path: Path) -> None:
     for recording in ("rec-a", "rec-b"):
         data = {
@@ -112,32 +190,11 @@ def test_main_skip_reuses_existing_row_without_reparse(
     canonical_dir.mkdir()
     output_dir.mkdir()
     recording = "sample"
-    (canonical_dir / f"{recording}_canonical_odld_frames.json").write_text(
-        "{}", encoding="utf-8"
-    )
-    (output_dir / f"{recording}_animated_odld_explorer.html").write_text(
+    _write_canonical(canonical_dir, recording)
+    (output_dir / explorer.explorer_output_name(recording)).write_text(
         "<html></html>", encoding="utf-8"
     )
-    cached_row = {
-        "recording": recording,
-        "file": f"{recording}_animated_odld_explorer.html",
-        "frames": 4,
-        "duration": 0.3,
-        "objects": 1,
-        "lines": 2,
-        "boundaries": 1,
-        "roadmarks": 1,
-        "tagScenarios": 1,
-        "tagEvents": 1,
-        "tagScenarioList": ["stationary"],
-        "topClasses": "car:1",
-        "thumbnail": "<svg></svg>",
-    }
-    monkeypatch.setattr(
-        explorer,
-        "existing_rows_by_recording",
-        lambda path: {recording: cached_row},
-    )
+    _write_manifest(output_dir, [_index_row(recording)])
     monkeypatch.setattr(
         explorer,
         "row_from_explorer",
@@ -161,6 +218,338 @@ def test_main_skip_reuses_existing_row_without_reparse(
 
     assert (tmp_path / "index.html").is_file()
     assert (output_dir / "manifest.json").is_file()
+
+
+def test_main_skip_check_does_not_parse_unrelated_explorers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    canonical_dir = tmp_path / "canonical"
+    output_dir = tmp_path / "explorers"
+    canonical_dir.mkdir()
+    output_dir.mkdir()
+    requested = "requested"
+    unrelated = "unrelated"
+    _write_canonical(canonical_dir, requested)
+    for recording in (requested, unrelated):
+        (output_dir / explorer.explorer_output_name(recording)).write_text(
+            "<html></html>", encoding="utf-8"
+        )
+    _write_manifest(output_dir, [_index_row(requested), _index_row(unrelated)])
+    parsed = []
+    monkeypatch.setattr(
+        explorer,
+        "row_from_explorer",
+        lambda path: parsed.append(path) or _index_row(path.name.split("_animated")[0]),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_odld_dataset_explorers_w_scenario_tag.py",
+            "--canonical-dir",
+            str(canonical_dir),
+            "--output-dir",
+            str(output_dir),
+            "--index-path",
+            str(tmp_path / "index.html"),
+            requested,
+        ],
+    )
+
+    explorer.main()
+
+    assert parsed == []
+
+
+def test_multiple_requested_recordings_do_one_final_index_rebuild(
+    tmp_path: Path, monkeypatch
+) -> None:
+    canonical_dir = tmp_path / "canonical"
+    output_dir = tmp_path / "explorers"
+    canonical_dir.mkdir()
+    output_dir.mkdir()
+    for recording in ("rec-a", "rec-b", "rec-c"):
+        _write_canonical(canonical_dir, recording)
+        (output_dir / explorer.explorer_output_name(recording)).write_text(
+            "<html></html>", encoding="utf-8"
+        )
+    _write_manifest(
+        output_dir,
+        [_index_row("rec-a"), _index_row("rec-b"), _index_row("rec-c")],
+    )
+    rebuild_calls = []
+    monkeypatch.setattr(
+        explorer,
+        "rebuild_rows_from_outputs",
+        lambda output, rows: rebuild_calls.append((output, sorted(rows))) or list(rows.values()),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_odld_dataset_explorers_w_scenario_tag.py",
+            "--canonical-dir",
+            str(canonical_dir),
+            "--output-dir",
+            str(output_dir),
+            "--index-path",
+            str(tmp_path / "index.html"),
+            "rec-a",
+            "rec-b",
+        ],
+    )
+
+    explorer.main()
+
+    assert len(rebuild_calls) == 1
+    assert rebuild_calls[0][1] == ["rec-a", "rec-b", "rec-c"]
+
+
+def test_index_write_happens_once_after_all_requested_recordings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    canonical_dir = tmp_path / "canonical"
+    output_dir = tmp_path / "explorers"
+    canonical_dir.mkdir()
+    output_dir.mkdir()
+    skipped = "rec-skip"
+    generated = "rec-new"
+    _write_canonical(canonical_dir, skipped)
+    _write_canonical(canonical_dir, generated)
+    (output_dir / explorer.explorer_output_name(skipped)).write_text(
+        "<html></html>", encoding="utf-8"
+    )
+    _write_manifest(output_dir, [_index_row(skipped)])
+    operations = []
+    generated_data = {
+        "summary": {
+            "frames": 4,
+            "durationSec": 0.3,
+            "objects": 1,
+            "classCounts": {"car": 1},
+        },
+        "trajectory": {"x": [0.0, 1.0], "y": [0.0, 0.0]},
+        "objects": [],
+        "ld": {"summary": {"laneLines": 2, "roadBoundaries": 1, "roadmarks": 1}},
+        "tags": {"scenarios": ["stationary"], "events": [{"scenario": "stationary"}]},
+    }
+
+    def build_base_data(scene_dir: Path) -> dict:
+        operations.append(f"generate:{scene_dir.name}")
+        return dict(generated_data)
+
+    def rebuild_rows(output_dir_arg: Path, rows_by_recording: dict[str, dict]) -> list[dict]:
+        operations.append("rebuild")
+        return list(rows_by_recording.values())
+
+    def write_index(index_path: Path, output_dir_arg: Path, rows: list[dict]) -> None:
+        operations.append("write")
+        index_path.write_text("index", encoding="utf-8")
+        (output_dir_arg / "manifest.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(explorer, "build_base_data", build_base_data)
+    monkeypatch.setattr(
+        explorer,
+        "build_ld_payload",
+        lambda canonical: {"summary": {"laneLines": 2, "roadBoundaries": 1, "roadmarks": 1}},
+    )
+    monkeypatch.setattr(explorer, "build_road_feature_payload", lambda canonical: {})
+    monkeypatch.setattr(explorer, "build_object_relation_payload", lambda canonical: {})
+    monkeypatch.setattr(explorer, "build_object_path_crossing_payload", lambda canonical: {})
+    monkeypatch.setattr(
+        explorer,
+        "build_tag_payload",
+        lambda recording, window_dir, canonical: {
+            "scenarios": ["stationary"],
+            "events": [{"scenario": "stationary"}],
+        },
+    )
+    monkeypatch.setattr(explorer, "write_debug_payloads", lambda *args: {"od": 0, "ld": 0})
+    monkeypatch.setattr(
+        explorer,
+        "write_explorer_atomically",
+        lambda output, data, canonical: output.write_text("<html></html>", encoding="utf-8"),
+    )
+    monkeypatch.setattr(explorer, "rebuild_rows_from_outputs", rebuild_rows)
+    monkeypatch.setattr(explorer, "write_index_and_manifest", write_index)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_odld_dataset_explorers_w_scenario_tag.py",
+            "--canonical-dir",
+            str(canonical_dir),
+            "--output-dir",
+            str(output_dir),
+            "--index-path",
+            str(tmp_path / "index.html"),
+            skipped,
+            generated,
+        ],
+    )
+
+    explorer.main()
+
+    assert operations == [f"generate:{generated}", "rebuild", "write"]
+
+
+def test_missing_requested_explorer_is_generated(tmp_path: Path, monkeypatch) -> None:
+    canonical_dir = tmp_path / "canonical"
+    output_dir = tmp_path / "explorers"
+    canonical_dir.mkdir()
+    output_dir.mkdir()
+    recording = "missing"
+    _write_canonical(canonical_dir, recording)
+    data = {
+        "summary": {
+            "frames": 4,
+            "durationSec": 0.3,
+            "objects": 1,
+            "classCounts": {"car": 1},
+        },
+        "trajectory": {"x": [0.0, 1.0], "y": [0.0, 0.0]},
+        "objects": [],
+        "ld": {"summary": {"laneLines": 2, "roadBoundaries": 1, "roadmarks": 1}},
+        "tags": {"scenarios": ["stationary"], "events": [{"scenario": "stationary"}]},
+    }
+    monkeypatch.setattr(explorer, "build_base_data", lambda scene_dir: dict(data))
+    monkeypatch.setattr(
+        explorer,
+        "build_ld_payload",
+        lambda canonical: {"summary": {"laneLines": 2, "roadBoundaries": 1, "roadmarks": 1}},
+    )
+    monkeypatch.setattr(explorer, "build_road_feature_payload", lambda canonical: {})
+    monkeypatch.setattr(explorer, "build_object_relation_payload", lambda canonical: {})
+    monkeypatch.setattr(explorer, "build_object_path_crossing_payload", lambda canonical: {})
+    monkeypatch.setattr(
+        explorer,
+        "build_tag_payload",
+        lambda recording, window_dir, canonical: {
+            "scenarios": ["stationary"],
+            "events": [{"scenario": "stationary"}],
+        },
+    )
+    monkeypatch.setattr(explorer, "write_debug_payloads", lambda *args: {"od": 0, "ld": 0})
+    monkeypatch.setattr(
+        explorer,
+        "write_explorer_atomically",
+        lambda output, data, canonical: output.write_text("<html></html>", encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_odld_dataset_explorers_w_scenario_tag.py",
+            "--canonical-dir",
+            str(canonical_dir),
+            "--output-dir",
+            str(output_dir),
+            "--index-path",
+            str(tmp_path / "index.html"),
+            recording,
+        ],
+    )
+
+    explorer.main()
+
+    assert (output_dir / explorer.explorer_output_name(recording)).is_file()
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["recordings"][0]["recording"] == recording
+
+
+def test_manifest_metadata_is_reused_without_html_parsing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output_dir = tmp_path
+    recording = "sample"
+    (output_dir / explorer.explorer_output_name(recording)).write_text(
+        "<html></html>", encoding="utf-8"
+    )
+    row = _index_row(recording)
+    _write_manifest(output_dir, [row])
+    monkeypatch.setattr(
+        explorer,
+        "row_from_explorer",
+        lambda path: (_ for _ in ()).throw(AssertionError("parsed manifest row")),
+    )
+
+    rows = explorer.rebuild_rows_from_outputs(output_dir, explorer.read_manifest_rows(output_dir))
+
+    assert rows == [row]
+
+
+def test_html_parsing_is_final_rebuild_fallback(tmp_path: Path, monkeypatch) -> None:
+    recording = "sample"
+    output_path = tmp_path / explorer.explorer_output_name(recording)
+    output_path.write_text("<html></html>", encoding="utf-8")
+    _write_manifest(
+        tmp_path,
+        [{"recording": recording, "file": output_path.name, "frames": 4}],
+    )
+    parsed = []
+    monkeypatch.setattr(
+        explorer,
+        "row_from_explorer",
+        lambda path: parsed.append(path) or _index_row(recording),
+    )
+
+    rows = explorer.rebuild_rows_from_outputs(tmp_path, explorer.read_manifest_rows(tmp_path))
+
+    assert parsed == [output_path]
+    assert rows == [_index_row(recording)]
+
+
+def test_index_from_existing_still_forces_full_html_rebuild(
+    tmp_path: Path, monkeypatch
+) -> None:
+    output_dir = tmp_path / "explorers"
+    output_dir.mkdir()
+    recording = "sample"
+    output_path = output_dir / explorer.explorer_output_name(recording)
+    output_path.write_text("<html></html>", encoding="utf-8")
+    parsed = []
+    monkeypatch.setattr(
+        explorer,
+        "row_from_explorer",
+        lambda path: parsed.append(path) or _index_row(recording),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_odld_dataset_explorers_w_scenario_tag.py",
+            "--index-from-existing",
+            "--output-dir",
+            str(output_dir),
+            "--index-path",
+            str(tmp_path / "index.html"),
+        ],
+    )
+
+    explorer.main()
+
+    assert parsed == [output_path]
+    assert (tmp_path / "index.html").is_file()
+
+
+def test_empty_index_path_writes_default_next_to_output_dir(tmp_path: Path) -> None:
+    output_dir = tmp_path / "quick_exploration_outputs" / "dataset_scene_explorers_odld_w_scenario_tag"
+    output_dir.mkdir(parents=True)
+
+    explorer.write_index_and_manifest(Path("."), output_dir, [])
+
+    assert (tmp_path / "quick_exploration_outputs" / "dataset_odld_explorer_w_scenario_tag_index.html").is_file()
+
+
+def test_directory_index_path_writes_index_html_inside_directory(tmp_path: Path) -> None:
+    output_dir = tmp_path / "explorers"
+    index_dir = tmp_path / "index_dir"
+    output_dir.mkdir()
+    index_dir.mkdir()
+
+    explorer.write_index_and_manifest(index_dir, output_dir, [])
+
+    assert (index_dir / "index.html").is_file()
 
 
 def _canonical() -> dict:

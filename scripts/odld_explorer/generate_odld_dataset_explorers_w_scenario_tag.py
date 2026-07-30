@@ -54,6 +54,22 @@ DEFAULT_INDEX_PATH = Path(
 )
 EXPLORER_DATA_MARKER = re.compile(r"const DATA = (\{.*?\});\s*const ", re.DOTALL)
 HIDDEN_VISUALIZATION_SCENARIOS = {"high_magnitude_jerk"}
+MANIFEST_SCHEMA_VERSION = "odld-animated-explorer-manifest-v1"
+INDEX_ROW_KEYS = (
+    "recording",
+    "file",
+    "frames",
+    "duration",
+    "objects",
+    "lines",
+    "boundaries",
+    "roadmarks",
+    "tagScenarios",
+    "tagEvents",
+    "tagScenarioList",
+    "topClasses",
+    "thumbnail",
+)
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -2173,6 +2189,13 @@ def inject_lane_tracker(output_path: Path, canonical: dict) -> None:
     render_original_explorer_with_lane_tracker(output_path, result, output_path)
 
 
+def write_explorer_atomically(output_path: Path, data: dict, canonical: dict) -> None:
+    temp_path = output_path.with_name(f".{output_path.name}.tmp")
+    temp_path.write_text(scene_html(data), encoding="utf-8")
+    inject_lane_tracker(temp_path, canonical)
+    temp_path.replace(output_path)
+
+
 def row_from_explorer(output_path: Path) -> dict:
     match = EXPLORER_DATA_MARKER.search(output_path.read_text(encoding="utf-8"))
     if match is None:
@@ -2201,6 +2224,39 @@ def row_from_explorer(output_path: Path) -> dict:
         del data
 
 
+def explorer_output_name(recording: str) -> str:
+    return f"{recording}_animated_odld_explorer.html"
+
+
+def recording_from_canonical_path(canonical_path: Path) -> str:
+    return canonical_path.name.removesuffix("_canonical_odld_frames.json")
+
+
+def row_has_valid_manifest_metadata(row: object) -> bool:
+    return isinstance(row, dict) and all(key in row for key in INDEX_ROW_KEYS)
+
+
+def read_manifest_rows(output_dir: Path) -> dict[str, dict]:
+    manifest_path = output_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return {}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+        return {}
+    rows = {}
+    for row in manifest.get("recordings", []):
+        if not row_has_valid_manifest_metadata(row):
+            continue
+        recording = row["recording"]
+        output_path = output_dir / row["file"]
+        if output_path.is_file():
+            rows[recording] = row
+    return rows
+
+
 def existing_rows_by_recording(output_dir: Path) -> dict[str, dict]:
     rows = {}
     output_paths = sorted(output_dir.glob("*_animated_odld_explorer.html"))
@@ -2212,6 +2268,69 @@ def existing_rows_by_recording(output_dir: Path) -> dict[str, dict]:
         progress.advance(row["recording"])
         gc.collect()
     return rows
+
+
+def resolve_index_path(index_path: Path, output_dir: Path) -> Path:
+    if str(index_path) in ("", "."):
+        return output_dir.parent / DEFAULT_INDEX_PATH.name
+    if index_path.exists() and index_path.is_dir():
+        return index_path / "index.html"
+    return index_path
+
+
+def write_index_and_manifest(index_path: Path, output_dir: Path, rows: list[dict]) -> None:
+    index_path = resolve_index_path(index_path, output_dir)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(index_html(rows), encoding="utf-8")
+    manifest = {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "index": index_path.name,
+        "recordings": [{key: row[key] for key in INDEX_ROW_KEYS} for row in rows],
+    }
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8"
+    )
+    print(f"Wrote index: {index_path}")
+    print(f"Wrote manifest: {manifest_path}")
+
+
+def rebuild_rows_from_outputs(output_dir: Path, rows_by_recording: dict[str, dict]) -> list[dict]:
+    rows = dict(rows_by_recording)
+    output_paths = sorted(output_dir.glob("*_animated_odld_explorer.html"))
+    progress = ProgressReporter("explorer-index", len(output_paths), "recording")
+    progress.start()
+    for output_path in output_paths:
+        recording = output_path.name.removesuffix("_animated_odld_explorer.html")
+        if row_has_valid_manifest_metadata(rows.get(recording)):
+            progress.advance(f"{recording}: manifest")
+            continue
+        row = row_from_explorer(output_path)
+        rows[row["recording"]] = row
+        progress.advance(f"{row['recording']}: parsed")
+        gc.collect()
+    return sorted(rows.values(), key=lambda row: row["recording"])
+
+
+def row_from_generated_data(recording: str, output_name: str, data: dict) -> dict:
+    return {
+        "recording": recording,
+        "file": output_name,
+        "frames": data["summary"]["frames"],
+        "duration": data["summary"]["durationSec"],
+        "objects": data["summary"]["objects"],
+        "lines": data["ld"]["summary"]["laneLines"],
+        "boundaries": data["ld"]["summary"]["roadBoundaries"],
+        "roadmarks": data["ld"]["summary"]["roadmarks"],
+        "tagScenarios": len(data["tags"]["scenarios"]),
+        "tagEvents": len(data["tags"]["events"]),
+        "tagScenarioList": data["tags"]["scenarios"],
+        "topClasses": ", ".join(
+            f"{key}:{value}"
+            for key, value in list(data["summary"]["classCounts"].items())[:6]
+        ),
+        "thumbnail": base.thumbnail_svg(data),
+    }
 
 
 def main() -> None:
@@ -2240,40 +2359,7 @@ def main() -> None:
             existing_rows_by_recording(args.output_dir).values(),
             key=lambda row: row["recording"],
         )
-        args.index_path.parent.mkdir(parents=True, exist_ok=True)
-        args.index_path.write_text(index_html(rows), encoding="utf-8")
-        manifest_path = args.output_dir / "manifest.json"
-        manifest_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": "odld-animated-explorer-manifest-v1",
-                    "index": args.index_path.name,
-                    "recordings": [
-                        {
-                            key: row[key]
-                            for key in (
-                                "recording",
-                                "file",
-                                "frames",
-                                "duration",
-                                "objects",
-                                "lines",
-                                "boundaries",
-                                "roadmarks",
-                                "tagScenarios",
-                                "tagEvents",
-                            )
-                        }
-                        for row in rows
-                    ],
-                },
-                ensure_ascii=True,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        print(f"Wrote index: {args.index_path}")
-        print(f"Wrote manifest: {manifest_path}")
+        write_index_and_manifest(args.index_path, args.output_dir, rows)
         return
 
     canonical_paths = sorted(args.canonical_dir.glob("*_canonical_odld_frames.json"))
@@ -2282,23 +2368,20 @@ def main() -> None:
         canonical_paths = [
             path
             for path in canonical_paths
-            if path.name.removesuffix("_canonical_odld_frames.json") in requested
+            if recording_from_canonical_path(path) in requested
         ]
-    rows_by_recording = existing_rows_by_recording(args.output_dir)
+    rows_by_recording = read_manifest_rows(args.output_dir)
     generation_progress = ProgressReporter(
         "odld-explorers", len(canonical_paths), "recording"
     )
     generation_progress.start()
     for index, canonical_path in enumerate(canonical_paths, 1):
-        recording = canonical_path.name.removesuffix("_canonical_odld_frames.json")
-        output_name = f"{recording}_animated_odld_explorer.html"
+        recording = recording_from_canonical_path(canonical_path)
+        output_name = explorer_output_name(recording)
         output_path = args.output_dir / output_name
         if output_path.is_file() and not args.regenerate_existing:
-            if recording not in rows_by_recording:
-                rows_by_recording[recording] = row_from_explorer(output_path)
             print(f"[{index}/{len(canonical_paths)}] {recording}: skipped existing explorer")
             generation_progress.advance(f"{recording}: skipped")
-            gc.collect()
             continue
         with canonical_path.open(encoding="utf-8") as handle:
             canonical = json.load(handle)
@@ -2315,27 +2398,10 @@ def main() -> None:
             recording, args.window_dir, canonical
         )
         debug_counts = write_debug_payloads(scene_dir, canonical, args.output_dir)
-        output_path.write_text(scene_html(data), encoding="utf-8")
-        inject_lane_tracker(output_path, canonical)
-        top_classes = ", ".join(
-            f"{key}:{value}"
-            for key, value in list(data["summary"]["classCounts"].items())[:6]
+        write_explorer_atomically(output_path, data, canonical)
+        rows_by_recording[recording] = row_from_generated_data(
+            recording, output_name, data
         )
-        rows_by_recording[recording] = {
-            "recording": recording,
-            "file": output_name,
-            "frames": data["summary"]["frames"],
-            "duration": data["summary"]["durationSec"],
-            "objects": data["summary"]["objects"],
-            "lines": data["ld"]["summary"]["laneLines"],
-            "boundaries": data["ld"]["summary"]["roadBoundaries"],
-            "roadmarks": data["ld"]["summary"]["roadmarks"],
-            "tagScenarios": len(data["tags"]["scenarios"]),
-            "tagEvents": len(data["tags"]["events"]),
-            "tagScenarioList": data["tags"]["scenarios"],
-            "topClasses": top_classes,
-            "thumbnail": base.thumbnail_svg(data),
-        }
         print(
             f"[{index}/{len(canonical_paths)}] {recording}: "
             f"{data['summary']['objects']} objects, "
@@ -2351,35 +2417,8 @@ def main() -> None:
         # reliable on Windows.
         del canonical, data
         gc.collect()
-    rows = sorted(rows_by_recording.values(), key=lambda row: row["recording"])
-    args.index_path.parent.mkdir(parents=True, exist_ok=True)
-    args.index_path.write_text(index_html(rows), encoding="utf-8")
-    manifest = {
-        "schema_version": "odld-animated-explorer-manifest-v1",
-        "index": args.index_path.name,
-        "recordings": [
-            {
-                key: row[key]
-                for key in (
-                    "recording",
-                    "file",
-                    "frames",
-                    "duration",
-                    "objects",
-                    "lines",
-                    "boundaries",
-                    "roadmarks",
-                    "tagScenarios",
-                    "tagEvents",
-                )
-            }
-            for row in rows
-        ],
-    }
-    manifest_path = args.output_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=True, indent=2), encoding="utf-8")
-    print(f"Wrote index: {args.index_path}")
-    print(f"Wrote manifest: {manifest_path}")
+    rows = rebuild_rows_from_outputs(args.output_dir, rows_by_recording)
+    write_index_and_manifest(args.index_path, args.output_dir, rows)
 
 
 if __name__ == "__main__":
