@@ -23,10 +23,14 @@ ms-odd-rules = "ms_odd_tagging.tagger.rule_based.registry:main"
 ms-odd-scenario-explorer = "ms_odd_tagging.visualization.scenario_explorer:main"
 ms-odd-frame-gt-review = "ms_odd_tagging.gt_comparison.authoring:main"
 ms-odd-following-lane = "ms_odd_tagging.scenarios.following_lane.pipeline:main"
+ms-odd-lanelet2-poc = "ms_odd_tagging.lanelet2_poc.cli:main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
+]
+lanelet2-poc = [
+  "lanelet2>=1.2.2; platform_system == 'Linux'",
 ]
 server = [
   "vllm==0.24.0",

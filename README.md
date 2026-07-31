@@ -2,6 +2,10 @@
 
 Modular autonomous-driving motional-scenario tagging from OD/LD annotations and ego trajectories.
 
+The optional, isolated Lanelet2 ego/adjacent-lane proof of concept is documented
+in [docs/lanelet2_poc.md](docs/lanelet2_poc.md). It remains disabled unless its
+dedicated CLI receives `--enable-lanelet2-poc`.
+
 ```text
 data/01_raw
   -> outputs/01_canonical

@@ -100,14 +100,19 @@ Run every canonical ODLD recording by omitting the recording ID:
 python .\run_following_lane_pipeline.py
 ```
 
-By default, visualization uses the original explorers from:
+By default, visualization writes a self-contained lane debugger. It shows the
+current ego, left, and right lane polygons; physical and logical lane IDs;
+assignment method/confidence; scored ego-lane candidates; source LD geometry;
+and the complete per-frame detector output. Use the frame number field, arrow
+keys, slider, or playback controls to navigate. The selected source frame is
+also stored in the URL fragment, so a frame can be bookmarked or shared.
 
-```text
-C:\path\to\quick_exploration_outputs\dataset_scene_explorers_odld
+To inject the same lane overlay into an existing OD+LD explorer, pass:
+
+```powershell
+python .\run_following_lane_pipeline.py <recording-id> `
+  --base-explorer-dir C:\path\to\dataset_scene_explorers_odld
 ```
-
-Use `--base-explorer-dir <directory>` if those original explorers are in a
-different location.
 
 Outputs are separated under `outputs/scenarios/following_lane/` as
 `01_lane_geometry`, `02_frame_assignments`, `03_tags`, and `04_visualization`.
