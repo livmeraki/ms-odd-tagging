@@ -41,7 +41,7 @@ GT_AUTHORING_STYLE = """
   .gtAuthoringBody { display:grid; gap:10px; }
   .gtAuthoringHeader { display:grid; gap:7px; }
   .gtAuthoringCommandRow { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
-  .gtAuthoringFileRow { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+  .gtAuthoringFileRow { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
   .gtAuthoringHeader label { display:grid; gap:4px; font-size:11px; color:#64748b; text-transform:uppercase; font-weight:700; }
   .gtAuthoringHeader select, .gtAuthoringHeader input { width:auto; height:30px; min-width:150px; border:1px solid #cbd5e1; border-radius:5px; padding:0 7px; background:white; color:#172033; }
   .gtAuthoringHeader button, .gtAuthoringActions button { width:auto; min-height:32px; height:auto; border:1px solid #94a3b8; border-radius:5px; background:white; color:#334155; padding:6px 9px; cursor:pointer; }
@@ -105,6 +105,7 @@ def authoring_panel() -> str:
         </div>
         <div class="gtAuthoringFileRow">
           <button id="gtAuthoringImportButton" type="button">Import JSON</button>
+          <button id="gtAuthoringSaveToGt" type="button">Save to GT folder</button>
           <button id="gtAuthoringDownload" class="primary" type="button">Download JSON</button>
         </div>
         <input id="gtAuthoringImport" type="file" accept="application/json">
@@ -249,6 +250,17 @@ function gtAuthoringSetFrameByOffset(offset) {
   }
   setFrame(target);
 }
+function gtAuthoringHandleKeydown(event) {
+  const tag = event.target?.tagName;
+  if (['INPUT','TEXTAREA','SELECT','BUTTON'].includes(tag)) return;
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault();
+    gtAuthoringSetFrameByOffset(-1);
+  } else if (event.key === 'ArrowRight') {
+    event.preventDefault();
+    gtAuthoringSetFrameByOffset(1);
+  }
+}
 function gtAuthoringSpeedLabels(speed) {
   const labels = {
     stationary: null,
@@ -388,6 +400,32 @@ function gtAuthoringDownload() {
   a.click();
   URL.revokeObjectURL(url);
 }
+async function gtAuthoringSaveToGtFolder() {
+  gtAuthoringSave();
+  const button = document.getElementById('gtAuthoringSaveToGt');
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Saving...';
+  try {
+    const response = await fetch('/__gt_authoring_save', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(gtAuthoring),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || result.status !== 'ok') {
+      throw new Error(result.error || `HTTP ${response.status}`);
+    }
+    document.getElementById('gtAuthoringStatus').textContent =
+      `Saved to GT folder: ${result.file}`;
+  } catch (error) {
+    document.getElementById('gtAuthoringStatus').textContent =
+      `GT folder save unavailable: ${error.message}. Use Download JSON or serve with the GT authoring save server.`;
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
 function gtAuthoringInitialize() {
   gtAuthoringLoadPreferences();
   const panel = document.getElementById('gtAuthoringPanel');
@@ -446,6 +484,7 @@ function gtAuthoringInitialize() {
   document.getElementById('gtAuthoringPrev').onclick = () => gtAuthoringSetFrameByOffset(-1);
   document.getElementById('gtAuthoringNext').onclick = () => gtAuthoringSetFrameByOffset(1);
   document.getElementById('gtAuthoringAddCurrent').onclick = gtAuthoringAddCurrentFrame;
+  document.getElementById('gtAuthoringSaveToGt').onclick = gtAuthoringSaveToGtFolder;
   document.getElementById('gtAuthoringDownload').onclick = gtAuthoringDownload;
   document.getElementById('gtAuthoringImportButton').onclick = () => document.getElementById('gtAuthoringImport').click();
   document.getElementById('gtAuthoringImport').onchange = async event => {
@@ -476,6 +515,7 @@ function gtAuthoringInitialize() {
     for (const label of selected) frame.labels[label] = previous.labels?.[label] ?? null;
     gtAuthoringSave();
   };
+  document.addEventListener('keydown', gtAuthoringHandleKeydown);
   gtAuthoringRender();
 }
 function gtAuthoringUpdateScenarioSummary() {

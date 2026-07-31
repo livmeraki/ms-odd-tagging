@@ -114,6 +114,57 @@ def test_row_from_existing_explorer_payload(tmp_path: Path) -> None:
     assert row["topClasses"] == "car:1"
 
 
+def test_following_lane_intervals_are_added_to_scenario_tags() -> None:
+    tags = {
+        "available": True,
+        "sourceKind": "canonical_per_frame_rule_events",
+        "scenarios": ["stationary"],
+        "events": [
+            {
+                "scenario": "stationary",
+                "startFrame": 0,
+                "endFrame": 4,
+                "startTime": 0.0,
+                "endTime": 0.4,
+                "evidence": {},
+            }
+        ],
+    }
+    following = {
+        "intervals": [
+            {
+                "scenario": "following_lane_with_lead",
+                "start_frame_index": 5,
+                "end_frame_index": 12,
+                "start_time_since_start_s": 0.5,
+                "end_time_since_start_s": 1.2,
+                "frame_count": 8,
+                "boundary_convention": "inclusive_observed_frames",
+            },
+            {
+                "scenario": "following_lane_without_lead",
+                "start_frame_index": 13,
+                "end_frame_index": 20,
+                "start_time_since_start_s": 1.3,
+                "end_time_since_start_s": 2.0,
+                "frame_count": 8,
+                "boundary_convention": "inclusive_observed_frames",
+            },
+        ]
+    }
+
+    merged = explorer.add_following_lane_tags(tags, following)
+
+    assert "following_lane_with_lead" in merged["scenarios"]
+    assert "following_lane_without_lead" in merged["scenarios"]
+    assert "generated_lane_tracker" in merged["sourceKind"]
+    assert [
+        event["scenario"]
+        for event in merged["events"]
+        if event.get("source") == "generated_lane_tracker"
+    ] == ["following_lane_with_lead", "following_lane_without_lead"]
+
+
 def test_write_explorer_atomically_publishes_after_injection(
     tmp_path: Path, monkeypatch
 ) -> None:
