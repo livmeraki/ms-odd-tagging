@@ -250,6 +250,29 @@ def tag_event_payload(event: dict) -> dict:
     }
 
 
+def following_lane_event_payload(interval: dict) -> dict:
+    return {
+        "scenario": interval["scenario"],
+        "startFrame": interval["start_frame_index"],
+        "endFrame": interval["end_frame_index"],
+        "startTime": interval["start_time_since_start_s"],
+        "endTime": interval["end_time_since_start_s"],
+        "durationSec": (
+            interval["end_time_since_start_s"]
+            - interval["start_time_since_start_s"]
+        ),
+        "confidence": None,
+        "detectorVersion": "following_lane_tracker",
+        "evidence": compact_tag_evidence(
+            {
+                "frame_count": interval.get("frame_count"),
+                "boundary_convention": interval.get("boundary_convention"),
+            }
+        ),
+        "source": "generated_lane_tracker",
+    }
+
+
 def build_tag_payload(recording: str, window_dir: Path, canonical: dict) -> dict:
     """Load or regenerate dynamic recording-level rule-based events.
 
@@ -297,6 +320,27 @@ def build_tag_payload(recording: str, window_dir: Path, canonical: dict) -> dict
         "scenarios": scenarios,
         "events": events,
     }
+
+
+def add_following_lane_tags(tags: dict, following: dict) -> dict:
+    events = list(tags.get("events") or [])
+    events.extend(
+        following_lane_event_payload(interval)
+        for interval in following.get("intervals", [])
+        if interval.get("scenario")
+    )
+    events.sort(
+        key=lambda event: (
+            event.get("startFrame", -1),
+            event.get("scenario", ""),
+        )
+    )
+    tags = dict(tags)
+    tags["available"] = bool(events)
+    tags["scenarios"] = sorted({event["scenario"] for event in events})
+    tags["events"] = events
+    tags["sourceKind"] = f"{tags.get('sourceKind') or 'scenario_tags'}+generated_lane_tracker"
+    return tags
 
 
 def build_road_feature_payload(canonical: dict) -> dict:
@@ -1015,7 +1059,7 @@ TAG_CONTROLS_HTML = """
       <div id="roadFeatureContext" class="tagReadout roadFeatureReadout"></div>
       <div id="objectRelationContext" class="tagReadout objectRelationReadout"></div>
       <div id="pathCrossingContext" class="tagReadout pathCrossingReadout"></div>
-      <div class="note">All tags are dynamic recording-level rule events with inclusive frame/time sample bounds.</div>
+      <div class="note">Scenario tags use inclusive frame/time sample bounds and include generated following-lane intervals.</div>
     </div>
 """
 
@@ -1936,8 +1980,10 @@ def scene_html(data: dict) -> str:
     )
     page = replace_once(
         page,
-        '    <div id="animControls">',
-        LD_CONTROLS_HTML + TAG_CONTROLS_HTML + '\n    <div id="animControls">',
+        '    <label for="classFilter">Object classes</label>',
+        LD_CONTROLS_HTML
+        + TAG_CONTROLS_HTML
+        + '\n    <label for="classFilter">Object classes</label>',
         "LD and tag controls",
     )
     page = replace_once(
@@ -2184,15 +2230,18 @@ applyIndexFilters();
 </script></body></html>"""
 
 
-def inject_lane_tracker(output_path: Path, canonical: dict) -> None:
-    result = run_following_lane(canonical)
-    render_original_explorer_with_lane_tracker(output_path, result, output_path)
+def inject_lane_tracker(output_path: Path, following_lane_result: dict) -> None:
+    render_original_explorer_with_lane_tracker(
+        output_path, following_lane_result, output_path
+    )
 
 
-def write_explorer_atomically(output_path: Path, data: dict, canonical: dict) -> None:
+def write_explorer_atomically(
+    output_path: Path, data: dict, following_lane_result: dict
+) -> None:
     temp_path = output_path.with_name(f".{output_path.name}.tmp")
     temp_path.write_text(scene_html(data), encoding="utf-8")
-    inject_lane_tracker(temp_path, canonical)
+    inject_lane_tracker(temp_path, following_lane_result)
     temp_path.replace(output_path)
 
 
@@ -2394,11 +2443,13 @@ def main() -> None:
         data["pathCrossingRelations"] = build_object_path_crossing_payload(
             canonical
         )
+        following_lane_result = run_following_lane(canonical)
         data["tags"] = build_tag_payload(
             recording, args.window_dir, canonical
         )
+        data["tags"] = add_following_lane_tags(data["tags"], following_lane_result)
         debug_counts = write_debug_payloads(scene_dir, canonical, args.output_dir)
-        write_explorer_atomically(output_path, data, canonical)
+        write_explorer_atomically(output_path, data, following_lane_result)
         rows_by_recording[recording] = row_from_generated_data(
             recording, output_name, data
         )

@@ -63,10 +63,10 @@ renderLdTimeline();
 
     assert "const LANE_TRACKER =" in page
     assert 'id="showLaneTracker"' in page
-    assert 'id="laneTrackerTimeline"' in page
+    assert 'id="laneTrackerTimeline"' not in page
     assert "traces.unshift(...laneTrackerTraces());" in page
-    assert "updateLaneTrackerTimelineCursor();" in page
-    assert "renderLaneTrackerTimeline();" in page
+    assert "updateLaneTrackerTimelineCursor();" not in page
+    assert "renderLaneTrackerTimeline();" not in page
     assert 'id="showLdGapExtensions"' in page
     assert "const LD_GAP_EXTENSION_RESULT = buildLdGapExtensions();" in page
     assert "traces.unshift(...ldGapExtensionTraces());" in page

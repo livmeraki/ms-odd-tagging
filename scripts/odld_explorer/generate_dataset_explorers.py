@@ -174,6 +174,11 @@ def scene_html(data):
   .backLink:hover {{ background: rgba(255,255,255,.16); }}
   header h1 {{ margin: 0 0 4px; font-size: 18px; }}
   header p {{ margin: 0; opacity: .9; font-size: 12px; }}
+  .topPlayback {{ position: sticky; top: 0; z-index: 10; display: grid; grid-template-columns: auto minmax(240px, 1fr) auto minmax(90px, 120px); gap: 10px; align-items: center; padding: 10px 12px; background: #ffffff; border-bottom: 1px solid #d7dee8; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); }}
+  .topPlayback button, .topPlayback select, .topPlayback input {{ margin-top: 0; }}
+  .topPlayback label {{ display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; margin-top: 0; white-space: nowrap; }}
+  .topPlayback .speedControl {{ grid-template-columns: auto minmax(72px, 1fr); }}
+  .topPlayback #frameReadout {{ margin-top: 0; white-space: nowrap; }}
   main {{ display: grid; grid-template-columns: 320px 1fr; gap: 12px; padding: 12px; }}
   aside {{ background: white; border: 1px solid #d7dee8; border-radius: 8px; padding: 14px; height: calc(100vh - 96px); overflow: auto; }}
   .panel {{ background: white; border: 1px solid #d7dee8; border-radius: 8px; padding: 8px; margin-bottom: 12px; }}
@@ -184,7 +189,7 @@ def scene_html(data):
   label input[type="checkbox"] {{ width: auto; margin-right: 6px; }}
   .stat {{ display: flex; justify-content: space-between; border-bottom: 1px solid #edf1f5; padding: 5px 0; font-size: 13px; }}
   .classes {{ font-size: 12px; line-height: 1.45; }}
-  #animControls {{ margin-top: 14px; padding-top: 10px; border-top: 1px solid #edf1f5; }}
+  #animControls {{ margin: 0; }}
   #frameReadout {{ font-size: 12px; color: #334155; margin-top: 6px; }}
   .note {{ font-size: 12px; color: #475569; line-height: 1.4; margin-top: 10px; }}
   label.disabled {{ color: #94a3b8; }}
@@ -196,7 +201,7 @@ def scene_html(data):
   .noteItem {{ border: 1px solid #d7dee8; border-radius: 6px; padding: 7px; background: #f8fafc; font-size: 12px; cursor: pointer; }}
   .noteItem strong {{ display: block; color: #0f172a; margin-bottom: 3px; }}
   .noteItem span {{ color: #475569; }}
-  @media (max-width: 900px) {{ main {{ grid-template-columns: 1fr; }} aside {{ height: auto; }} }}
+  @media (max-width: 900px) {{ .topPlayback {{ grid-template-columns: auto 1fr; }} .topPlayback #frameReadout {{ grid-column: 1 / -1; }} main {{ grid-template-columns: 1fr; }} aside {{ height: auto; }} }}
 </style>
 </head>
 <body>
@@ -209,6 +214,26 @@ def scene_html(data):
     <a class="backLink" href="../dataset_trajectory_object_explorer_index.html">Back to list</a>
   </div>
 </header>
+<div id="animControls" class="topPlayback">
+  <button id="playPause" type="button">Play</button>
+  <label for="frameSlider">Frame
+    <input id="frameSlider" type="range" min="0" value="0" step="1" />
+  </label>
+  <div id="frameReadout"></div>
+  <label for="playbackSpeed" class="speedControl">Speed
+    <select id="playbackSpeed">
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1x</option>
+      <option value="2">2x</option>
+      <option value="4">4x</option>
+      <option value="8">8x</option>
+      <option value="12">12x</option>
+      <option value="16">16x</option>
+      <option value="24">24x</option>
+      <option value="32">32x</option>
+    </select>
+  </label>
+</div>
 <main>
   <aside>
     <div class="stat"><span>Frames</span><b id="statFrames"></b></div>
@@ -223,20 +248,6 @@ def scene_html(data):
     <label><input id="activeOnly" type="checkbox" checked /> Show active objects only</label>
     <label id="persistStaticLabel"><input id="persistStatic" type="checkbox" checked /> Persist static / parked objects after first observation</label>
     <label><input id="followEgo" type="checkbox" checked /> Follow ego with current zoom</label>
-    <div id="animControls">
-      <button id="playPause" type="button">Play</button>
-      <label for="frameSlider">Frame</label>
-      <input id="frameSlider" type="range" min="0" value="0" step="1" />
-      <div id="frameReadout"></div>
-      <label for="playbackSpeed">Playback speed</label>
-      <select id="playbackSpeed">
-        <option value="0.5">0.5x</option>
-        <option value="1" selected>1x</option>
-        <option value="2">2x</option>
-        <option value="4">4x</option>
-        <option value="8">8x</option>
-      </select>
-    </div>
     <div class="tagPanel">
       <h3>Situation Notes</h3>
       <label for="situationTag">Tag</label>

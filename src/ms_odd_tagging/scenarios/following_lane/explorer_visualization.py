@@ -13,7 +13,6 @@ TRACKER_CSS = """
   .laneTrackerReadout { margin-top: 8px; padding: 8px; border-radius: 6px; background: #ecfdf5; color: #14532d; font-size: 12px; line-height: 1.5; }
   .laneTrackerLegend { display: flex; flex-wrap: wrap; gap: 5px 10px; margin-top: 8px; color: #475569; font-size: 11px; }
   .laneTrackerLegend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 2px; background: var(--lane-color); }
-  #laneTrackerTimeline { height: 145px; }
 """
 
 
@@ -36,11 +35,6 @@ TRACKER_CONTROLS = """
       <div class="note">Generated lane roles, gap extensions, and lead selection use the same frame as the original explorer. Lane identifiers remain internal and are not drawn.</div>
       <div class="note">Experimental LD gap extensions are visualization-only. They connect aligned dashed-to-dashed and solid-to-dashed line endpoints; they do not affect lane assignment or scenario tags.</div>
     </div>
-"""
-
-
-TRACKER_PANEL = """
-    <div class="panel"><div id="laneTrackerTimeline"></div></div>
 """
 
 
@@ -321,71 +315,6 @@ function updateLaneTrackerReadout() {
     `${laneRoleSummary('right', frame.right_lane)}<br>` +
     `${lead}<br>${frame.reason.replaceAll('_', ' ')}`;
 }
-
-function renderLaneTrackerTimeline() {
-  const stateCode = {
-    not_applicable: 0,
-    unknown: 1,
-    following_lane_without_lead: 2,
-    following_lane_with_lead: 3
-  };
-  const labels = {
-    not_applicable: 'not applicable',
-    unknown: 'unknown',
-    following_lane_without_lead: 'following lane without lead',
-    following_lane_with_lead: 'following lane with lead'
-  };
-  Plotly.newPlot('laneTrackerTimeline', [{
-    type: 'heatmap',
-    x: LANE_TRACKER.frames.map(frame => frame.time_since_start_s),
-    y: ['following-lane state'],
-    z: [LANE_TRACKER.frames.map(frame => stateCode[frame.state] ?? 1)],
-    text: [LANE_TRACKER.frames.map(frame => labels[frame.state] || frame.state)],
-    customdata: [LANE_TRACKER.frames.map(frame => frame.frame_index)],
-    colorscale: [
-      [0.00, TRACKER_COLORS.inactive], [0.2499, TRACKER_COLORS.inactive],
-      [0.25, TRACKER_COLORS.unknown], [0.4999, TRACKER_COLORS.unknown],
-      [0.50, TRACKER_COLORS.ego], [0.7499, TRACKER_COLORS.ego],
-      [0.75, TRACKER_COLORS.lead], [1.00, TRACKER_COLORS.lead]
-    ],
-    zmin: 0, zmax: 3, showscale: false,
-    hovertemplate: 't=%{x:.2f}s<br>%{text}<br>frame %{customdata}<extra></extra>'
-  }], {
-    margin: {l: 125, r: 24, t: 25, b: 45},
-    xaxis: {
-      title: 'time since start (s)',
-      range: [traj.rel_t[0], traj.rel_t[traj.rel_t.length - 1]]
-    },
-    yaxis: {fixedrange: true},
-    title: {text: 'Generated lane tracker', font: {size: 14}}
-  }, {responsive: true, displayModeBar: false}).then(() => {
-    document.getElementById('laneTrackerTimeline').on('plotly_click', event => {
-      const point = event.points && event.points[0];
-      if (!point || point.x == null) return;
-      let nearest = 0;
-      let distance = Infinity;
-      for (let index = 0; index < traj.rel_t.length; index++) {
-        const candidate = Math.abs(traj.rel_t[index] - Number(point.x));
-        if (candidate < distance) { distance = candidate; nearest = index; }
-      }
-      stopPlayback();
-      setFrame(nearest);
-    });
-  });
-}
-
-function updateLaneTrackerTimelineCursor() {
-  const frame = trackerFrame();
-  if (!frame) return;
-  Plotly.relayout('laneTrackerTimeline', {
-    shapes: [{
-      type: 'line',
-      x0: frame.time_since_start_s, x1: frame.time_since_start_s,
-      y0: 0, y1: 1, xref: 'x', yref: 'paper',
-      line: {color: '#111827', width: 2, dash: 'dot'}
-    }]
-  });
-}
 """
 
 
@@ -396,6 +325,23 @@ def _replace_once(text: str, old: str, new: str, label: str) -> str:
             f"Unable to inject {label}: expected one marker, found {count}"
         )
     return text.replace(old, new, 1)
+
+
+def _insert_tracker_controls(page: str) -> str:
+    class_filter_marker = '    <label for="classFilter">Object classes</label>'
+    if class_filter_marker in page:
+        return _replace_once(
+            page,
+            class_filter_marker,
+            TRACKER_CONTROLS + "\n" + class_filter_marker,
+            "lane-tracker controls",
+        )
+    return _replace_once(
+        page,
+        "    <div id=\"animControls\">",
+        TRACKER_CONTROLS + "\n    <div id=\"animControls\">",
+        "lane-tracker controls",
+    )
 
 
 def _compact_payload(result: dict[str, Any]) -> dict[str, Any]:
@@ -467,18 +413,7 @@ def render_original_explorer_with_lane_tracker(
         TRACKER_CSS + "\n</style>",
         "lane-tracker styles",
     )
-    page = _replace_once(
-        page,
-        "    <div id=\"animControls\">",
-        TRACKER_CONTROLS + "\n    <div id=\"animControls\">",
-        "lane-tracker controls",
-    )
-    page = _replace_once(
-        page,
-        "    <div class=\"panel\"><div id=\"map\"></div></div>",
-        TRACKER_PANEL + "    <div class=\"panel\"><div id=\"map\"></div></div>",
-        "lane-tracker timeline panel",
-    )
+    page = _insert_tracker_controls(page)
     page = _replace_once(
         page,
         "const DATA = ",
@@ -503,12 +438,6 @@ def render_original_explorer_with_lane_tracker(
     )
     page = _replace_once(
         page,
-        "  updateLdTimelineCursor();",
-        "  updateLdTimelineCursor();\n  updateLaneTrackerTimelineCursor();",
-        "lane-tracker cursor update",
-    )
-    page = _replace_once(
-        page,
         "filter.addEventListener('change', render);",
         "for (const id of ['showLaneTracker','showLaneTrackerBridges',"
         "'showLaneTrackerCenterlines','showLaneTrackerLead',"
@@ -517,12 +446,5 @@ def render_original_explorer_with_lane_tracker(
         "filter.addEventListener('change', render);",
         "lane-tracker control listeners",
     )
-    page = _replace_once(
-        page,
-        "renderTimeline();\nrenderLdTimeline();",
-        "renderTimeline();\nrenderLdTimeline();\nrenderLaneTrackerTimeline();",
-        "lane-tracker timeline initialization",
-    )
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(page, encoding="utf-8")

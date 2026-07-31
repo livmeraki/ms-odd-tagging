@@ -119,8 +119,14 @@ renderTagTimeline();
     assert "gtAuthoringRender();" in result
     assert "ms-odd-frame-gt:${GT_AUTHORING.recording_id}" in result
     assert "Download JSON" in result
+    assert "Save to GT folder" in result
+    assert "gtAuthoringSaveToGtFolder" in result
+    assert "/__gt_authoring_save" in result
     assert "Add current frame" in result
     assert "gtAuthoringAddCurrentFrame" in result
+    assert "gtAuthoringHandleKeydown" in result
+    assert "event.key === 'ArrowLeft'" in result
+    assert "event.key === 'ArrowRight'" in result
     assert "selectedScenarios" in result
     assert "groupOpen" in result
     assert "window.name" in result
