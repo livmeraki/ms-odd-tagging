@@ -107,6 +107,127 @@ def _projected_samples(
     return [(*ego_coordinates(point, ego), point) for point in boundary.points]
 
 
+def _boundary_heading(boundary: Boundary) -> float | None:
+    if len(boundary.points) < 2:
+        return None
+    start, end = boundary.points[0], boundary.points[-1]
+    if distance(start, end) <= 1e-6:
+        return None
+    return math.atan2(end[1] - start[1], end[0] - start[0])
+
+
+def _merge_group_key(boundary: Boundary) -> tuple[Any, ...]:
+    attrs = boundary.attributes or {}
+    return (
+        boundary.source_kind,
+        str(attrs.get("boundary_attribute") or "").lower(),
+    )
+
+
+def _merged_boundary(parts: list[Boundary]) -> Boundary:
+    if len(parts) == 1:
+        return parts[0]
+    points: list[Point] = []
+    ids = []
+    for part in parts:
+        ids.append(part.boundary_id)
+        if not points:
+            points.extend(part.points)
+        elif distance(points[-1], part.points[0]) <= 1e-6:
+            points.extend(part.points[1:])
+        else:
+            points.extend(part.points)
+    digest = hashlib.sha1("|".join(ids).encode("utf-8")).hexdigest()[:12]
+    attributes = dict(parts[0].attributes)
+    attributes["merged_from_boundary_ids"] = ids
+    attributes["merge_fragment_count"] = len(ids)
+    return Boundary(
+        f"merged_{digest}",
+        tuple(points),
+        parts[0].source_kind,
+        attributes,
+    )
+
+
+def merge_boundary_fragments(
+    boundaries: Iterable[Boundary],
+    ego: tuple[float, float, float],
+    config: dict[str, Any],
+) -> list[Boundary]:
+    """Join compatible short LD fragments before local lanelet pairing."""
+    if not config.get("merge_boundary_fragments", True):
+        return list(boundaries)
+    max_gap = float(config["maximum_boundary_merge_gap_m"])
+    max_lateral = float(config["maximum_boundary_merge_lateral_offset_m"])
+    max_heading = math.radians(
+        float(config["maximum_boundary_merge_heading_difference_deg"])
+    )
+    prepared = []
+    for raw in boundaries:
+        points = tuple(
+            (float(point[0]), float(point[1]))
+            for point in raw.points
+            if len(point) >= 2 and finite(point[0]) and finite(point[1])
+        )
+        if len(points) < 2:
+            prepared.append(raw)
+            continue
+        prepared.append(
+            _oriented(
+                Boundary(raw.boundary_id, points, raw.source_kind, raw.attributes),
+                ego[2],
+            )
+        )
+    groups: dict[tuple[Any, ...], list[Boundary]] = {}
+    for boundary in prepared:
+        groups.setdefault(_merge_group_key(boundary), []).append(boundary)
+    output: list[Boundary] = []
+    for group in groups.values():
+        remaining = set(range(len(group)))
+        while remaining:
+            current = min(
+                remaining,
+                key=lambda index: ego_coordinates(group[index].points[0], ego)[0]
+                if group[index].points
+                else math.inf,
+            )
+            remaining.remove(current)
+            parts = [group[current]]
+            while True:
+                end = parts[-1].points[-1]
+                end_local = ego_coordinates(end, ego)
+                end_heading = _boundary_heading(parts[-1])
+                best: tuple[float, int] | None = None
+                for index in remaining:
+                    candidate = group[index]
+                    if len(candidate.points) < 2:
+                        continue
+                    start_local = ego_coordinates(candidate.points[0], ego)
+                    gap = start_local[0] - end_local[0]
+                    lateral = abs(start_local[1] - end_local[1])
+                    candidate_heading = _boundary_heading(candidate)
+                    heading_delta = (
+                        math.inf
+                        if end_heading is None or candidate_heading is None
+                        else abs(wrap_angle(candidate_heading - end_heading))
+                    )
+                    if (
+                        0.0 <= gap <= max_gap
+                        and lateral <= max_lateral
+                        and heading_delta <= max_heading
+                    ):
+                        score = gap + lateral * 2.0 + heading_delta
+                        if best is None or score < best[0]:
+                            best = (score, index)
+                if best is None:
+                    break
+                _, next_index = best
+                remaining.remove(next_index)
+                parts.append(group[next_index])
+            output.append(_merged_boundary(parts))
+    return output
+
+
 def _interpolate(
     projected: list[tuple[float, float, Point]], stations: list[float]
 ) -> list[Point] | None:

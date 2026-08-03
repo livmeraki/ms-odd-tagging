@@ -10,6 +10,8 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import generate_dataset_explorers as base_explorer  # noqa: E402
 import add_gt_authoring_to_tagged_explorers as gt_authoring_explorer  # noqa: E402
+import add_bev_lane_poc_overlay_to_explorer as bev_lane_overlay  # noqa: E402
+import add_lanelet2_poc_overlay_to_explorer as lanelet2_overlay  # noqa: E402
 import generate_odld_dataset_explorers_w_scenario_tag as odld_explorer  # noqa: E402
 
 
@@ -98,3 +100,126 @@ def test_gt_authoring_index_uses_odld_card_filter_layout(tmp_path: Path) -> None
     assert 'id="scenarioFilter"' in page
     assert 'class="card"' in page
     assert f"{recording}_animated_odld_explorer_w_gt_authoring.html" in page
+
+
+def test_lanelet2_poc_overlay_duplicates_odld_explorer_controls_and_traces() -> None:
+    page = base_explorer.scene_html(minimal_explorer_data())
+    result = {
+        "recording_id": "rec",
+        "coordinate_system": "LCS",
+        "lanelet2_available": True,
+        "frames": [
+            {
+                "frame_index": 0,
+                "status": "matched",
+                "ego_lane": {
+                    "exists": True,
+                    "lane_id": "ego",
+                    "polygon_lcs_m": [[0, 1], [1, 1], [1, -1], [0, -1]],
+                    "confidence": 0.9,
+                },
+                "left_adjacent": {
+                    "exists": True,
+                    "lane_id": "left",
+                    "polygon_lcs_m": [[0, 3], [1, 3], [1, 1], [0, 1]],
+                    "confidence": 0.8,
+                },
+                "right_adjacent": {
+                    "exists": False,
+                    "lane_id": None,
+                    "polygon_lcs_m": [],
+                    "confidence": 0.0,
+                },
+                "candidate_lanelets": [],
+                "routing": {
+                    "backend": "lanelet2",
+                    "queries": {
+                        "left": "left",
+                        "right": None,
+                        "adjacentLeft": None,
+                        "adjacentRight": None,
+                    },
+                    "error": None,
+                },
+            }
+        ],
+    }
+
+    lcs_payload = {
+        "frames": {
+            "0": [
+                {
+                    "boundary_id": "merged_1",
+                    "source_kind": "lane_line",
+                    "points_lcs_m": [[0, 1], [1, 1]],
+                    "attributes": {"merged_from_boundary_ids": ["line_1"]},
+                }
+            ]
+        },
+    }
+
+    injected = lanelet2_overlay.inject_overlay(page, result, lcs_payload)
+
+    assert "const LANELET2_POC =" in injected
+    assert "const LANELET2_LCS =" in injected
+    assert 'id="showLanelet2LcsLocal"' in injected
+    assert 'id="showLanelet2Poc"' in injected
+    assert 'id="showLanelet2Candidates"' in injected
+    assert "Local LCS boundaries used by Lanelet2 POC" in injected
+    assert 'id="showLanelet2LcsRaw"' not in injected
+    assert "Raw LCS LD boundaries" not in injected
+    assert "function addLanelet2PocTraces(traces)" in injected
+    assert "addLanelet2PocTraces(traces);" in injected
+    assert "Lanelet2 ego lane" in injected
+    assert injected.count("const DATA =") == 1
+
+
+def test_bev_lane_poc_overlay_duplicates_odld_explorer_controls_and_traces() -> None:
+    page = base_explorer.scene_html(minimal_explorer_data())
+    result = {
+        "recording_id": "rec",
+        "coordinate_system": "BEV_EGO_METERS",
+        "frames": [
+            {
+                "frame_index": 0,
+                "status": "matched",
+                "ego_lane": {
+                    "exists": True,
+                    "lane_id": "ego",
+                    "polygon_lcs_m": [[0, 1], [1, 1], [1, -1], [0, -1]],
+                    "confidence": 0.9,
+                },
+                "left_adjacent": {
+                    "exists": True,
+                    "lane_id": "left",
+                    "polygon_lcs_m": [[0, 3], [1, 3], [1, 1], [0, 1]],
+                    "confidence": 0.8,
+                },
+                "right_adjacent": {
+                    "exists": False,
+                    "lane_id": None,
+                    "polygon_lcs_m": [],
+                    "confidence": 0.0,
+                },
+                "candidate_lanes": [],
+                "matching_source": "extended_boundaries",
+                "lane_extension": {
+                    "boundaries": [{"extended": True}],
+                },
+                "rejections": {"duplicates": []},
+            }
+        ],
+    }
+
+    injected = bev_lane_overlay.inject_overlay(page, result)
+
+    assert "const BEV_LANE_POC =" in injected
+    assert 'id="showBevLanePoc"' in injected
+    assert 'id="showBevLaneCandidates"' in injected
+    assert "function addBevLanePocTraces(traces)" in injected
+    assert "addBevLanePocTraces(traces);" in injected
+    assert "matching_source" in injected
+    assert "extended=" in injected
+    assert "BEV ego lane" in injected
+    assert "BEV lane candidates" in injected
+    assert injected.count("const DATA =") == 1

@@ -17,6 +17,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "local_lateral_m": 22.0,
     "minimum_boundary_length_m": 4.0,
     "maximum_boundary_segment_gap_m": 15.0,
+    "merge_boundary_fragments": True,
+    "maximum_boundary_merge_gap_m": 12.0,
+    "maximum_boundary_merge_lateral_offset_m": 0.8,
+    "maximum_boundary_merge_heading_difference_deg": 10.0,
     "minimum_longitudinal_overlap_m": 5.0,
     "minimum_lane_width_m": 2.2,
     "maximum_lane_width_m": 5.2,
@@ -28,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "minimum_pair_score": 0.35,
     "ambiguity_score_margin": 0.12,
     "resample_count": 20,
+    "exclude_virtual_lane_lines": True,
     "include_drivable_road_boundaries": True,
     "debug_overlays": True,
 }

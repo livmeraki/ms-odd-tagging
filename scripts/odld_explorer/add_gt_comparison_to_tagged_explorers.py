@@ -562,9 +562,6 @@ def inject_authoring(
     """Duplicate a current tagged explorer and add synchronized GT editing."""
     markers = {
         "</style>": GT_AUTHORING_STYLE + "\n</style>",
-        '    <div class="panel"><div id="laneTrackerTimeline"></div></div>':
-            '    <div class="panel gtRemovedLaneTrackerTimeline" aria-hidden="true">'
-            '<div id="laneTrackerTimeline"></div></div>',
         '    <div class="panel"><div id="map"></div></div>':
             '    <div class="gtAuthoringWorkspace">\n'
             '      <div class="panel"><div id="map"></div></div>\n'
@@ -578,6 +575,12 @@ def inject_authoring(
         "renderTagTimeline();\n":
             "renderTagTimeline();\ngtAuthoringInitialize();\n",
     }
+    lane_tracker_marker = '    <div class="panel"><div id="laneTrackerTimeline"></div></div>'
+    if lane_tracker_marker in page:
+        markers[lane_tracker_marker] = (
+            '    <div class="panel gtRemovedLaneTrackerTimeline" aria-hidden="true">'
+            '<div id="laneTrackerTimeline"></div></div>'
+        )
     for old, new in markers.items():
         if page.count(old) != 1:
             raise ValueError(

@@ -24,6 +24,8 @@ ms-odd-scenario-explorer = "ms_odd_tagging.visualization.scenario_explorer:main"
 ms-odd-frame-gt-review = "ms_odd_tagging.gt_comparison.authoring:main"
 ms-odd-following-lane = "ms_odd_tagging.scenarios.following_lane.pipeline:main"
 ms-odd-lanelet2-poc = "ms_odd_tagging.lanelet2_poc.cli:main"
+ms-odd-bev-lane-poc = "ms_odd_tagging.bev_lane_poc.cli:main"
+ms-odd-ld-topology = "ms_odd_tagging.ld_topology.cli:main"
 
 [project.optional-dependencies]
 dev = [

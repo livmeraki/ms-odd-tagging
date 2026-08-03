@@ -1,6 +1,18 @@
+import pytest
+
 from ms_odd_tagging.lanelet2_poc.config import load_config
+from ms_odd_tagging.lanelet2_poc.lanelet_backend import (
+    available as lanelet2_available,
+    build_routing_context,
+    query_neighbors,
+)
 from ms_odd_tagging.lanelet2_poc.models import Boundary
-from ms_odd_tagging.lanelet2_poc.runner import run_frame, run_recording
+from ms_odd_tagging.lanelet2_poc.models import LaneCandidate
+from ms_odd_tagging.lanelet2_poc.runner import (
+    boundaries_from_recording,
+    run_frame,
+    run_recording,
+)
 
 
 def boundary(boundary_id, y):
@@ -60,3 +72,99 @@ def test_disabled_recording_call_is_a_noop():
     result = run_recording({"recording_id": "unused"}, load_config())
     assert result["status"] == "disabled"
     assert result["frames"] == []
+
+
+def test_virtual_lane_lines_are_excluded_from_lanelet2_poc_inputs():
+    recording = {
+        "ld_feature_store": {
+            "points": [
+                {"point_id": "p1", "position_lcs_m": [0.0, 1.0]},
+                {"point_id": "p2", "position_lcs_m": [5.0, 1.0]},
+                {"point_id": "p3", "position_lcs_m": [0.0, -1.0]},
+                {"point_id": "p4", "position_lcs_m": [5.0, -1.0]},
+            ],
+            "lane_lines": [
+                {
+                    "line_id": "virtual_line",
+                    "point_ids": ["p1", "p2"],
+                    "attributes": {"pattern": "virtual", "intersection": False},
+                },
+                {
+                    "line_id": "normal_line",
+                    "point_ids": ["p3", "p4"],
+                    "attributes": {"pattern": "dashed", "intersection": True},
+                },
+            ],
+        }
+    }
+
+    filtered = boundaries_from_recording(recording, load_config())
+    unfiltered = boundaries_from_recording(
+        recording,
+        load_config(overrides={"exclude_virtual_lane_lines": False}),
+    )
+
+    assert [boundary.boundary_id for boundary in filtered] == ["normal_line"]
+    assert [boundary.boundary_id for boundary in unfiltered] == [
+        "virtual_line",
+        "normal_line",
+    ]
+
+
+@pytest.mark.skipif(not lanelet2_available(), reason="Lanelet2 bindings not installed")
+def test_native_lanelet2_routing_uses_shared_boundaries_without_geometric_fallback():
+    def line_points(y):
+        return tuple((float(x), y) for x in range(-20, 81, 10))
+
+    def candidate(lane_id, left_id, right_id, left_y, right_y):
+        left = line_points(left_y)
+        right = line_points(right_y)
+        centerline = tuple((x, (left_y + right_y) / 2.0) for x, _ in left)
+        return LaneCandidate(
+            lane_id=lane_id,
+            left_boundary_id=left_id,
+            right_boundary_id=right_id,
+            left=left,
+            right=right,
+            centerline=centerline,
+            polygon=left + tuple(reversed(right)),
+            pair_score=0.9,
+            pair_metrics={},
+        )
+
+    boundaries = [
+        Boundary("outer_left", line_points(5.25)),
+        Boundary("left_shared", line_points(1.75)),
+        Boundary("right_shared", line_points(-1.75)),
+        Boundary("outer_right", line_points(-5.25)),
+    ]
+    lanes = [
+        candidate("lane_left", "outer_left", "left_shared", 5.25, 1.75),
+        candidate("lane_ego", "left_shared", "right_shared", 1.75, -1.75),
+        candidate("lane_right", "right_shared", "outer_right", -1.75, -5.25),
+    ]
+
+    context = build_routing_context(
+        lanes,
+        {"location": "Germany", "participant": "Vehicle"},
+        boundaries,
+    )
+    ego = context.lanelets_by_poc_id["lane_ego"]
+    raw_results = {
+        method: getattr(context.graph, method)(ego)
+        for method in ("left", "right", "adjacentLeft", "adjacentRight")
+        if hasattr(context.graph, method)
+    }
+    neighbors = query_neighbors(context, "lane_ego")
+
+    assert set(raw_results) == {"left", "right", "adjacentLeft", "adjacentRight"}
+    # Generic inferred boundaries do not encode lane-change permissions, so
+    # legal left/right can be unavailable while geometric adjacency is routed.
+    assert raw_results["left"] is None
+    assert raw_results["right"] is None
+    assert neighbors == {
+        "left": None,
+        "right": None,
+        "adjacentLeft": "lane_left",
+        "adjacentRight": "lane_right",
+    }

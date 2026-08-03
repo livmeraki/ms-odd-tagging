@@ -317,6 +317,8 @@ const noteList = document.getElementById('noteList');
 frameSlider.max = traj.rel_t.length - 1;
 let currentIndex = 0;
 let playbackTimer = null;
+let playbackLastTickMs = null;
+let playbackRemainderFrames = 0;
 let mapReady = false;
 let userMapRange = null;
 let ignoreMapRelayout = false;
@@ -554,16 +556,27 @@ function attachMapRelayoutHandler() {{
 function startPlayback() {{
   if (playbackTimer) return;
   playPause.textContent = 'Pause';
+  playbackLastTickMs = performance.now();
+  playbackRemainderFrames = 0;
   playbackTimer = setInterval(() => {{
-    if (currentIndex >= traj.rel_t.length - 1) setFrame(0);
-    else setFrame(currentIndex + 1);
-  }}, 100 / Number(playbackSpeed.value));
+    const now = performance.now();
+    const elapsedMs = Math.max(0, now - playbackLastTickMs);
+    playbackLastTickMs = now;
+    const multiplier = Number(playbackSpeed.value) || 1;
+    const frameRateHz = 10;
+    playbackRemainderFrames += elapsedMs * frameRateHz * multiplier / 1000;
+    const step = Math.max(1, Math.floor(playbackRemainderFrames));
+    playbackRemainderFrames -= step;
+    setFrame((currentIndex + step) % traj.rel_t.length);
+  }}, 50);
 }}
 
 function stopPlayback() {{
   if (!playbackTimer) return;
   clearInterval(playbackTimer);
   playbackTimer = null;
+  playbackLastTickMs = null;
+  playbackRemainderFrames = 0;
   playPause.textContent = 'Play';
 }}
 

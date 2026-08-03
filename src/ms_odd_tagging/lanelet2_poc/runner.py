@@ -7,7 +7,12 @@ import math
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .geometry import filter_local_boundaries, match_ego, pair_boundaries
+from .geometry import (
+    filter_local_boundaries,
+    match_ego,
+    merge_boundary_fragments,
+    pair_boundaries,
+)
 from .lanelet_backend import (
     Lanelet2Unavailable,
     available,
@@ -29,6 +34,12 @@ def boundaries_from_recording(recording: dict[str, Any], config: dict[str, Any])
     }
     output = []
     for feature in store.get("lane_lines", []):
+        attributes = feature.get("attributes") or {}
+        if (
+            config.get("exclude_virtual_lane_lines", True)
+            and str(attributes.get("pattern") or "").lower() == "virtual"
+        ):
+            continue
         feature_points = tuple(
             points[str(point_id)]
             for point_id in feature.get("point_ids", [])
@@ -39,7 +50,7 @@ def boundaries_from_recording(recording: dict[str, Any], config: dict[str, Any])
                 str(feature["line_id"]),
                 feature_points,
                 "lane_line",
-                feature.get("attributes") or {},
+                attributes,
             )
         )
     if config.get("include_drivable_road_boundaries", True):
@@ -111,7 +122,8 @@ def run_frame(
             "left_adjacent": _lane_output(None, rejection_reasons=["invalid_ego_pose"]),
             "right_adjacent": _lane_output(None, rejection_reasons=["invalid_ego_pose"]),
         }
-    local, boundary_rejections = filter_local_boundaries(boundaries, ego, config)
+    merged_boundaries = merge_boundary_fragments(boundaries, ego, config)
+    local, boundary_rejections = filter_local_boundaries(merged_boundaries, ego, config)
     lanes, pair_rejections = pair_boundaries(local, ego, config)
     match = match_ego(lanes, ego, config)
     by_id = {lane.lane_id: lane for lane in lanes}

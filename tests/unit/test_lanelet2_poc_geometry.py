@@ -4,6 +4,7 @@ from ms_odd_tagging.lanelet2_poc.config import load_config
 from ms_odd_tagging.lanelet2_poc.geometry import (
     filter_local_boundaries,
     match_ego,
+    merge_boundary_fragments,
     pair_boundaries,
 )
 from ms_odd_tagging.lanelet2_poc.models import Boundary
@@ -96,3 +97,65 @@ def test_near_shared_boundary_reports_ambiguity_without_crashing():
     assert len(match["candidates"]) == 2
     assert match["ambiguous"] is True
     assert math.isfinite(match["confidence"])
+
+
+def test_boundary_fragment_merging_joins_collinear_short_segments():
+    config = load_config(
+        overrides={
+            "feature_enabled": True,
+            "require_lanelet2": False,
+            "maximum_boundary_merge_gap_m": 12.0,
+            "maximum_boundary_merge_lateral_offset_m": 0.8,
+            "maximum_boundary_merge_heading_difference_deg": 10.0,
+        }
+    )
+    fragments = [
+        Boundary("a", ((0.0, 1.75), (8.0, 1.75))),
+        Boundary("b", ((15.0, 1.8), (24.0, 1.85))),
+        Boundary("separate_lane", ((0.0, -1.75), (8.0, -1.75))),
+    ]
+
+    merged = merge_boundary_fragments(fragments, (0.0, 0.0, 0.0), config)
+
+    merged_fragment = next(
+        boundary
+        for boundary in merged
+        if boundary.attributes.get("merged_from_boundary_ids") == ["a", "b"]
+    )
+    assert merged_fragment.boundary_id.startswith("merged_")
+    assert len(merged_fragment.points) == 4
+    assert any(boundary.boundary_id == "separate_lane" for boundary in merged)
+
+
+def test_fragment_merging_improves_pairing_overlap_for_dashed_boundaries():
+    config = load_config(
+        overrides={
+            "feature_enabled": True,
+            "require_lanelet2": False,
+            "maximum_boundary_merge_gap_m": 12.0,
+            "maximum_boundary_merge_lateral_offset_m": 0.8,
+            "maximum_boundary_merge_heading_difference_deg": 10.0,
+            "minimum_longitudinal_overlap_m": 30.0,
+        }
+    )
+    boundaries = [
+        Boundary("left_a", ((0.0, 1.75), (15.0, 1.75))),
+        Boundary("left_b", tuple((float(x), 1.75) for x in range(24, 46, 5))),
+        Boundary("right", tuple((float(x), -1.75) for x in range(0, 46, 5))),
+    ]
+
+    unmerged_local, _ = filter_local_boundaries(
+        boundaries,
+        (0.0, 0.0, 0.0),
+        {**config, "merge_boundary_fragments": False},
+    )
+    unmerged_lanes, _ = pair_boundaries(unmerged_local, (0.0, 0.0, 0.0), config)
+    merged_local, _ = filter_local_boundaries(
+        merge_boundary_fragments(boundaries, (0.0, 0.0, 0.0), config),
+        (0.0, 0.0, 0.0),
+        config,
+    )
+    merged_lanes, _ = pair_boundaries(merged_local, (0.0, 0.0, 0.0), config)
+
+    assert not unmerged_lanes
+    assert len(merged_lanes) == 1
