@@ -27,9 +27,12 @@ class TurnDetector:
             if start_heading is None or end_heading is None: continue
             heading_delta = end_heading - start_heading
             trigger_frame_indexes = features.frame_index[trigger_start : trigger_end + 1]
-            logical_lane_ids = [
-                (frame_context or {}).get(frame_index, {}).get("logical_lane_id")
+            trigger_contexts = [
+                (frame_context or {}).get(frame_index, {})
                 for frame_index in trigger_frame_indexes
+            ]
+            logical_lane_ids = [
+                context.get("logical_lane_id") for context in trigger_contexts
             ]
             lane_context_complete = bool(logical_lane_ids) and all(logical_lane_ids)
             same_logical_lane = (
@@ -52,7 +55,24 @@ class TurnDetector:
             if trigger_speed is not None and math.isfinite(trigger_speed) and trigger_speed >= 0:
                 speed_label = "starting_high_speed_turn" if trigger_speed >= speed_rule["high_speed_minimum_mps"] else "starting_low_speed_turn"
             yaw_values = [features.yaw_rate_rad_s[i] for i in interval.active_indices if features.yaw_rate_rad_s[i] is not None]
-            evidence = {"physical_turn_event_id": f"turn-{physical_id:04d}", "trigger_start_frame": features.frame_index[trigger_start], "trigger_end_frame": features.frame_index[trigger_end], "trigger_speed_mps": trigger_speed, "turn_speed_classification_mode": "trigger_frame_speed", "signed_heading_delta_rad": heading_delta, "peak_signed_yaw_rate_rad_s": max(yaw_values, key=abs), "direction_sign_convention": f"positive_heading_change_is_{rule['positive_heading_change_direction']}", "entry_abs_yaw_rate_rad_s": rule["entry_abs_yaw_rate_rad_s"], "exit_abs_yaw_rate_rad_s": rule["exit_abs_yaw_rate_rad_s"], "minimum_accumulated_heading_change_rad": required_heading_change, "base_minimum_accumulated_heading_change_rad": rule["minimum_accumulated_heading_change_rad"], "same_logical_lane_minimum_accumulated_heading_change_rad": rule["same_logical_lane_minimum_accumulated_heading_change_rad"], "logical_lane_context_complete": lane_context_complete, "same_logical_lane": same_logical_lane, "logical_lane_ids": sorted(set(lane_id for lane_id in logical_lane_ids if lane_id)), "threshold_mode": "same_logical_lane" if same_logical_lane else "base_or_lane_change", "threshold_provenance": rule["provenance"]}
+            topology_classes = sorted(
+                set(
+                    context.get("topology_class")
+                    for context in trigger_contexts
+                    if context.get("topology_class")
+                )
+            )
+            topology_confidences = [
+                float(context.get("topology_confidence") or 0.0)
+                for context in trigger_contexts
+            ]
+            intersection_active = any(
+                bool(context.get("ego_inside_topology_polygon"))
+                and context.get("topology_class")
+                in {"x-intersection", "t-intersection", "y-intersection", "roundabout"}
+                for context in trigger_contexts
+            )
+            evidence = {"physical_turn_event_id": f"turn-{physical_id:04d}", "trigger_start_frame": features.frame_index[trigger_start], "trigger_end_frame": features.frame_index[trigger_end], "trigger_speed_mps": trigger_speed, "turn_speed_classification_mode": "trigger_frame_speed", "signed_heading_delta_rad": heading_delta, "accumulated_yaw_change_deg": math.degrees(heading_delta), "peak_signed_yaw_rate_rad_s": max(yaw_values, key=abs), "direction_sign_convention": f"positive_heading_change_is_{rule['positive_heading_change_direction']}", "entry_abs_yaw_rate_rad_s": rule["entry_abs_yaw_rate_rad_s"], "exit_abs_yaw_rate_rad_s": rule["exit_abs_yaw_rate_rad_s"], "minimum_accumulated_heading_change_rad": required_heading_change, "base_minimum_accumulated_heading_change_rad": rule["minimum_accumulated_heading_change_rad"], "same_logical_lane_minimum_accumulated_heading_change_rad": rule["same_logical_lane_minimum_accumulated_heading_change_rad"], "logical_lane_context_complete": lane_context_complete, "same_logical_lane": same_logical_lane, "logical_lane_ids": sorted(set(lane_id for lane_id in logical_lane_ids if lane_id)), "topology_class": topology_classes[-1] if len(topology_classes) == 1 else topology_classes, "topology_confidence": max(topology_confidences) if topology_confidences else 0.0, "intersection_active": intersection_active, "turn_candidate": direction_label, "threshold_mode": "same_logical_lane" if same_logical_lane else "base_or_lane_change", "final_decision_reason": "turn_confirmed_from_ego_yaw_and_heading_change", "threshold_provenance": rule["provenance"]}
             start, end = interval.start_index, interval.end_index
             labels = [direction_label]
             if speed_label is not None:

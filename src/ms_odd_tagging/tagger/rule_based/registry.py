@@ -82,6 +82,7 @@ def validate_config(config: dict[str, Any]) -> None:
         "maximum_missing_gap_s",
         "maximum_temporary_lane_id_inconsistency_s",
         "minimum_event_duration_s",
+        "minimum_topology_confidence",
     ):
         value = lane_change.get(key)
         if not isinstance(value, (int, float)) or value < 0:
@@ -97,6 +98,26 @@ def validate_config(config: dict[str, Any]) -> None:
             "lane_change_detection: stable durations and minimum event duration "
             "must be greater than zero"
         )
+    if not isinstance(
+        lane_change.get("suppress_lane_change_inside_intersection"), bool
+    ):
+        raise ValueError(
+            "lane_change_detection: suppress_lane_change_inside_intersection "
+            "must be a boolean"
+        )
+    if lane_change["minimum_topology_confidence"] > 1:
+        raise ValueError(
+            "lane_change_detection: minimum_topology_confidence must be <= 1"
+        )
+    for key in (
+        "lane_change_resume_confirmation_frames",
+        "intersection_exit_lane_stability_frames",
+    ):
+        value = lane_change.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ValueError(
+                f"lane_change_detection: {key} must be a non-negative integer"
+            )
     if not lane_change.get("detector_version"):
         raise ValueError("lane_change_detection: detector_version is required")
     road = config["road_feature_relations"]
@@ -347,6 +368,7 @@ def detect_events(
     resolved = config or load_config(); validate_config(resolved); feature_config = resolved["feature_extraction"]
     features = extract_ego_motion_features(frames, max_sample_gap_s=feature_config["max_sample_gap_s"], heading_change_horizon_s=feature_config["heading_change_horizon_s"], jerk_mode=resolved["jerk"]["calculation_mode"])
     enabled = set(resolved["enabled_scenarios"]); events: list[ScenarioEvent] = []
+    detector_debug: dict[str, Any] = {}
     for detector in detector_registry():
         if detector.output_scenarios & enabled:
             if isinstance(detector, CrosswalkRelationDetector):
@@ -380,8 +402,13 @@ def detect_events(
                     else detector.detect(frames, features, resolved)
                 )
             events.extend(event for event in detected if event.scenario in enabled)
+            if isinstance(detector, LaneChangeDetector):
+                detector_debug["lane_change_evaluation"] = getattr(
+                    detector, "debug_evaluations", []
+                )
     events.sort(key=lambda event: (event.start_timestamp_s, event.scenario, event.end_timestamp_s))
     quality = {"input_frame_count": len(frames), "feature_quality_issues": list(features.quality_issues), "valid_feature_counts": {name: sum(flags) for name, flags in features.validity.items()}}
+    quality.update(detector_debug)
     return events, quality
 
 def detect_recording_events(
@@ -407,6 +434,26 @@ def detect_recording_events(
             }
             for frame in following.get("frames", [])
         }
+    recording_frames_by_index = {
+        frame.get("frame_index"): frame
+        for frame in recording.get("frames", [])
+        if frame.get("frame_index") is not None
+    }
+    if recording_frames_by_index:
+        frame_context = frame_context or {}
+        for frame_index, frame in recording_frames_by_index.items():
+            topology = {
+                key: frame[key]
+                for key in (
+                    "topology_class",
+                    "ego_inside_topology_polygon",
+                    "distance_to_topology_polygon_m",
+                    "topology_confidence",
+                )
+                if key in frame
+            }
+            if topology:
+                frame_context.setdefault(frame_index, {}).update(topology)
     relations = build_road_feature_relations(
         recording, resolved["road_feature_relations"]
     )

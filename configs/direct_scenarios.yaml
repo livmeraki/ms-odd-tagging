@@ -21,6 +21,10 @@
     "maximum_missing_gap_s": 0.2,
     "maximum_temporary_lane_id_inconsistency_s": 0.1,
     "minimum_event_duration_s": 0.5,
+    "suppress_lane_change_inside_intersection": true,
+    "minimum_topology_confidence": 0.7,
+    "lane_change_resume_confirmation_frames": 3,
+    "intersection_exit_lane_stability_frames": 3,
     "detector_version": "phase2-basic-lane-change-v1",
     "provenance": "engineering_default"
   },
