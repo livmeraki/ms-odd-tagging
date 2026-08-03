@@ -733,6 +733,69 @@ def test_unreliable_jerk_events_are_hidden_from_visualization(
     ]
 
 
+def test_canonical_with_ld_topology_adds_frame_context() -> None:
+    canonical = _canonical()
+    topology = {
+        "frames": [
+            {
+                "frame_index": 1,
+                "topology_class": "x-intersection",
+                "topology_confidence": 0.91,
+                "ego_inside_topology_polygon": True,
+                "distance_to_topology_polygon_m": 0.0,
+                "topology_component_id": "component-1",
+                "decision_reason": "test topology",
+            }
+        ]
+    }
+
+    merged = explorer.canonical_with_ld_topology(canonical, topology)
+
+    assert "topology_class" not in canonical["frames"][1]
+    assert merged["frames"][1]["topology_class"] == "x-intersection"
+    assert merged["frames"][1]["topology_confidence"] == 0.91
+    assert merged["frames"][1]["ego_inside_topology_polygon"] is True
+
+
+def test_ld_topology_payload_is_compact_for_explorer() -> None:
+    payload = explorer.build_ld_topology_payload(
+        {
+            "components": [
+                {
+                    "component_id": "component-1",
+                    "center_lcs_m": [1.0, 2.0],
+                    "core_polygon_lcs_m": [[0.0, 0.0], [1.0, 0.0]],
+                    "classification": {
+                        "topology_class": "x-intersection",
+                        "topology_confidence": 0.91,
+                        "decision_reason": "test topology",
+                    },
+                }
+            ],
+            "frames": [
+                {
+                    "frame_index": 0,
+                    "topology_class": "normal",
+                    "topology_confidence": 0.0,
+                    "ego_inside_topology_polygon": False,
+                },
+                {
+                    "frame_index": 1,
+                    "topology_class": "x-intersection",
+                    "topology_confidence": 0.91,
+                    "ego_inside_topology_polygon": True,
+                    "distance_to_topology_polygon_m": 0.0,
+                },
+            ],
+        }
+    )
+
+    assert payload["schemaVersion"] == "ld-topology-context-v1"
+    assert payload["summary"]["components"] == 1
+    assert payload["summary"]["activeFrames"] == 1
+    assert payload["frames"][1]["topologyClass"] == "x-intersection"
+
+
 def test_relation_payload_contains_geometry_states_and_footprint() -> None:
     payload = explorer.build_road_feature_payload(_canonical())
     assert payload["schemaVersion"] == "road-feature-relations-v1"
@@ -751,6 +814,9 @@ def test_relation_payload_contains_geometry_states_and_footprint() -> None:
 def test_generator_contains_phase2b_controls_colors_and_overlay_hooks() -> None:
     assert 'id="showRoadFeatureRelations"' in explorer.TAG_CONTROLS_HTML
     assert 'id="roadFeatureContext"' in explorer.TAG_CONTROLS_HTML
+    assert "const ldTopology = DATA.ldTopology" in explorer.LD_SCRIPT_SETUP
+    assert "detected topology:" in explorer.LD_SCRIPT_FUNCTIONS
+    assert "topology active" in explorer.LD_SCRIPT_FUNCTIONS
     for label in (
         "traversing_crosswalk",
         "on_stopline_crosswalk",

@@ -27,6 +27,8 @@ from ms_odd_tagging.features.object_relations import build_object_relations
 from ms_odd_tagging.features.object_path_crossing_relations import (
     build_object_path_crossing_relations,
 )
+from ms_odd_tagging.ld_topology.config import load_config as load_ld_topology_config
+from ms_odd_tagging.ld_topology.pipeline import classify_recording
 from ms_odd_tagging.tagger.rule_based.registry import (
     detect_recording_events,
     load_config,
@@ -52,6 +54,7 @@ DEFAULT_OUTPUT_DIR = Path(
 DEFAULT_INDEX_PATH = Path(
     "quick_exploration_outputs/dataset_odld_explorer_w_scenario_tag_index.html"
 )
+DEFAULT_LD_TOPOLOGY_CONFIG = Path("configs/ld_topology.json")
 EXPLORER_DATA_MARKER = re.compile(r"const DATA = (\{.*?\});\s*const ", re.DOTALL)
 HIDDEN_VISUALIZATION_SCENARIOS = {"high_magnitude_jerk"}
 MANIFEST_SCHEMA_VERSION = "odld-animated-explorer-manifest-v1"
@@ -319,6 +322,100 @@ def build_tag_payload(recording: str, window_dir: Path, canonical: dict) -> dict
         "configVersion": config_version,
         "scenarios": scenarios,
         "events": events,
+    }
+
+
+TOPOLOGY_FRAME_FIELDS = (
+    "topology_class",
+    "topology_confidence",
+    "topology_component_id",
+    "intersection_geometry_source",
+    "ego_inside_topology_polygon",
+    "distance_to_topology_polygon_m",
+    "arm_count",
+    "arm_angles_deg",
+    "opposite_pairs",
+    "circularity_score",
+    "internal_ambiguous_state",
+    "decision_reason",
+)
+
+
+def build_ld_topology_result(canonical: dict) -> dict:
+    config = load_ld_topology_config(
+        DEFAULT_LD_TOPOLOGY_CONFIG if DEFAULT_LD_TOPOLOGY_CONFIG.is_file() else None
+    )
+    return classify_recording(canonical, config)
+
+
+def canonical_with_ld_topology(canonical: dict, topology: dict) -> dict:
+    frame_topology = {
+        item.get("frame_index"): item
+        for item in topology.get("frames", [])
+        if item.get("frame_index") is not None
+    }
+    frames = []
+    for frame in canonical.get("frames", []):
+        merged = dict(frame)
+        context = frame_topology.get(frame.get("frame_index")) or {}
+        for key in TOPOLOGY_FRAME_FIELDS:
+            if key in context:
+                merged[key] = context[key]
+        frames.append(merged)
+    return {**canonical, "frames": frames}
+
+
+def build_ld_topology_payload(topology: dict) -> dict:
+    frames = topology.get("frames", [])
+    classes = [frame.get("topology_class", "normal") for frame in frames]
+    active_classes = {
+        name
+        for name in classes
+        if name in {"x-intersection", "t-intersection", "y-intersection", "roundabout"}
+    }
+    return {
+        "schemaVersion": "ld-topology-context-v1",
+        "summary": {
+            "components": len(topology.get("components", [])),
+            "frames": len(frames),
+            "activeFrames": len(active_classes)
+            and sum(name in active_classes for name in classes),
+            "classes": sorted(set(classes)),
+            "minimumConfidenceSource": "configs/ld_topology.json",
+        },
+        "components": [
+            {
+                "id": component.get("component_id"),
+                "class": (component.get("classification") or {}).get(
+                    "topology_class", "normal"
+                ),
+                "confidence": (component.get("classification") or {}).get(
+                    "topology_confidence", 0.0
+                ),
+                "center": component.get("center_lcs_m"),
+                "polygon": component.get("core_polygon_lcs_m", []),
+                "decisionReason": (component.get("classification") or {}).get(
+                    "decision_reason"
+                ),
+            }
+            for component in topology.get("components", [])
+        ],
+        "frames": [
+            {
+                "frameIndex": frame.get("frame_index"),
+                "topologyClass": frame.get("topology_class", "normal"),
+                "topologyConfidence": frame.get("topology_confidence", 0.0),
+                "componentId": frame.get("topology_component_id"),
+                "egoInsideTopologyPolygon": frame.get(
+                    "ego_inside_topology_polygon", False
+                ),
+                "distanceToTopologyPolygonM": frame.get(
+                    "distance_to_topology_polygon_m"
+                ),
+                "decisionReason": frame.get("decision_reason"),
+            }
+            for frame in frames
+        ],
     }
 
 
@@ -778,6 +875,11 @@ def build_ld_payload(canonical: dict) -> dict:
         "nearbyPedestrianCount": [],
         "nearbyMotorcycleCount": [],
         "nearbyMotionalCount": [],
+        "topologyClass": [],
+        "topologyConfidence": [],
+        "egoInsideTopologyPolygon": [],
+        "distanceToTopologyPolygonM": [],
+        "topologyComponentId": [],
     }
     for frame in canonical["frames"]:
         identifiers = frame["ld"]["nearby_feature_ids"]
@@ -813,6 +915,19 @@ def build_ld_payload(canonical: dict) -> dict:
         frame_context["nearbyPedestrianCount"].append(nearby["pedestrian"])
         frame_context["nearbyMotorcycleCount"].append(nearby["motorcycle"])
         frame_context["nearbyMotionalCount"].append(nearby["all_motional"])
+        frame_context["topologyClass"].append(frame.get("topology_class", "normal"))
+        frame_context["topologyConfidence"].append(
+            frame.get("topology_confidence", 0.0)
+        )
+        frame_context["egoInsideTopologyPolygon"].append(
+            bool(frame.get("ego_inside_topology_polygon"))
+        )
+        frame_context["distanceToTopologyPolygonM"].append(
+            frame.get("distance_to_topology_polygon_m")
+        )
+        frame_context["topologyComponentId"].append(
+            frame.get("topology_component_id")
+        )
 
     return {
         "summary": {
@@ -1744,6 +1859,7 @@ function updateTagTimelineCursor() {
 
 LD_SCRIPT_SETUP = r"""
 const ld = DATA.ld;
+const ldTopology = DATA.ldTopology || {summary: {}, frames: [], components: []};
 const ldFrames = ld.frameContext;
 const ldLineById = Object.fromEntries(ld.laneLines.map(feature => [String(feature.id), feature]));
 const ldBoundaryById = Object.fromEntries(ld.boundaries.map(feature => [String(feature.id), feature]));
@@ -1752,7 +1868,7 @@ const VEHICLE_CLASSES = new Set(['car', 'truck', 'truck_head', 'bus', 'trailer',
 const DEBUG_BASE = `debug/${encodeURIComponent(DATA.summary.recording)}`;
 document.getElementById('statLdPoints').textContent = ld.summary.points;
 document.getElementById('statLdLanes').textContent = `${ld.summary.laneLines} / ${ld.summary.lanes}`;
-document.getElementById('statLdBoundaries').textContent = `${ld.summary.roadBoundaries} / ${ld.summary.roadmarks}`;
+document.getElementById('statLdBoundaries').textContent = `${ld.summary.roadBoundaries} / ${ld.summary.roadmarks} · ${ldTopology.summary.components || 0} topology`;
 """
 
 
@@ -1917,22 +2033,32 @@ function formatDistance(value) { return value == null ? 'n/a' : `${Number(value)
 function updateLdContext() {
   const i = currentIndex;
   const invalid = ld.summary.invalidLaneEndpointOrders;
+  const topologyClass = ldFrames.topologyClass[i] || 'normal';
+  const topologyConfidence = Number(ldFrames.topologyConfidence[i] || 0).toFixed(2);
+  const topologyInside = ldFrames.egoInsideTopologyPolygon[i] ? 'inside' : 'outside';
+  const topologyDistance = formatDistance(ldFrames.distanceToTopologyPolygonM[i]);
   document.getElementById('ldContext').innerHTML =
     `<b>Frame ${i} LD context</b><br>` +
     `nearby: ${ldFrames.lineCount[i]} lines · ${ldFrames.laneCount[i]} lanes · ${ldFrames.boundaryCount[i]} boundaries · ${ldFrames.topologyCount[i]} topologies · ${ldFrames.roadmarkCount[i]} roadmarks<br>` +
     `intersection context: ${ldFrames.intersectionLineCount[i]} nearby lines with intersection=true<br>` +
+    `detected topology: ${topologyClass} · conf ${topologyConfidence} · ${topologyInside} polygon · distance ${topologyDistance}<br>` +
     `nearest: line ${formatDistance(ldFrames.nearestLineM[i])} · boundary ${formatDistance(ldFrames.nearestBoundaryM[i])} · roadmark ${formatDistance(ldFrames.nearestRoadmarkM[i])}<br>` +
     `OD: lead ${ldFrames.leadObjectId[i] ?? 'none'} · motional within 30m ${ldFrames.nearbyMotionalCount[i]}<br>` +
     `source quality: ${invalid} invalid lane endpoint-order reference${invalid === 1 ? '' : 's'}`;
 }
 
 function renderLdTimeline() {
+  const topologyActive = ldFrames.topologyClass.map((name, index) =>
+    (ldFrames.egoInsideTopologyPolygon[index] &&
+     ['x-intersection', 't-intersection', 'y-intersection', 'roundabout'].includes(name)) ? 1 : 0
+  );
   const traces = [
     {type: 'scattergl', mode: 'lines', x: traj.rel_t, y: ldFrames.nearestLineM, name: 'nearest lane line m', line: {color: '#0284c7'}},
     {type: 'scattergl', mode: 'lines', x: traj.rel_t, y: ldFrames.nearestBoundaryM, name: 'nearest boundary m', line: {color: '#b45309'}},
     {type: 'scattergl', mode: 'lines', x: traj.rel_t, y: ldFrames.nearestRoadmarkM, name: 'nearest roadmark m', line: {color: '#e11d48'}},
     {type: 'scattergl', mode: 'lines', x: traj.rel_t, y: ldFrames.nearbyMotionalCount, name: 'OD motional within 30m', yaxis: 'y2', line: {color: '#16a34a'}},
-    {type: 'scattergl', mode: 'lines', x: traj.rel_t, y: ldFrames.lineCount, name: 'LD lines within 100m', yaxis: 'y2', line: {color: '#7c3aed', dash: 'dot'}}
+    {type: 'scattergl', mode: 'lines', x: traj.rel_t, y: ldFrames.lineCount, name: 'LD lines within 100m', yaxis: 'y2', line: {color: '#7c3aed', dash: 'dot'}},
+    {type: 'scattergl', mode: 'lines', x: traj.rel_t, y: topologyActive, name: 'topology active', yaxis: 'y2', line: {color: '#dc2626', width: 3}}
   ];
   Plotly.newPlot('ldTimeline', traces, {
     margin: {...SHARED_TIMELINE_MARGIN},
@@ -2435,9 +2561,12 @@ def main() -> None:
         with canonical_path.open(encoding="utf-8") as handle:
             canonical = json.load(handle)
         recording = canonical["recording_id"]
+        ld_topology_result = build_ld_topology_result(canonical)
+        canonical = canonical_with_ld_topology(canonical, ld_topology_result)
         scene_dir = args.source_root / recording
         data = build_base_data(scene_dir)
         data["ld"] = build_ld_payload(canonical)
+        data["ldTopology"] = build_ld_topology_payload(ld_topology_result)
         data["roadFeatureRelations"] = build_road_feature_payload(canonical)
         data["objectRelations"] = build_object_relation_payload(canonical)
         data["pathCrossingRelations"] = build_object_path_crossing_payload(
