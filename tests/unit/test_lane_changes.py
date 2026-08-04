@@ -58,9 +58,13 @@ def lane_context(
             "left_logical_lane_id": None,
             "right_logical_lane_id": None,
             "topology_class": topology_class if index in topology_active_frames else "normal",
+            "topology_subtype": topology_class if index in topology_active_frames else "normal",
             "ego_inside_topology_polygon": index in topology_active_frames,
             "distance_to_topology_polygon_m": 0.0 if index in topology_active_frames else 5.0,
             "topology_confidence": topology_confidence if index in topology_active_frames else 0.0,
+            "active_is_intersection": index in topology_active_frames,
+            "active_topology_subtype": topology_class if index in topology_active_frames else "normal",
+            "component_geometry_confidence": topology_confidence if index in topology_active_frames else 0.0,
         }
         if adjacent and lane_id == source:
             item[f"{direction}_logical_lane_id"] = target
@@ -337,3 +341,56 @@ def test_roundabout_lane_transitions_do_not_create_ordinary_lane_change() -> Non
         topology_class="roundabout",
     )
     assert events == []
+
+
+def test_intersection_unknown_suppresses_lane_change_by_geometry() -> None:
+    lane_ids = ["lane-a"] * 8 + ["connector"] * 10 + ["lane-out"] * 12
+    events = lane_change_events(
+        lane_ids,
+        source="lane-a",
+        target="connector",
+        direction="right",
+        topology_active_frames=set(range(8, 18)),
+        topology_class="intersection_unknown",
+    )
+    assert events == []
+
+
+def test_intersection_turn_suppresses_lane_change_outside_polygon_tolerance() -> None:
+    lane_ids = ["lane-a"] * 8 + ["connector"] * 10 + ["lane-out"] * 12
+    context = lane_context(
+        lane_ids,
+        source="lane-a",
+        target="connector",
+        direction="right",
+        topology_active_frames=set(range(8, 18)),
+        topology_class="intersection_unknown",
+    )
+    for index in range(8, 18):
+        context[index]["ego_inside_topology_polygon"] = False
+        context[index]["distance_to_topology_polygon_m"] = 12.0
+
+    config = deepcopy(load_config())
+    config["enabled_scenarios"] = [
+        "starting_right_turn",
+        "changing_lane",
+        "changing_lane_to_left",
+        "changing_lane_to_right",
+    ]
+    events, quality = detect_events(
+        turning_motion_frames(len(lane_ids), yaw_rate=-0.35),
+        config,
+        frame_context=context,
+    )
+
+    assert "starting_right_turn" in {event.scenario for event in events}
+    assert "changing_lane_to_right" not in {event.scenario for event in events}
+    suppressed = quality["lane_change_evaluation"][8]
+    assert suppressed["intersection_active"] is True
+    assert suppressed["lane_change_applicable"] is False
+    assert suppressed["lane_change_suppression_reason"] == "suppressed_by_topology_turn"
+    assert suppressed["turn_candidate"] == "starting_right_turn"
+    assert (
+        suppressed["final_decision_reason"]
+        == "lane_change_not_applicable_during_intersection_turn"
+    )

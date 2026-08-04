@@ -68,10 +68,12 @@ def build_components(lanes: list[LaneGeometry], config: dict[str, Any]) -> tuple
         components.append(_make_component(len(components), group_lanes, config, {"seed_lane_count": len(group_lanes), "expanded_partial_lane_ids": []}))
 
     partial_remaining = {lane.lane_id: lane for lane in partial}
+    partial_rejections: dict[str, dict[str, Any]] = {}
     groups: list[tuple[list[LaneGeometry], dict[str, Any]]] = []
     for component in list(components):
         group_lanes = [lane for lane in strong if lane.lane_id in set(component.lane_ids)]
         expanded_ids: list[str] = []
+        expansion_reasons: dict[str, list[str]] = {}
         changed = True
         while changed:
             changed = False
@@ -81,14 +83,21 @@ def build_components(lanes: list[LaneGeometry], config: dict[str, Any]) -> tuple
                 if reasons:
                     group_lanes.append(lane)
                     expanded_ids.append(lane_id)
+                    expansion_reasons[lane_id] = reasons
                     del partial_remaining[lane_id]
+                    partial_rejections.pop(lane_id, None)
                     changed = True
+                else:
+                    partial_rejections[lane_id] = _partial_rejection(
+                        lane, group_lanes, center, config
+                    )
         groups.append(
             (
                 group_lanes,
                 {
                     "seed_lane_count": len([lane for lane in group_lanes if lane.intersection_evidence == "strong"]),
                     "expanded_partial_lane_ids": expanded_ids,
+                    "expanded_partial_reasons": expansion_reasons,
                     "expansion_stage": "strong_seed_then_nearby_partial_before_final_trim",
                     "merged_component_ids": [],
                 },
@@ -102,6 +111,11 @@ def build_components(lanes: list[LaneGeometry], config: dict[str, Any]) -> tuple
     ]
 
     uncertain = _uncertain_pieces(list(partial_remaining.values()), config)
+    for piece in uncertain:
+        piece["rejected_lane_reasons"] = [
+            partial_rejections.get(lane_id, {"lane_id": lane_id, "reason": "not_connected_to_any_strong_seed_component"})
+            for lane_id in piece["lane_ids"]
+        ]
     return components, uncertain
 
 
@@ -127,6 +141,7 @@ def _merge_expanded_component_groups(
                     changed = True
         lanes_by_id: dict[str, LaneGeometry] = {}
         expanded: list[str] = []
+        expanded_reasons: dict[str, list[str]] = {}
         merged_ids: list[str] = []
         seed_count = 0
         for idx in sorted(member_indices):
@@ -134,6 +149,7 @@ def _merge_expanded_component_groups(
                 lanes_by_id[lane.lane_id] = lane
             diagnostics = groups[idx][1]
             expanded.extend(diagnostics.get("expanded_partial_lane_ids", []))
+            expanded_reasons.update(diagnostics.get("expanded_partial_reasons", {}))
             seed_count += int(diagnostics.get("seed_lane_count", 0))
             merged_ids.append(f"pre_merge_component_{idx}")
         merged_groups.append(
@@ -142,6 +158,7 @@ def _merge_expanded_component_groups(
                 {
                     "seed_lane_count": seed_count,
                     "expanded_partial_lane_ids": sorted(set(expanded)),
+                    "expanded_partial_reasons": expanded_reasons,
                     "expansion_stage": "strong_seed_partial_expansion_then_small_gap_component_merge",
                     "merged_component_ids": merged_ids if len(merged_ids) > 1 else [],
                 },
@@ -199,6 +216,46 @@ def _partial_expansion_reasons(
     if _continues_toward_center(lane, center, config):
         reasons.append("continues_toward_same_intersection_center")
     return reasons
+
+
+def _partial_rejection(
+    lane: LaneGeometry,
+    component_lanes: list[LaneGeometry],
+    center: tuple[float, float],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    component_true_edges = {
+        edge_id
+        for item in component_lanes
+        for edge_id, flag in ((item.left_edge_id, item.left_boundary_intersection), (item.right_edge_id, item.right_boundary_intersection))
+        if flag
+    }
+    lane_true_edges = {
+        edge_id
+        for edge_id, flag in ((lane.left_edge_id, lane.left_boundary_intersection), (lane.right_edge_id, lane.right_boundary_intersection))
+        if flag
+    }
+    polygon_distance = min(
+        (_lane_polygon_distance(lane, item) for item in component_lanes),
+        default=math.inf,
+    )
+    endpoint_distance = min(
+        (
+            distance(endpoint, other)
+            for endpoint in _lane_endpoint_pairs(lane)
+            for item in component_lanes
+            for other in _lane_endpoint_pairs(item)
+        ),
+        default=math.inf,
+    )
+    return {
+        "lane_id": lane.lane_id,
+        "reason": "partial_lane_failed_component_growth_gates",
+        "shared_intersection_true_edge": bool(component_true_edges & lane_true_edges),
+        "polygon_distance_m": None if math.isinf(polygon_distance) else round(polygon_distance, 3),
+        "endpoint_distance_m": None if math.isinf(endpoint_distance) else round(endpoint_distance, 3),
+        "continues_toward_center": _continues_toward_center(lane, center, config),
+    }
 
 
 def _continues_toward_center(
@@ -431,34 +488,18 @@ def _segment_intersection_point(
 
 
 def extract_arms(lanes: list[LaneGeometry], component: Component, config: dict[str, Any]) -> list[Arm]:
-    lane_by_id = {lane.lane_id: lane for lane in lanes}
     component_lane_ids = set(component.lane_ids)
     non_intersection_lanes = [
         lane for lane in lanes
         if lane.lane_id not in component_lane_ids and lane.intersection_evidence == "none"
     ]
-    raw: list[dict[str, Any]] = []
-    for lane_id in component.lane_ids:
-        lane = lane_by_id[lane_id]
-        lane_crossings = _crossings_for_lane(lane, component)
-        if not lane_crossings:
-            continue
-        for point, tangent in lane_crossings:
-            continuation = _outside_continuation(lane, point, tangent, component, non_intersection_lanes, config)
-            if continuation is None:
-                continue
-            continuation_lanes, outside_axis = continuation
-            angle = wrap_degrees(math.degrees(math.atan2(point[1] - component.center[1], point[0] - component.center[0])))
-            raw.append(
-                {
-                    "point": point,
-                    "angle": angle,
-                    "tangent": tangent,
-                    "lane_id": lane.lane_id,
-                    "continuation_lane_ids": continuation_lanes,
-                    "outside_axis_angle": outside_axis,
-                }
-            )
+    corridor_groups, _rejections = _external_corridor_groups(
+        non_intersection_lanes, component, config
+    )
+    raw = [
+        _arm_candidate_from_corridor(idx, group, component, config)
+        for idx, group in enumerate(corridor_groups)
+    ]
     clusters: list[list[dict[str, Any]]] = []
     for item in sorted(raw, key=lambda x: x["angle"]):
         best = None
@@ -498,21 +539,219 @@ def extract_arms(lanes: list[LaneGeometry], component: Component, config: dict[s
     for idx, cluster in enumerate(clusters):
         point = _mean_point([v["point"] for v in cluster])
         angle = wrap_degrees(math.degrees(math.atan2(point[1] - component.center[1], point[0] - component.center[0])))
+        lane_ids = {lane_id for v in cluster for lane_id in v["lane_ids"]}
+        axis_values = [v["outside_axis_angle"] for v in cluster]
+        attachment_width = max(
+            (distance(a["point"], b["point"]) for a in cluster for b in cluster),
+            default=0.0,
+        )
+        axis_consistency = _axis_consistency(axis_values)
+        confidence = min(
+            1.0,
+            0.35
+            + 0.10 * min(3, len(lane_ids))
+            + 0.20 * min(1.0, max(v["corridor_length_m"] for v in cluster) / 25.0)
+            + 0.20 * axis_consistency
+            + 0.15 * min(1.0, max(1.0, attachment_width) / 8.0),
+        )
         arms.append(
             Arm(
                 arm_id=f"{component.component_id}_arm_{idx}",
                 angle_deg=round(angle, 3),
                 crossing_point=point,
-                lane_ids=tuple(sorted({str(v["lane_id"]) for v in cluster})),
-                confidence=min(1.0, 0.55 + 0.1 * len({v["lane_id"] for v in cluster})),
+                lane_ids=tuple(sorted(lane_ids)),
+                confidence=confidence,
                 continuation_lane_ids=tuple(
                     sorted({lane_id for v in cluster for lane_id in v["continuation_lane_ids"]})
                 ),
-                outside_axis_angle_deg=round(_mean_angle([v["outside_axis_angle"] for v in cluster]), 3),
+                outside_axis_angle_deg=round(_mean_axis_angle_mod_180(axis_values), 3),
             )
         )
     arms.sort(key=lambda arm: arm.angle_deg)
     return arms
+
+
+def _external_corridor_groups(
+    non_intersection_lanes: list[LaneGeometry],
+    component: Component,
+    config: dict[str, Any],
+) -> tuple[list[list[LaneGeometry]], list[dict[str, Any]]]:
+    rejected = []
+    candidate_indices = set()
+    for idx, lane in enumerate(non_intersection_lanes):
+        reason = _external_lane_rejection_reason(lane, component, config)
+        if reason is None:
+            candidate_indices.add(idx)
+        else:
+            rejected.append({"lane_id": lane.lane_id, "reason": reason})
+
+    groups = []
+    consumed: set[int] = set()
+    for seed in sorted(candidate_indices):
+        if seed in consumed:
+            continue
+        group = {seed}
+        consumed.add(seed)
+        changed = True
+        while changed:
+            changed = False
+            for idx, lane in enumerate(non_intersection_lanes):
+                if idx in group:
+                    continue
+                if any(
+                    _outside_corridor_connected(
+                        lane, non_intersection_lanes[member], component, config
+                    )
+                    for member in group
+                ):
+                    group.add(idx)
+                    if idx in candidate_indices:
+                        consumed.add(idx)
+                    changed = True
+        if group & candidate_indices:
+            groups.append([non_intersection_lanes[idx] for idx in sorted(group)])
+    return groups, rejected
+
+
+def _external_lane_rejection_reason(
+    lane: LaneGeometry,
+    component: Component,
+    config: dict[str, Any],
+) -> str | None:
+    if _lane_fully_inside_polygon(lane, component.core_polygon):
+        return "non_intersection_lane_fully_inside_intersection_footprint"
+    if not _lane_attaches_to_component(lane, component, config):
+        return "non_intersection_lane_not_attached_to_footprint"
+    return None
+
+
+def _lane_fully_inside_polygon(
+    lane: LaneGeometry, polygon: tuple[tuple[float, float], ...]
+) -> bool:
+    if len(polygon) < 3:
+        return False
+    return all(
+        point_in_polygon(point, polygon)
+        and polyline_distance(point, polygon) > 1e-5
+        for point in lane.centerline
+    )
+
+
+def _lane_attaches_to_component(
+    lane: LaneGeometry, component: Component, config: dict[str, Any]
+) -> bool:
+    tolerance = float(config.get("external_arm_attachment_tolerance_m", 3.0))
+    polygon = component.core_polygon
+    if len(polygon) < 3:
+        return False
+    if min(polyline_distance(point, polygon) for point in lane.centerline) <= tolerance:
+        return True
+    return _lane_polygon_to_component_distance(lane, polygon) <= tolerance
+
+
+def _lane_polygon_to_component_distance(
+    lane: LaneGeometry, polygon: tuple[tuple[float, float], ...]
+) -> float:
+    return min(
+        (polyline_distance(point, polygon) for point in lane.polygon),
+        default=math.inf,
+    )
+
+
+def _outside_corridor_connected(
+    a: LaneGeometry,
+    b: LaneGeometry,
+    component: Component,
+    config: dict[str, Any],
+) -> bool:
+    if not _connected(a, b, config):
+        if _lane_polygon_distance(a, b) > float(config["parallel_lane_group_distance_m"]):
+            return False
+    axis_delta = _axis_angle_delta(_lane_heading(a), _lane_heading(b))
+    if axis_delta > float(config.get("external_corridor_axis_merge_deg", 25.0)):
+        return False
+    a_angle = _corridor_attachment_angle(a, component, config)
+    b_angle = _corridor_attachment_angle(b, component, config)
+    return acute_angle_delta(a_angle, b_angle) <= float(config["arm_angle_cluster_deg"])
+
+
+def _arm_candidate_from_corridor(
+    index: int,
+    lanes: list[LaneGeometry],
+    component: Component,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    attachment_points = [
+        point
+        for lane in lanes
+        for point in _attachment_points(lane, component, config)
+    ]
+    if not attachment_points:
+        attachment_points = [
+            min(lane.centerline, key=lambda point: polyline_distance(point, component.core_polygon))
+            for lane in lanes
+        ]
+    point = _mean_point(attachment_points)
+    angle = wrap_degrees(
+        math.degrees(
+            math.atan2(point[1] - component.center[1], point[0] - component.center[0])
+        )
+    )
+    axis = _mean_axis_angle_mod_180([_lane_heading(lane) for lane in lanes])
+    length = sum(
+        distance(a, b)
+        for lane in lanes
+        for a, b in zip(lane.centerline, lane.centerline[1:])
+    )
+    lane_ids = tuple(sorted(lane.lane_id for lane in lanes))
+    return {
+        "corridor_id": f"{component.component_id}_external_corridor_{index}",
+        "point": point,
+        "angle": angle,
+        "lane_ids": lane_ids,
+        "continuation_lane_ids": lane_ids,
+        "outside_axis_angle": axis,
+        "corridor_length_m": length,
+    }
+
+
+def _attachment_points(
+    lane: LaneGeometry, component: Component, config: dict[str, Any]
+) -> list[tuple[float, float]]:
+    tolerance = float(config.get("external_arm_attachment_tolerance_m", 3.0))
+    return [
+        point
+        for point in lane.centerline
+        if polyline_distance(point, component.core_polygon) <= tolerance
+    ]
+
+
+def _corridor_attachment_angle(
+    lane: LaneGeometry, component: Component, config: dict[str, Any]
+) -> float:
+    points = _attachment_points(lane, component, config)
+    point = _mean_point(points) if points else min(
+        lane.centerline, key=lambda p: polyline_distance(p, component.core_polygon)
+    )
+    return wrap_degrees(math.degrees(math.atan2(point[1] - component.center[1], point[0] - component.center[0])))
+
+
+def _axis_angle_delta(first: float, second: float) -> float:
+    delta = acute_angle_delta(first, second)
+    return min(delta, abs(180.0 - delta))
+
+
+def _mean_axis_angle_mod_180(values: list[float]) -> float:
+    doubled = [2.0 * value for value in values]
+    return wrap_degrees(_mean_angle(doubled) / 2.0)
+
+
+def _axis_consistency(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    axis = _mean_axis_angle_mod_180(values)
+    max_delta = max(_axis_angle_delta(value, axis) for value in values)
+    return max(0.0, 1.0 - max_delta / 90.0)
 
 
 def _outside_continuation(
@@ -611,6 +850,35 @@ def _opposite_pairs(angles: list[float], threshold: float) -> list[tuple[int, in
     return pairs
 
 
+def _opposite_arm_pairs(
+    arms: list[Arm], config: dict[str, Any]
+) -> list[tuple[int, int, float]]:
+    pairs = []
+    radial_threshold = float(config["opposite_pair_threshold_deg"])
+    axis_threshold = float(config.get("opposite_pair_axis_delta_deg", 22.0))
+    minimum_axis_supported_radial = float(
+        config.get("opposite_pair_minimum_axis_supported_radial_deg", 120.0)
+    )
+    for i, first in enumerate(arms):
+        for j, second in enumerate(arms[i + 1 :], start=i + 1):
+            radial_delta = acute_angle_delta(first.angle_deg, second.angle_deg)
+            axis_pair = False
+            if (
+                first.outside_axis_angle_deg is not None
+                and second.outside_axis_angle_deg is not None
+            ):
+                axis_pair = (
+                    _axis_angle_delta(
+                        first.outside_axis_angle_deg, second.outside_axis_angle_deg
+                    )
+                    <= axis_threshold
+                    and radial_delta >= minimum_axis_supported_radial
+                )
+            if radial_delta >= radial_threshold or axis_pair:
+                pairs.append((i, j, round(radial_delta, 3)))
+    return pairs
+
+
 def _roundabout_score(lanes: list[LaneGeometry], component: Component, arms: list[Arm], config: dict[str, Any]) -> tuple[float, dict[str, Any]]:
     scores = []
     directions = []
@@ -667,41 +935,132 @@ def _angular_coverage(angles: list[float]) -> float:
 
 def classify_component(lanes: list[LaneGeometry], component: Component, arms: list[Arm], config: dict[str, Any]) -> dict[str, Any]:
     angles = [arm.angle_deg for arm in arms]
-    opposite = _opposite_pairs(angles, float(config["opposite_pair_threshold_deg"]))
+    opposite = _opposite_arm_pairs(arms, config)
     circular_score, circular_gates = _roundabout_score(lanes, component, arms, config)
+    arm_diagnostics = _external_arm_diagnostics(lanes, component, arms, config)
     ambiguous = None
-    label = "normal"
-    reason = "intersection structure is not established"
-    confidence = min(component.confidence, 0.5)
+    strong = int(component.evidence_counts.get("strong", 0))
+    partial = int(component.evidence_counts.get("partial", 0))
+    intersection_evidence_score = min(1.0, 0.35 * strong + 0.15 * partial)
+    component_geometry_confidence = min(
+        1.0,
+        (0.45 if component.polygon_valid else 0.0)
+        + 0.35 * min(1.0, component.confidence)
+        + 0.20 * min(1.0, intersection_evidence_score),
+    )
+    is_intersection_component = (
+        component.polygon_valid
+        and intersection_evidence_score + 1e-9
+        >= float(config.get("minimum_intersection_evidence_score", 0.0))
+    )
+    label = "intersection_unknown" if is_intersection_component else "normal"
+    reason = (
+        "intersection-supported geometry exists but subtype is ambiguous"
+        if is_intersection_component
+        else "intersection presence is not established"
+    )
+    subtype_confidence = 0.0
     if circular_score > 0.0:
-        label, confidence, reason = "roundabout", circular_score, "roundabout circular-circulation gates passed"
+        label, subtype_confidence, reason = "roundabout", circular_score, "roundabout circular-circulation gates passed"
     elif len(arms) == 4 and len(opposite) >= 2:
-        label, confidence, reason = "x-intersection", min(1.0, component.confidence + 0.25), "four reliable physical arms with opposite pairs"
+        label, subtype_confidence, reason = "x-intersection", min(1.0, component.confidence + 0.25), "four reliable physical arms with opposite pairs"
     elif len(arms) == 3 and opposite:
-        label, confidence, reason = "t-intersection", min(1.0, component.confidence + 0.2), "three reliable physical arms with one opposite pair"
+        label, subtype_confidence, reason = "t-intersection", min(1.0, component.confidence + 0.2), "three reliable physical arms with one opposite pair"
     elif len(arms) == 3:
         gaps = sorted(acute_angle_delta(angles[i], angles[(i + 1) % 3]) for i in range(3))
         if min(gaps) >= float(config["minimum_three_way_gap_deg"]):
-            label, confidence, reason = "y-intersection", min(1.0, component.confidence + 0.18), "three separated arms with no T opposite pair"
+            label, subtype_confidence, reason = "y-intersection", min(1.0, component.confidence + 0.18), "three separated arms with no T opposite pair"
         else:
             ambiguous = "three_arms_not_sufficiently_separated"
-    elif component.evidence_counts["strong"] + component.evidence_counts["partial"] > 0:
+    elif is_intersection_component:
         ambiguous = "intersection_evidence_without_reliable_arm_topology"
-    if confidence < float(config["minimum_topology_confidence"]):
-        if label != "normal":
-            ambiguous = f"low_confidence_{label}"
+    if label not in {"normal", "intersection_unknown"} and subtype_confidence < float(config["minimum_topology_confidence"]):
+        ambiguous = f"low_confidence_{label}"
+        label = "intersection_unknown" if is_intersection_component else "normal"
+        subtype_confidence = 0.0
+        reason = "topology subtype confidence below threshold"
+    if label == "normal" and not is_intersection_component and component.evidence_counts["strong"] + component.evidence_counts["partial"] > 0:
+        ambiguous = "intersection_evidence_without_valid_component_geometry"
+    if label != "normal" and not is_intersection_component:
         label = "normal"
-        reason = "topology confidence below threshold"
+        subtype_confidence = 0.0
+        reason = "intersection presence is not established"
+    if label == "intersection_unknown" and ambiguous is None:
+        ambiguous = "subtype_not_classified"
+    topology_confidence = (
+        subtype_confidence
+        if label not in {"normal", "intersection_unknown"}
+        else component_geometry_confidence if is_intersection_component else 0.0
+    )
     return {
         "topology_class": label,
-        "topology_confidence": round(confidence, 4),
+        "topology_subtype": label,
+        "topology_confidence": round(topology_confidence, 4),
+        "subtype_confidence": round(subtype_confidence, 4),
+        "component_geometry_confidence": round(component_geometry_confidence, 4),
+        "intersection_evidence_score": round(intersection_evidence_score, 4),
+        "is_intersection_component": is_intersection_component,
         "internal_ambiguous_state": ambiguous,
         "arm_count": len(arms),
         "arm_angles_deg": [round(a, 3) for a in angles],
         "opposite_pairs": opposite,
         "circularity_score": round(circular_score, 4),
         "roundabout_gates": circular_gates,
+        "arm_diagnostics": arm_diagnostics,
         "decision_reason": reason,
+    }
+
+
+def _external_arm_diagnostics(
+    lanes: list[LaneGeometry],
+    component: Component,
+    arms: list[Arm],
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    component_lane_ids = set(component.lane_ids)
+    non_intersection_lanes = [
+        lane for lane in lanes
+        if lane.lane_id not in component_lane_ids and lane.intersection_evidence == "none"
+    ]
+    corridor_groups, rejections = _external_corridor_groups(
+        non_intersection_lanes, component, config
+    )
+    return {
+        "arm_source": "external_non_intersection_corridors_attached_to_intersection_footprint",
+        "raw_internal_centerline_crossing_count": sum(
+            1
+            for lane in lanes
+            if lane.lane_id in component_lane_ids
+            for _ in _crossings_for_lane(lane, component)
+        ),
+        "raw_centerline_crossing_count": sum(
+            1
+            for lane in lanes
+            if lane.lane_id in component_lane_ids
+            for _ in _crossings_for_lane(lane, component)
+        ),
+        "candidate_external_lane_ids": [lane.lane_id for group in corridor_groups for lane in group],
+        "external_corridor_components": [
+            {
+                "corridor_id": f"{component.component_id}_external_corridor_{index}",
+                "lane_ids": [lane.lane_id for lane in group],
+                "attachment_angle_deg": round(
+                    _corridor_attachment_angle(group[0], component, config), 3
+                )
+                if group
+                else None,
+                "axis_angle_deg": round(
+                    _mean_axis_angle_mod_180([_lane_heading(lane) for lane in group]), 3
+                )
+                if group
+                else None,
+            }
+            for index, group in enumerate(corridor_groups)
+        ],
+        "rejected_external_lanes": rejections,
+        "filtered_external_arm_count": len(arms),
+        "clustered_external_arm_angles_deg": [round(a.angle_deg, 3) for a in arms],
+        "rejected_arm_reason": None if arms else "no_attached_external_non_intersection_corridors",
     }
 
 
@@ -712,9 +1071,8 @@ def classify_scene(recording: dict[str, Any], config: dict[str, Any] | None = No
     by_lane = {lane.lane_id: lane for lane in lanes}
     component_outputs = []
     for component in components:
-        component_lanes = [by_lane[lane_id] for lane_id in component.lane_ids]
         arms = extract_arms(lanes, component, config)
-        classification = classify_component(component_lanes, component, arms, config)
+        classification = classify_component(lanes, component, arms, config)
         component_outputs.append(
             {
                 "component_id": component.component_id,
@@ -725,6 +1083,11 @@ def classify_scene(recording: dict[str, Any], config: dict[str, Any] | None = No
                 "core_polygon_lcs_m": [list(p) for p in component.core_polygon],
                 "polygon_valid": component.polygon_valid,
                 "component_confidence": round(component.confidence, 4),
+                "is_intersection_component": classification["is_intersection_component"],
+                "topology_subtype": classification["topology_subtype"],
+                "subtype_confidence": classification["subtype_confidence"],
+                "component_geometry_confidence": classification["component_geometry_confidence"],
+                "intersection_evidence_score": classification["intersection_evidence_score"],
                 "diagnostics": component.diagnostics,
                 "arms": [
                     {
@@ -788,12 +1151,18 @@ def _match_component(point: tuple[float, float], components: list[dict[str, Any]
         return _normal_frame(None, False, math.inf, "ego is outside all reliable topology polygons")
     dist, inside, component = best
     cls = component["classification"]
-    if cls["topology_class"] == "normal":
-        return _normal_frame(component["component_id"], inside, dist, cls["decision_reason"], cls)
     return {
         "topology_class": cls["topology_class"],
+        "topology_subtype": cls["topology_subtype"],
         "topology_confidence": cls["topology_confidence"],
         "topology_component_id": component["component_id"],
+        "active_topology_component": component["component_id"],
+        "active_is_intersection": cls["is_intersection_component"],
+        "active_topology_subtype": cls["topology_subtype"],
+        "component_geometry_confidence": cls["component_geometry_confidence"],
+        "subtype_confidence": cls["subtype_confidence"],
+        "intersection_evidence_score": cls["intersection_evidence_score"],
+        "is_intersection_component": cls["is_intersection_component"],
         "intersection_geometry_source": "intersection_true_lane_boundaries",
         "ego_inside_topology_polygon": inside,
         "distance_to_topology_polygon_m": round(dist, 3),
@@ -808,10 +1177,20 @@ def _match_component(point: tuple[float, float], components: list[dict[str, Any]
 
 def _normal_frame(component_id: str | None, inside: bool, dist: float, reason: str, cls: dict[str, Any] | None = None) -> dict[str, Any]:
     cls = cls or {}
+    subtype = cls.get("topology_subtype", "normal")
+    is_intersection = bool(cls.get("is_intersection_component", False))
     return {
-        "topology_class": "normal",
+        "topology_class": subtype if is_intersection else "normal",
+        "topology_subtype": subtype if is_intersection else "normal",
         "topology_confidence": cls.get("topology_confidence", 0.0),
         "topology_component_id": component_id,
+        "active_topology_component": component_id,
+        "active_is_intersection": is_intersection,
+        "active_topology_subtype": subtype if is_intersection else "normal",
+        "component_geometry_confidence": cls.get("component_geometry_confidence", 0.0),
+        "subtype_confidence": cls.get("subtype_confidence", 0.0),
+        "intersection_evidence_score": cls.get("intersection_evidence_score", 0.0),
+        "is_intersection_component": is_intersection,
         "intersection_geometry_source": "none" if component_id is None else "intersection_true_lane_boundaries",
         "ego_inside_topology_polygon": inside,
         "distance_to_topology_polygon_m": None if math.isinf(dist) else round(dist, 3),
@@ -830,8 +1209,16 @@ def write_frame_csv(result: dict[str, Any], path: Path) -> None:
         "frame_index",
         "timestamp_unix_s",
         "topology_class",
+        "topology_subtype",
         "topology_confidence",
         "topology_component_id",
+        "active_topology_component",
+        "active_is_intersection",
+        "active_topology_subtype",
+        "component_geometry_confidence",
+        "subtype_confidence",
+        "intersection_evidence_score",
+        "is_intersection_component",
         "intersection_geometry_source",
         "ego_inside_topology_polygon",
         "distance_to_topology_polygon_m",

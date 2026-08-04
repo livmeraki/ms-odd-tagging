@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ms_odd_tagging.input_generator import frame_input
 from ms_odd_tagging.input_generator.frame_input import (
     SCHEMA_VERSION,
     build_frame_json,
     frame_id,
+    following_lane_intervals_to_events,
     sample_frames_by_rate,
 )
 from ms_odd_tagging.validator.frame_schema import validate_frame_file
@@ -81,3 +83,147 @@ def test_frame_schema_validates_same_frame_bev(tmp_path: Path) -> None:
     frame_path = tmp_path / "frame.json"
     frame_path.write_text(json.dumps(payload), encoding="utf-8")
     assert validate_frame_file(frame_path) == []
+
+
+def test_following_lane_intervals_are_serialized_as_events() -> None:
+    lane_result = {
+        "intervals": [
+            {
+                "scenario": "following_lane_without_lead",
+                "start_frame_index": 0,
+                "end_frame_index": 2,
+                "start_time_since_start_s": 0.0,
+                "end_time_since_start_s": 0.2,
+                "start_timestamp_unix_s": 1000.0,
+                "end_timestamp_unix_s": 1000.2,
+                "frame_count": 3,
+                "boundary_convention": "inclusive_observed_frames",
+            },
+            {
+                "scenario": "unknown",
+                "start_frame_index": 3,
+                "end_frame_index": 3,
+                "start_time_since_start_s": 0.3,
+                "end_time_since_start_s": 0.3,
+            },
+            {
+                "scenario": "following_lane_with_lead",
+                "start_frame_index": 4,
+                "end_frame_index": 5,
+                "start_time_since_start_s": 0.4,
+                "end_time_since_start_s": 0.5,
+                "frame_count": 2,
+            },
+        ]
+    }
+
+    events = following_lane_intervals_to_events(lane_result)
+
+    assert [event.scenario for event in events] == [
+        "following_lane_without_lead",
+        "following_lane_with_lead",
+    ]
+    assert events[0].start_frame == 0
+    assert events[0].end_frame == 2
+    assert events[0].detector_version == "following-lane-frame-tags-v1"
+    assert events[0].evidence["frame_count"] == 3
+
+
+def test_build_recording_writes_following_lane_events(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    canonical = tmp_path / "rec_canonical_odld_frames.json"
+    canonical.write_text(
+        json.dumps(
+            {
+                "recording_id": "rec",
+                "scenario_taxonomy": [
+                    "following_lane_with_lead",
+                    "following_lane_without_lead",
+                ],
+                "frames": [
+                    sample_frame(0),
+                    sample_frame(1),
+                    sample_frame(2),
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        frame_input,
+        "load_config",
+        lambda: {
+            "config_version": "test",
+            "enabled_scenarios": [
+                "following_lane_with_lead",
+                "following_lane_without_lead",
+            ],
+        },
+    )
+    monkeypatch.setattr(frame_input, "detect_recording_events", lambda *_: ([], {}))
+    monkeypatch.setattr(
+        "ms_odd_tagging.scenarios.following_lane.detector.run_following_lane",
+        lambda recording: {
+            "frames": [
+                {
+                    "frame_index": 0,
+                    "state": "following_lane_with_lead",
+                    "lead": {"class": "car"},
+                },
+                {
+                    "frame_index": 1,
+                    "state": "following_lane_with_lead",
+                    "lead": {"class": "car"},
+                },
+                {
+                    "frame_index": 2,
+                    "state": "following_lane_without_lead",
+                },
+            ],
+            "intervals": [
+                {
+                    "scenario": "following_lane_with_lead",
+                    "start_frame_index": 0,
+                    "end_frame_index": 1,
+                    "start_time_since_start_s": 0.0,
+                    "end_time_since_start_s": 0.1,
+                    "frame_count": 2,
+                },
+                {
+                    "scenario": "following_lane_without_lead",
+                    "start_frame_index": 2,
+                    "end_frame_index": 2,
+                    "start_time_since_start_s": 0.2,
+                    "end_time_since_start_s": 0.2,
+                    "frame_count": 1,
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        frame_input,
+        "render_bev_model_png",
+        lambda *args, **kwargs: Path(args[4]).write_bytes(b"png"),
+    )
+
+    frame_input.build_recording(
+        canonical,
+        tmp_path / "out",
+        extent=(45.0, 45.0, 25.0, 95.0),
+        size=(320, 288),
+        ld_filters={"roadmark_classes": set(), "line_patterns": set()},
+        max_objects=24,
+        frames_per_second=None,
+    )
+
+    rule_events = json.loads(
+        (tmp_path / "out" / "rec" / "recording_rule_events.json").read_text(
+            encoding="utf-8"
+        )
+    )["rule_based_events"]
+    assert [event["scenario"] for event in rule_events] == [
+        "following_lane_with_lead",
+        "following_lane_without_lead",
+    ]

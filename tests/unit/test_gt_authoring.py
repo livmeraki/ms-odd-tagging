@@ -53,15 +53,17 @@ def test_review_payload_exports_comparison_ready_frame_gt(tmp_path: Path) -> Non
 
 
 def test_full_requested_taxonomy_is_available_for_review() -> None:
-    assert len(TAXONOMY) == 45
+    assert len(TAXONOMY) == 49
     assert TAXONOMY[0] == "stationary"
-    assert TAXONOMY[-1] == "changing_lane_with_trail"
+    assert TAXONOMY[-1] == "behind_motorcycle"
     assert "accelerating_at_traffic_light_with_lead" in TAXONOMY
     assert "near_pedestrian_on_crosswalk_with_ego" in TAXONOMY
     assert {
         "crossed_by_bike",
         "crossed_by_motorcycle",
         "crossed_by_vehicle",
+        "following_lane_with_slow_lead",
+        "near_barrier_on_driveable",
     }.issubset(IMPLEMENTED_SCENARIOS)
     assert len(TAXONOMY) == len(set(TAXONOMY))
     assert SCENARIO_GROUPS[-1]["implemented"] is False

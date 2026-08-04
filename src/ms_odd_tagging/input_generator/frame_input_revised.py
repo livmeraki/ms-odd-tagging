@@ -24,6 +24,7 @@ from .frame_input import (
     build_direct_derivation_context,
     build_frame_json,
     canonical_recording_id,
+    following_lane_intervals_to_events,
     sample_frames_by_rate,
     select_canonical_files,
 )
@@ -64,6 +65,14 @@ def build_recording(
     lane_frames = {
         item["frame_index"]: item for item in lane_result.get("frames", [])
     }
+    events = [*events, *following_lane_intervals_to_events(lane_result)]
+    events.sort(
+        key=lambda event: (
+            event.start_timestamp_s,
+            event.scenario,
+            event.end_timestamp_s,
+        )
+    )
     rule_path = recording_dir / "recording_rule_events.json"
     rule_path.write_text(
         json.dumps(

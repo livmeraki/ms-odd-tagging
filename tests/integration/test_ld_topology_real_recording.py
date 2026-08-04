@@ -24,7 +24,7 @@ def test_ld_topology_real_recording_smoke():
     assert len(result["frames"]) == 20
     assert all(
         frame["topology_class"]
-        in {"normal", "x-intersection", "y-intersection", "t-intersection", "roundabout"}
+        in {"normal", "intersection_unknown", "x-intersection", "y-intersection", "t-intersection", "roundabout"}
         for frame in result["frames"]
     )
     assert result["intersection_geometry_source"].startswith("lanes.lines[]")

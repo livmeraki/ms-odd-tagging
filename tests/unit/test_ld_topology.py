@@ -170,6 +170,24 @@ def test_three_arm_t_intersection():
     assert frame["arm_count"] == 3
 
 
+def test_three_arm_t_with_many_internal_turning_connectors_counts_external_corridors():
+    specs = [
+        *_road_with_transition((-30, 0), (30, 0)),
+        *_branch_with_transition((0, -30), (0, 0)),
+        _lane((-8, 0), (0, -8), intersection=True),
+        _lane((8, 0), (0, -8), intersection=True),
+        _lane((0, -8), (-8, 0), intersection=True),
+        _lane((0, -8), (8, 0), intersection=True),
+        _lane((-8, -2), (8, -2), intersection=True),
+    ]
+    frame, result = _class_for(specs)
+    assert frame["topology_class"] == "t-intersection"
+    assert frame["arm_count"] == 3
+    diagnostics = result["components"][0]["classification"]["arm_diagnostics"]
+    assert diagnostics["arm_source"] == "external_non_intersection_corridors_attached_to_intersection_footprint"
+    assert diagnostics["raw_internal_centerline_crossing_count"] > frame["arm_count"]
+
+
 def test_curved_t_intersection():
     curved = _lane((0, -8), (0, 0))
     curved["left"] = [(-2, -8), (-4, -4), (-2, 2)]
@@ -245,6 +263,21 @@ def test_intersection_fan_lane_allows_wider_width_range_than_normal_lane():
     assert scene["parse"]["rejected_lanes"][0]["reasons"] == ["lane_too_wide"]
 
 
+def test_ambiguous_intersection_component_is_not_normal():
+    frame, result = _class_for(
+        [_lane((-10, 0), (10, 0), intersection=True)],
+        [_frame(0, 0, 0)],
+    )
+    assert frame["topology_class"] == "intersection_unknown"
+    assert frame["topology_subtype"] == "intersection_unknown"
+    assert frame["active_is_intersection"] is True
+    assert frame["component_geometry_confidence"] > 0.0
+    classification = result["components"][0]["classification"]
+    assert classification["is_intersection_component"] is True
+    assert classification["subtype_confidence"] == 0.0
+    assert classification["arm_diagnostics"]["rejected_arm_reason"]
+
+
 def test_post_expansion_merge_connects_nearby_partial_corridors():
     specs = [
         _lane((-24, 0), (-12, 0), intersection=True),
@@ -269,6 +302,22 @@ def test_multiple_parallel_lanes_grouped_as_one_arm_per_side():
     frame, _ = _class_for(specs)
     assert frame["topology_class"] == "x-intersection"
     assert frame["arm_count"] == 4
+
+
+def test_four_arm_x_with_turn_connectors_uses_external_corridor_arms():
+    specs = [
+        *_road_with_transition((-30, 0), (30, 0)),
+        *_road_with_transition((0, -30), (0, 30)),
+        _lane((-8, 0), (0, 8), intersection=True),
+        _lane((0, 8), (8, 0), intersection=True),
+        _lane((8, 0), (0, -8), intersection=True),
+        _lane((0, -8), (-8, 0), intersection=True),
+    ]
+    frame, result = _class_for(specs)
+    assert frame["topology_class"] == "x-intersection"
+    assert frame["arm_count"] == 4
+    arms = result["components"][0]["arms"]
+    assert all(arm["continuation_lane_ids"] for arm in arms)
 
 
 def test_fragmented_intersection_true_geometry_is_not_confident_topology():

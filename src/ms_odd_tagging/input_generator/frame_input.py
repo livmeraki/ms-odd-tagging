@@ -13,6 +13,7 @@ from ms_odd_tagging.tagger.rule_based.registry import (
     detect_recording_events,
     load_config,
 )
+from ms_odd_tagging.tagger.rule_based.scenario_event import ScenarioEvent
 from ms_odd_tagging.common.config import CANONICAL, FRAME_INPUTS
 from ms_odd_tagging.common.progress import ProgressReporter
 from ms_odd_tagging.input_generator.generation_profile import (
@@ -39,6 +40,47 @@ SCHEMA_VERSION = "odld-dynamic-frame-model-input-v1"
 BEV_SCHEMA_VERSION = "odld-per-frame-bev-v1"
 DEFAULT_FRAMES_PER_SECOND = 1.0
 LONG_VEHICLE_CLASSES = {"truck", "truck_head", "bus", "trailer"}
+
+
+def following_lane_intervals_to_events(lane_result: dict[str, Any]) -> list[ScenarioEvent]:
+    """Serialize following-lane frame states as normal recording-level events."""
+    events: list[ScenarioEvent] = []
+    for interval in lane_result.get("intervals", []):
+        scenario = interval.get("scenario")
+        if scenario not in {
+            "following_lane_with_lead",
+            "following_lane_without_lead",
+        }:
+            continue
+        start_frame = interval.get("start_frame_index")
+        end_frame = interval.get("end_frame_index")
+        start_time = interval.get("start_time_since_start_s")
+        end_time = interval.get("end_time_since_start_s")
+        if not all(
+            isinstance(value, (int, float))
+            for value in (start_frame, end_frame, start_time, end_time)
+        ):
+            continue
+        duration_s = max(0.0, float(end_time) - float(start_time))
+        events.append(
+            ScenarioEvent(
+                scenario=str(scenario),
+                start_frame=int(start_frame),
+                end_frame=int(end_frame),
+                start_timestamp_s=float(start_time),
+                end_timestamp_s=float(end_time),
+                duration_s=round(duration_s, 6),
+                detector_version="following-lane-frame-tags-v1",
+                evidence={
+                    "source_detector": "following_lane",
+                    "frame_count": interval.get("frame_count"),
+                    "boundary_convention": interval.get("boundary_convention"),
+                    "start_timestamp_unix_s": interval.get("start_timestamp_unix_s"),
+                    "end_timestamp_unix_s": interval.get("end_timestamp_unix_s"),
+                },
+            )
+        )
+    return events
 
 
 def build_direct_derivation_context(
@@ -285,6 +327,14 @@ def build_recording(
     lane_frames = {
         item["frame_index"]: item for item in lane_result.get("frames", [])
     }
+    events = [*events, *following_lane_intervals_to_events(lane_result)]
+    events.sort(
+        key=lambda event: (
+            event.start_timestamp_s,
+            event.scenario,
+            event.end_timestamp_s,
+        )
+    )
     rule_path = recording_dir / "recording_rule_events.json"
     rule_path.write_text(
         json.dumps(

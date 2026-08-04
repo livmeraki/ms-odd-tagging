@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from statistics import median
 from typing import Any
 
@@ -11,7 +12,7 @@ from .scenario_event import ScenarioEvent
 
 
 INTERSECTION_TOPOLOGY_CLASSES = frozenset(
-    {"x-intersection", "t-intersection", "y-intersection", "roundabout"}
+    {"intersection_unknown", "x-intersection", "t-intersection", "y-intersection", "roundabout"}
 )
 
 
@@ -47,7 +48,7 @@ class LaneChangeDetector:
             for index, frame_index in enumerate(frame_indexes)
         ]
         lanes = [context.get("logical_lane_id") for context in contexts]
-        applicability = self._lane_change_applicability(contexts, lanes, rule)
+        applicability = self._lane_change_applicability(contexts, lanes, rule, features)
         self.debug_evaluations = [
             {"frame_index": frame_index, **item}
             for frame_index, item in zip(frame_indexes, applicability)
@@ -285,15 +286,71 @@ class LaneChangeDetector:
         contexts: list[dict[str, Any]],
         lanes: list[str | None],
         rule: dict[str, Any],
+        features: EgoMotionFeatures,
     ) -> list[dict[str, Any]]:
         suppress_inside = bool(
             rule.get("suppress_lane_change_inside_intersection", True)
         )
         minimum_confidence = float(rule.get("minimum_topology_confidence", 0.0))
+        minimum_geometry_confidence = float(
+            rule.get("minimum_geometry_confidence", minimum_confidence)
+        )
+        topology_entry_tolerance_m = float(rule.get("topology_entry_tolerance_m", 0.0))
+        suppress_intersection_turn = bool(
+            rule.get("suppress_lane_change_during_intersection_turn", True)
+        )
+        turn_yaw_rate_threshold = float(
+            rule.get("intersection_turn_minimum_yaw_rate_rad_s", 0.08)
+        )
+        turn_yaw_change_threshold_rad = math.radians(
+            float(rule.get("intersection_turn_minimum_accumulated_yaw_deg", 5.0))
+        )
+        turn_yaw_window_s = float(rule.get("intersection_turn_yaw_window_s", 1.0))
         required_stability_frames = max(
             int(rule.get("lane_change_resume_confirmation_frames", 0)),
             int(rule.get("intersection_exit_lane_stability_frames", 0)),
         )
+
+        def accumulated_yaw_change(index: int) -> float | None:
+            current = features.unwrapped_heading_rad[index]
+            if current is None:
+                return None
+            start = index
+            while (
+                start > 0
+                and features.timestamp_s[index] - features.timestamp_s[start - 1]
+                <= turn_yaw_window_s + 1e-9
+            ):
+                start -= 1
+            start_heading = features.unwrapped_heading_rad[start]
+            if start_heading is None:
+                return None
+            return current - start_heading
+
+        def turn_evidence(index: int) -> tuple[bool, str | None, float | None]:
+            yaw_rate = features.yaw_rate_rad_s[index]
+            yaw_change = accumulated_yaw_change(index)
+            yaw_rate_turning = (
+                yaw_rate is not None
+                and abs(yaw_rate) + 1e-9 >= turn_yaw_rate_threshold
+            )
+            yaw_change_turning = (
+                yaw_change is not None
+                and abs(yaw_change) + 1e-9 >= turn_yaw_change_threshold_rad
+            )
+            if not yaw_rate_turning and not yaw_change_turning:
+                return False, None, (
+                    math.degrees(yaw_change) if yaw_change is not None else None
+                )
+            signed_value = yaw_rate if yaw_rate_turning and yaw_rate is not None else yaw_change
+            turn_candidate = (
+                "starting_left_turn"
+                if signed_value is not None and signed_value > 0
+                else "starting_right_turn"
+            )
+            return True, turn_candidate, (
+                math.degrees(yaw_change) if yaw_change is not None else None
+            )
         result: list[dict[str, Any]] = []
         previous_inside = False
         pre_intersection_lane_id: str | None = None
@@ -306,12 +363,43 @@ class LaneChangeDetector:
         for index, context in enumerate(contexts):
             lane_id = lanes[index]
             topology_class = context.get("topology_class", "normal")
+            topology_subtype = context.get("topology_subtype") or context.get(
+                "active_topology_subtype", topology_class
+            )
             topology_confidence = float(context.get("topology_confidence") or 0.0)
-            intersection_active = (
+            component_geometry_confidence = float(
+                context.get("component_geometry_confidence") or topology_confidence
+            )
+            raw_distance = context.get("distance_to_topology_polygon_m")
+            distance_to_topology_polygon_m = (
+                float(raw_distance)
+                if isinstance(raw_distance, (int, float))
+                else math.inf
+            )
+            active_is_intersection = bool(
+                context.get("active_is_intersection")
+                or context.get("is_intersection_component")
+                or topology_subtype in INTERSECTION_TOPOLOGY_CLASSES
+            )
+            in_topology_area = bool(context.get("ego_inside_topology_polygon")) or (
+                distance_to_topology_polygon_m <= topology_entry_tolerance_m
+            )
+            reliable_intersection = (
                 suppress_inside
-                and bool(context.get("ego_inside_topology_polygon"))
-                and topology_class in INTERSECTION_TOPOLOGY_CLASSES
-                and topology_confidence + 1e-9 >= minimum_confidence
+                and active_is_intersection
+                and component_geometry_confidence + 1e-9
+                >= minimum_geometry_confidence
+            )
+            ego_turning, turn_candidate, accumulated_yaw_change_deg = turn_evidence(index)
+            inside_intersection_topology = reliable_intersection and in_topology_area
+            turning_with_intersection = (
+                reliable_intersection
+                and suppress_intersection_turn
+                and ego_turning
+                and not inside_intersection_topology
+            )
+            intersection_active = (
+                inside_intersection_topology or turning_with_intersection
             )
 
             if intersection_active and not previous_inside:
@@ -323,7 +411,11 @@ class LaneChangeDetector:
 
             if intersection_active:
                 lane_change_applicable = False
-                suppression_reason = "suppressed_by_topology"
+                suppression_reason = (
+                    "suppressed_by_topology_turn"
+                    if turning_with_intersection
+                    else "suppressed_by_topology"
+                )
             else:
                 if previous_inside:
                     in_resume_confirmation = required_stability_frames > 0
@@ -360,15 +452,28 @@ class LaneChangeDetector:
                 {
                     "intersection_active": intersection_active,
                     "topology_class": topology_class,
+                    "topology_subtype": topology_subtype,
                     "topology_confidence": topology_confidence,
+                    "active_is_intersection": active_is_intersection,
+                    "active_topology_subtype": topology_subtype,
+                    "component_geometry_confidence": component_geometry_confidence,
+                    "distance_to_topology_polygon_m": (
+                        None
+                        if math.isinf(distance_to_topology_polygon_m)
+                        else distance_to_topology_polygon_m
+                    ),
                     "lane_change_applicable": lane_change_applicable,
                     "lane_change_suppression_reason": suppression_reason,
                     "pre_intersection_lane_id": pre_intersection_lane_id,
                     "current_lane_id": lane_id,
                     "post_intersection_lane_id": post_intersection_lane_id,
                     "lane_stability_frames": lane_stability_frames,
+                    "turn_candidate": turn_candidate,
+                    "accumulated_yaw_change_deg": accumulated_yaw_change_deg,
                     "final_decision_reason": (
-                        "lane_change_not_applicable_inside_intersection_topology"
+                        "lane_change_not_applicable_during_intersection_turn"
+                        if turning_with_intersection
+                        else "lane_change_not_applicable_inside_intersection_topology"
                         if intersection_active
                         else suppression_reason
                         or "lane_change_applicable_on_stable_continuing_road"

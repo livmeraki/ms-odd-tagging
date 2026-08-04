@@ -38,14 +38,15 @@ def render_debug_image(result: dict[str, Any], frame: dict[str, Any] | None, out
 
     image = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(image, "RGBA")
+    lane_by_id = {lane.get("lane_id"): lane for lane in lanes}
     for lane in lanes:
         poly = [tx(tuple(p)) for p in lane.get("polygon_lcs_m", [])]
         if len(poly) >= 3:
             color = (120, 200, 120, 45)
             if lane.get("intersection_evidence") == "strong":
-                color = (230, 70, 60, 80)
+                color = (245, 60, 170, 90)
             elif lane.get("intersection_evidence") == "partial":
-                color = (245, 170, 40, 75)
+                color = (245, 130, 205, 75)
             draw.polygon(poly, fill=color, outline=(60, 60, 60, 60))
         for side, flag in (("left", lane.get("left_boundary_intersection")), ("right", lane.get("right_boundary_intersection"))):
             pts = [tx(tuple(p)) for p in lane.get(f"{side}_boundary_lcs_m", [])]
@@ -60,11 +61,51 @@ def render_debug_image(result: dict[str, Any], frame: dict[str, Any] | None, out
             draw.polygon(poly, outline=(0, 0, 0, 240), fill=(80, 160, 240, 45))
         center = tx(tuple(comp["center_lcs_m"]))
         draw.ellipse((center[0] - 5, center[1] - 5, center[0] + 5, center[1] + 5), fill=(0, 0, 0, 255))
+        diagnostics = (comp.get("classification") or {}).get("arm_diagnostics") or {}
+        palette = [
+            (0, 125, 255, 220),
+            (0, 170, 100, 220),
+            (145, 70, 220, 220),
+            (230, 130, 20, 220),
+            (40, 170, 190, 220),
+            (210, 80, 80, 220),
+        ]
+        for idx, corridor in enumerate(diagnostics.get("external_corridor_components", [])):
+            color = palette[idx % len(palette)]
+            for lane_id in corridor.get("lane_ids", []):
+                lane = lane_by_id.get(lane_id)
+                if not lane:
+                    continue
+                pts = [tx(tuple(p)) for p in lane.get("centerline_lcs_m", [])]
+                if len(pts) >= 2:
+                    draw.line(pts, fill=color, width=5)
+        for rejected in diagnostics.get("rejected_external_lanes", []):
+            lane = lane_by_id.get(rejected.get("lane_id"))
+            if not lane:
+                continue
+            pts = [tx(tuple(p)) for p in lane.get("centerline_lcs_m", [])]
+            if len(pts) >= 2:
+                draw.line(pts, fill=(210, 40, 40, 210), width=3)
+                draw.text(pts[len(pts) // 2], str(rejected.get("reason", "rejected")), fill=(160, 0, 0, 255))
         for arm in comp.get("arms", []):
             crossing = tx(tuple(arm["crossing_point_lcs_m"]))
             draw.ellipse((crossing[0] - 5, crossing[1] - 5, crossing[0] + 5, crossing[1] + 5), fill=(0, 90, 220, 255))
             draw.line([center, crossing], fill=(0, 90, 220, 180), width=2)
+            axis = arm.get("outside_axis_angle_deg")
+            if axis is not None:
+                axis_rad = math.radians(float(axis))
+                axis_tip = tx((
+                    arm["crossing_point_lcs_m"][0] + 8 * math.cos(axis_rad),
+                    arm["crossing_point_lcs_m"][1] + 8 * math.sin(axis_rad),
+                ))
+                draw.line([crossing, axis_tip], fill=(0, 40, 160, 210), width=3)
             draw.text((crossing[0] + 6, crossing[1] + 3), f'{arm["angle_deg"]:.0f}', fill=(0, 40, 120, 255))
+        cls = comp.get("classification") or {}
+        draw.text(
+            (center[0] + 8, center[1] + 8),
+            f'{cls.get("topology_class", "?")} arms={cls.get("arm_count", 0)}',
+            fill=(0, 0, 0, 255),
+        )
     label = "scene"
     if frame:
         ego = _frame_ego(frame)

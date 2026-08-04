@@ -768,6 +768,15 @@ def test_ld_topology_payload_is_compact_for_explorer() -> None:
                     "classification": {
                         "topology_class": "x-intersection",
                         "topology_confidence": 0.91,
+                        "arm_count": 4,
+                        "arm_diagnostics": {
+                            "arm_source": "external_non_intersection_corridors_attached_to_intersection_footprint",
+                            "external_corridor_components": [
+                                {"lane_ids": ["lane-a"]},
+                                {"lane_ids": ["lane-b"]},
+                                {"lane_ids": ["lane-c"]},
+                            ],
+                        },
                         "decision_reason": "test topology",
                     },
                 }
@@ -793,6 +802,8 @@ def test_ld_topology_payload_is_compact_for_explorer() -> None:
     assert payload["schemaVersion"] == "ld-topology-context-v1"
     assert payload["summary"]["components"] == 1
     assert payload["summary"]["activeFrames"] == 1
+    assert payload["components"][0]["externalCorridorCandidateCount"] == 3
+    assert payload["components"][0]["physicalArmCandidateCount"] == 4
     assert payload["frames"][1]["topologyClass"] == "x-intersection"
 
 
@@ -816,7 +827,11 @@ def test_generator_contains_phase2b_controls_colors_and_overlay_hooks() -> None:
     assert 'id="roadFeatureContext"' in explorer.TAG_CONTROLS_HTML
     assert "const ldTopology = DATA.ldTopology" in explorer.LD_SCRIPT_SETUP
     assert "detected topology:" in explorer.LD_SCRIPT_FUNCTIONS
+    assert "external corridors considered:" in explorer.LD_SCRIPT_FUNCTIONS
+    assert "externalCorridorCandidateCount" in explorer.LD_SCRIPT_FUNCTIONS
     assert "topology active" in explorer.LD_SCRIPT_FUNCTIONS
+    assert 'id="showDetectedTopologyAreas" type="checkbox" checked' in explorer.LD_CONTROLS_HTML
+    assert "detectedTopologyAreaTraces" in explorer.LD_SCRIPT_FUNCTIONS
     for label in (
         "traversing_crosswalk",
         "on_stopline_crosswalk",

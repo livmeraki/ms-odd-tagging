@@ -36,15 +36,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "arm_crossing_cluster_distance_m": 9.0,
     "arm_axis_cluster_deg": 22.0,
     "parallel_lane_group_distance_m": 8.0,
+    "external_arm_attachment_tolerance_m": 3.0,
+    "external_corridor_axis_merge_deg": 25.0,
     "external_continuation_distance_m": 14.0,
     "external_continuation_heading_deg": 45.0,
     "maximum_external_continuation_matches": 4,
     "opposite_pair_threshold_deg": 150.0,
+    "opposite_pair_axis_delta_deg": 22.0,
+    "opposite_pair_minimum_axis_supported_radial_deg": 120.0,
     "minimum_three_way_gap_deg": 35.0,
     "roundabout_min_angular_coverage_deg": 260.0,
     "roundabout_min_curvature_score": 0.55,
     "roundabout_min_tangent_radial_score": 0.65,
     "minimum_topology_confidence": 0.35,
+    "minimum_intersection_evidence_score": 0.30,
 }
 
 

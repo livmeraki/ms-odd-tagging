@@ -15,6 +15,7 @@ import html
 import json
 import math
 import re
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from ms_odd_tagging.features.object_path_crossing_relations import (
 from ms_odd_tagging.ld_topology.config import load_config as load_ld_topology_config
 from ms_odd_tagging.ld_topology.pipeline import classify_recording
 from ms_odd_tagging.tagger.rule_based.registry import (
+    PHASE4_SCENARIOS,
     detect_recording_events,
     load_config,
 )
@@ -338,6 +340,14 @@ TOPOLOGY_FRAME_FIELDS = (
     "circularity_score",
     "internal_ambiguous_state",
     "decision_reason",
+    "is_intersection_component",
+    "topology_subtype",
+    "subtype_confidence",
+    "component_geometry_confidence",
+    "intersection_evidence_score",
+    "active_topology_component",
+    "active_is_intersection",
+    "active_topology_subtype",
 )
 
 
@@ -371,8 +381,35 @@ def build_ld_topology_payload(topology: dict) -> dict:
     active_classes = {
         name
         for name in classes
-        if name in {"x-intersection", "t-intersection", "y-intersection", "roundabout"}
+        if name in {"intersection_unknown", "x-intersection", "t-intersection", "y-intersection", "roundabout"}
     }
+    def component_payload(component: dict) -> dict:
+        classification = component.get("classification") or {}
+        arm_diagnostics = classification.get("arm_diagnostics") or {}
+        external_corridors = arm_diagnostics.get("external_corridor_components") or []
+        return {
+            "id": component.get("component_id"),
+            "class": classification.get("topology_class", "normal"),
+            "isIntersectionComponent": bool(
+                classification.get("is_intersection_component", False)
+            ),
+            "topologySubtype": classification.get("topology_subtype", "normal"),
+            "confidence": classification.get("topology_confidence", 0.0),
+            "geometryConfidence": classification.get(
+                "component_geometry_confidence", 0.0
+            ),
+            "subtypeConfidence": classification.get("subtype_confidence", 0.0),
+            "intersectionEvidenceScore": classification.get(
+                "intersection_evidence_score", 0.0
+            ),
+            "externalCorridorCandidateCount": len(external_corridors),
+            "physicalArmCandidateCount": classification.get("arm_count", 0),
+            "armSource": arm_diagnostics.get("arm_source"),
+            "center": component.get("center_lcs_m"),
+            "polygon": component.get("core_polygon_lcs_m", []),
+            "decisionReason": classification.get("decision_reason"),
+        }
+
     return {
         "schemaVersion": "ld-topology-context-v1",
         "summary": {
@@ -384,27 +421,20 @@ def build_ld_topology_payload(topology: dict) -> dict:
             "minimumConfidenceSource": "configs/ld_topology.json",
         },
         "components": [
-            {
-                "id": component.get("component_id"),
-                "class": (component.get("classification") or {}).get(
-                    "topology_class", "normal"
-                ),
-                "confidence": (component.get("classification") or {}).get(
-                    "topology_confidence", 0.0
-                ),
-                "center": component.get("center_lcs_m"),
-                "polygon": component.get("core_polygon_lcs_m", []),
-                "decisionReason": (component.get("classification") or {}).get(
-                    "decision_reason"
-                ),
-            }
+            component_payload(component)
             for component in topology.get("components", [])
         ],
         "frames": [
             {
                 "frameIndex": frame.get("frame_index"),
                 "topologyClass": frame.get("topology_class", "normal"),
+                "topologySubtype": frame.get("topology_subtype", "normal"),
                 "topologyConfidence": frame.get("topology_confidence", 0.0),
+                "geometryConfidence": frame.get("component_geometry_confidence", 0.0),
+                "subtypeConfidence": frame.get("subtype_confidence", 0.0),
+                "intersectionEvidenceScore": frame.get("intersection_evidence_score", 0.0),
+                "activeIsIntersection": bool(frame.get("active_is_intersection", False)),
+                "activeTopologySubtype": frame.get("active_topology_subtype", "normal"),
                 "componentId": frame.get("topology_component_id"),
                 "egoInsideTopologyPolygon": frame.get(
                     "ego_inside_topology_polygon", False
@@ -876,7 +906,11 @@ def build_ld_payload(canonical: dict) -> dict:
         "nearbyMotorcycleCount": [],
         "nearbyMotionalCount": [],
         "topologyClass": [],
+        "topologySubtype": [],
         "topologyConfidence": [],
+        "topologyGeometryConfidence": [],
+        "activeIsIntersection": [],
+        "activeTopologySubtype": [],
         "egoInsideTopologyPolygon": [],
         "distanceToTopologyPolygonM": [],
         "topologyComponentId": [],
@@ -916,8 +950,20 @@ def build_ld_payload(canonical: dict) -> dict:
         frame_context["nearbyMotorcycleCount"].append(nearby["motorcycle"])
         frame_context["nearbyMotionalCount"].append(nearby["all_motional"])
         frame_context["topologyClass"].append(frame.get("topology_class", "normal"))
+        frame_context["topologySubtype"].append(
+            frame.get("topology_subtype", "normal")
+        )
         frame_context["topologyConfidence"].append(
             frame.get("topology_confidence", 0.0)
+        )
+        frame_context["topologyGeometryConfidence"].append(
+            frame.get("component_geometry_confidence", 0.0)
+        )
+        frame_context["activeIsIntersection"].append(
+            bool(frame.get("active_is_intersection", False))
+        )
+        frame_context["activeTopologySubtype"].append(
+            frame.get("active_topology_subtype", "normal")
         )
         frame_context["egoInsideTopologyPolygon"].append(
             bool(frame.get("ego_inside_topology_polygon"))
@@ -1120,6 +1166,7 @@ LD_CONTROLS_HTML = """
       <label><input id="showBoundaries" type="checkbox" checked /> Road boundaries</label>
       <label><input id="showRoadmarks" type="checkbox" checked /> Roadmarks</label>
       <label><input id="showTopology" type="checkbox" /> Lane topology links</label>
+      <label><input id="showDetectedTopologyAreas" type="checkbox" checked /> Detected topology areas</label>
       <label>Topology filter
         <select id="topologyFilter">
           <option value="intersections" selected>intersection_in + intersection_out</option>
@@ -1908,6 +1955,112 @@ function topologyAnchorTrace(features, name, color) {
     hovertemplate: 'topology #%{customdata[0]}<br>subtype=%{customdata[1]}<br>%{customdata[2]}<br>connector=%{customdata[3]:.2f} m<br><b>click for JSON</b><extra></extra>'};
 }
 
+function topologyClassColor(name) {
+  return {
+    'x-intersection': '#dc2626',
+    't-intersection': '#ea580c',
+    'y-intersection': '#d946ef',
+    roundabout: '#7c3aed',
+    intersection_unknown: '#0891b2',
+    normal: '#64748b'
+  }[name] || '#64748b';
+}
+
+function topologyClassFillColor(name) {
+  return {
+    'x-intersection': 'rgba(220, 38, 38, 0.24)',
+    't-intersection': 'rgba(234, 88, 12, 0.24)',
+    'y-intersection': 'rgba(217, 70, 239, 0.24)',
+    roundabout: 'rgba(124, 58, 237, 0.24)',
+    intersection_unknown: 'rgba(8, 145, 178, 0.24)',
+    normal: 'rgba(100, 116, 139, 0.24)'
+  }[name] || 'rgba(100, 116, 139, 0.24)';
+}
+
+function detectedTopologyAreaTraces() {
+  const traces = [];
+  if (!document.getElementById('showDetectedTopologyAreas').checked) return traces;
+  const centerX = [], centerY = [], centerCustom = [], centerColors = [];
+  for (const component of ldTopology.components || []) {
+    const polygon = component.polygon || [];
+    if (polygon.length < 3) continue;
+    const x = polygon.map(point => point[0]);
+    const y = polygon.map(point => point[1]);
+    x.push(polygon[0][0]);
+    y.push(polygon[0][1]);
+    const color = topologyClassColor(component.class || 'normal');
+    traces.push({
+      type: 'scatter', mode: 'lines', fill: 'toself',
+      name: `detected topology: ${component.class || 'normal'}`,
+      x, y,
+      line: {color, width: 5, dash: component.class === 'normal' ? 'dash' : 'solid'},
+      fillcolor: topologyClassFillColor(component.class || 'normal'),
+      opacity: 0.95,
+      customdata: x.map(() => [
+        component.id,
+        component.class || 'normal',
+        component.confidence || 0,
+        component.externalCorridorCandidateCount || 0,
+        component.physicalArmCandidateCount || 0,
+        component.decisionReason || ''
+      ]),
+      hovertemplate: 'detected topology %{customdata[0]}<br>class=%{customdata[1]}<br>confidence=%{customdata[2]:.2f}<br>external corridors=%{customdata[3]} · physical arms=%{customdata[4]}<br>%{customdata[5]}<extra></extra>'
+    });
+    if (component.center) {
+      centerX.push(component.center[0]);
+      centerY.push(component.center[1]);
+      centerColors.push(color);
+      centerCustom.push([
+        component.id,
+        component.class || 'normal',
+        component.confidence || 0,
+        component.externalCorridorCandidateCount || 0,
+        component.physicalArmCandidateCount || 0,
+        component.decisionReason || ''
+      ]);
+    }
+  }
+  if (centerX.length) {
+    traces.push({
+      type: 'scattergl', mode: 'markers',
+      name: 'detected topology centers',
+      x: centerX, y: centerY,
+      marker: {size: 13, symbol: 'diamond-open', color: centerColors, line: {width: 3}},
+      customdata: centerCustom,
+      hovertemplate: 'detected topology center %{customdata[0]}<br>class=%{customdata[1]}<br>confidence=%{customdata[2]:.2f}<br>external corridors=%{customdata[3]} · physical arms=%{customdata[4]}<br>%{customdata[5]}<extra></extra>'
+    });
+  }
+  const currentComponentId = ldFrames.topologyComponentId[currentIndex];
+  if (currentComponentId) {
+    const currentComponent = (ldTopology.components || []).find(
+      component => component.id === currentComponentId
+    );
+    if (currentComponent && currentComponent.center) {
+      traces.push({
+        type: 'scattergl', mode: 'markers',
+        name: 'current topology component',
+        x: [currentComponent.center[0]], y: [currentComponent.center[1]],
+        marker: {
+          size: 15,
+          symbol: 'x',
+          color: topologyClassColor(currentComponent.class || 'normal'),
+          line: {width: 3, color: '#111827'}
+        },
+        customdata: [[
+          currentComponent.id,
+          currentComponent.class || 'normal',
+          currentComponent.confidence || 0,
+          currentComponent.externalCorridorCandidateCount || 0,
+          currentComponent.physicalArmCandidateCount || 0,
+          ldFrames.egoInsideTopologyPolygon[currentIndex] ? 'ego inside polygon' : 'ego outside polygon'
+        ]],
+        hovertemplate: 'current topology %{customdata[0]}<br>class=%{customdata[1]}<br>confidence=%{customdata[2]:.2f}<br>external corridors=%{customdata[3]} · physical arms=%{customdata[4]}<br>%{customdata[5]}<extra></extra>'
+      });
+    }
+  }
+  return traces;
+}
+
 function vehicleHeadingTrace(selectedClasses) {
   const x = [], y = [];
   for (const object of objects) {
@@ -1932,6 +2085,7 @@ function vehicleHeadingTrace(selectedClasses) {
 
 function ldTraces() {
   const traces = [];
+  traces.push(...detectedTopologyAreaTraces());
   if (document.getElementById('showLaneLines').checked) {
     const styles = {
       solid: ['#0ea5e9', 'solid'], dashed: ['#2563eb', 'dash'],
@@ -2034,14 +2188,25 @@ function updateLdContext() {
   const i = currentIndex;
   const invalid = ld.summary.invalidLaneEndpointOrders;
   const topologyClass = ldFrames.topologyClass[i] || 'normal';
+  const topologySubtype = ldFrames.activeTopologySubtype[i] || ldFrames.topologySubtype[i] || topologyClass;
   const topologyConfidence = Number(ldFrames.topologyConfidence[i] || 0).toFixed(2);
+  const topologyGeometryConfidence = Number(ldFrames.topologyGeometryConfidence[i] || 0).toFixed(2);
+  const activeIntersection = ldFrames.activeIsIntersection[i] ? 'intersection component' : 'not intersection-active';
   const topologyInside = ldFrames.egoInsideTopologyPolygon[i] ? 'inside' : 'outside';
   const topologyDistance = formatDistance(ldFrames.distanceToTopologyPolygonM[i]);
+  const topologyComponentId = ldFrames.topologyComponentId[i];
+  const topologyComponent = topologyComponentId
+    ? (ldTopology.components || []).find(component => component.id === topologyComponentId)
+    : null;
+  const externalCorridors = topologyComponent ? topologyComponent.externalCorridorCandidateCount || 0 : 0;
+  const physicalArms = topologyComponent ? topologyComponent.physicalArmCandidateCount || 0 : 0;
   document.getElementById('ldContext').innerHTML =
     `<b>Frame ${i} LD context</b><br>` +
     `nearby: ${ldFrames.lineCount[i]} lines · ${ldFrames.laneCount[i]} lanes · ${ldFrames.boundaryCount[i]} boundaries · ${ldFrames.topologyCount[i]} topologies · ${ldFrames.roadmarkCount[i]} roadmarks<br>` +
     `intersection context: ${ldFrames.intersectionLineCount[i]} nearby lines with intersection=true<br>` +
-    `detected topology: ${topologyClass} · conf ${topologyConfidence} · ${topologyInside} polygon · distance ${topologyDistance}<br>` +
+    `detected topology: ${topologyClass} · subtype ${topologySubtype} · ${activeIntersection}<br>` +
+    `external corridors considered: ${externalCorridors} · physical arm candidates: ${physicalArms}<br>` +
+    `topology confidence: subtype ${topologyConfidence} · geometry ${topologyGeometryConfidence} · ${topologyInside} polygon · distance ${topologyDistance}<br>` +
     `nearest: line ${formatDistance(ldFrames.nearestLineM[i])} · boundary ${formatDistance(ldFrames.nearestBoundaryM[i])} · roadmark ${formatDistance(ldFrames.nearestRoadmarkM[i])}<br>` +
     `OD: lead ${ldFrames.leadObjectId[i] ?? 'none'} · motional within 30m ${ldFrames.nearbyMotionalCount[i]}<br>` +
     `source quality: ${invalid} invalid lane endpoint-order reference${invalid === 1 ? '' : 's'}`;
@@ -2050,7 +2215,7 @@ function updateLdContext() {
 function renderLdTimeline() {
   const topologyActive = ldFrames.topologyClass.map((name, index) =>
     (ldFrames.egoInsideTopologyPolygon[index] &&
-     ['x-intersection', 't-intersection', 'y-intersection', 'roundabout'].includes(name)) ? 1 : 0
+     ['intersection_unknown', 'x-intersection', 't-intersection', 'y-intersection', 'roundabout'].includes(name)) ? 1 : 0
   );
   const traces = [
     {type: 'scattergl', mode: 'lines', x: traj.rel_t, y: ldFrames.nearestLineM, name: 'nearest lane line m', line: {color: '#0284c7'}},
@@ -2221,7 +2386,7 @@ def scene_html(data: dict) -> str:
     page = replace_once(
         page,
         "for (const id of ['showFootprints','showObjects','showEgoMarkers','persistStatic']) document.getElementById(id).addEventListener('change', render);",
-        "for (const id of ['showFootprints','showObjects','showEgoMarkers','showObjectHeadings','persistStatic','showLaneLines','showIntersectionLines','showBoundaries','showRoadmarks','showTopology','topologyFilter','showLaneAnchors','showNearbyLd','showTags','showRoadFeatureRelations','showObjectRelations','showDynamicObjectVelocities','showPathCrossingRelations','showConfirmedCrossingsOnly']) document.getElementById(id).addEventListener('change', render);\n"
+        "for (const id of ['showFootprints','showObjects','showEgoMarkers','showObjectHeadings','persistStatic','showLaneLines','showIntersectionLines','showBoundaries','showRoadmarks','showTopology','showDetectedTopologyAreas','topologyFilter','showLaneAnchors','showNearbyLd','showTags','showRoadFeatureRelations','showObjectRelations','showDynamicObjectVelocities','showPathCrossingRelations','showConfirmedCrossingsOnly']) document.getElementById(id).addEventListener('change', render);\n"
         "document.getElementById('pathCrossingObjectFilter').addEventListener('change', () => {\n"
         "  const event = selectedCrossingEvent();\n"
         "  if (event) setFrame(event.evidence.arc_entry_frame ?? event.startFrame);\n"
@@ -2267,6 +2432,7 @@ def index_html(rows: list[dict]) -> str:
             for row in rows
             for scenario in row.get("tagScenarioList", [])
         }
+        | set(PHASE4_SCENARIOS)
     )
     scenario_items = "".join(
         f'<label class="scenarioChoice"><input type="checkbox" value="{html.escape(scenario)}"><span>{html.escape(scenario)}</span></label>'
@@ -2401,6 +2567,16 @@ def row_from_explorer(output_path: Path) -> dict:
 
 def explorer_output_name(recording: str) -> str:
     return f"{recording}_animated_odld_explorer.html"
+
+
+def format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remaining_seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remaining_seconds:.1f}s"
+    hours, remaining_minutes = divmod(minutes, 60)
+    return f"{int(hours)}h {int(remaining_minutes)}m {remaining_seconds:.1f}s"
 
 
 def recording_from_canonical_path(canonical_path: Path) -> str:
@@ -2550,12 +2726,18 @@ def main() -> None:
         "odld-explorers", len(canonical_paths), "recording"
     )
     generation_progress.start()
+    total_started_at = time.perf_counter()
     for index, canonical_path in enumerate(canonical_paths, 1):
+        recording_started_at = time.perf_counter()
         recording = recording_from_canonical_path(canonical_path)
         output_name = explorer_output_name(recording)
         output_path = args.output_dir / output_name
         if output_path.is_file() and not args.regenerate_existing:
-            print(f"[{index}/{len(canonical_paths)}] {recording}: skipped existing explorer")
+            elapsed = format_elapsed(time.perf_counter() - recording_started_at)
+            print(
+                f"[{index}/{len(canonical_paths)}] {recording}: "
+                f"skipped existing explorer in {elapsed}"
+            )
             generation_progress.advance(f"{recording}: skipped")
             continue
         with canonical_path.open(encoding="utf-8") as handle:
@@ -2582,6 +2764,7 @@ def main() -> None:
         rows_by_recording[recording] = row_from_generated_data(
             recording, output_name, data
         )
+        elapsed = format_elapsed(time.perf_counter() - recording_started_at)
         print(
             f"[{index}/{len(canonical_paths)}] {recording}: "
             f"{data['summary']['objects']} objects, "
@@ -2589,7 +2772,8 @@ def main() -> None:
             f"{data['ld']['summary']['roadBoundaries']} boundaries, "
             f"{len(data['tags']['scenarios'])} tagged scenarios / "
             f"{len(data['tags']['events'])} intervals, "
-            f"{debug_counts['od']} OD + {debug_counts['ld']} LD debug records"
+            f"{debug_counts['od']} OD + {debug_counts['ld']} LD debug records, "
+            f"generated in {elapsed}"
         )
         generation_progress.advance(f"{recording}: generated")
         # Each recording can embed tens of MB of OD/LD payload. Release it
@@ -2599,6 +2783,10 @@ def main() -> None:
         gc.collect()
     rows = rebuild_rows_from_outputs(args.output_dir, rows_by_recording)
     write_index_and_manifest(args.index_path, args.output_dir, rows)
+    print(
+        f"Finished {len(canonical_paths)} recording(s) in "
+        f"{format_elapsed(time.perf_counter() - total_started_at)}"
+    )
 
 
 if __name__ == "__main__":

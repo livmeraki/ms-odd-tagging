@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 Point = tuple[float, float]
 Evidence = Literal["strong", "partial", "none"]
-TopologyClass = Literal["normal", "x-intersection", "y-intersection", "t-intersection", "roundabout"]
+TopologyClass = Literal["normal", "intersection_unknown", "x-intersection", "y-intersection", "t-intersection", "roundabout"]
 
 
 @dataclass(frozen=True)

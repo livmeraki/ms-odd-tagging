@@ -21,6 +21,10 @@ from ms_odd_tagging.features.road_feature_relations import (
     build_road_feature_relations,
     summarize_road_feature_relations,
 )
+from ms_odd_tagging.features.traffic_relations import (
+    build_traffic_relations,
+    summarize_traffic_relations,
+)
 from .base import ScenarioDetector
 from .crosswalks import CrosswalkRelationDetector
 from .dynamics import JerkDetector, LateralAccelerationDetector, SPEED_BAND_ORDER, SpeedBandDetector
@@ -32,6 +36,7 @@ from .object_path_crossings import (
 )
 from .pedestrian_crosswalks import PedestrianCrosswalkInteractionDetector
 from .scenario_event import ScenarioEvent
+from .traffic_interactions import TrafficInteractionDetector
 from .turns import TurnDetector
 
 PHASE1_SCENARIOS = ("stationary", "low_magnitude_speed", "medium_magnitude_speed", "high_magnitude_speed", "high_lateral_acceleration", "high_magnitude_jerk", "starting_left_turn", "starting_right_turn", "starting_low_speed_turn", "starting_high_speed_turn")
@@ -40,11 +45,13 @@ PHASE2B_SCENARIOS = ("traversing_crosswalk", "on_stopline_crosswalk", "stationar
 PHASE3A_SCENARIOS = ("near_high_speed_vehicle", "near_long_vehicle", "near_multiple_bikes", "near_multiple_motorcycle", "near_multiple_pedestrians", "near_multiple_vehicles")
 PHASE3B_SCENARIOS = ("near_pedestrian_on_crosswalk", "near_pedestrian_on_crosswalk_with_ego")
 PHASE3C_SCENARIOS = ("crossed_by_bike", "crossed_by_motorcycle", "crossed_by_vehicle")
-RULE_BASED_SCENARIOS = PHASE1_SCENARIOS + PHASE2_SCENARIOS + PHASE2B_SCENARIOS + PHASE3A_SCENARIOS + PHASE3B_SCENARIOS + PHASE3C_SCENARIOS
+PHASE4_SCENARIOS = ("following_lane_with_slow_lead", "changing_lane_with_lead", "changing_lane_with_trail", "stopping_with_lead", "stopping_without_lead", "stationary_in_traffic", "behind_bike", "behind_long_vehicle", "behind_pedestrian_on_driveable", "waiting_for_pedestrian_to_cross", "near_barrier_on_driveable")
+EXPLICITLY_EXCLUDED_SCENARIOS = ("pickup_dropoff", "pickup_with_pedestrian", "dropoff_with_pedestrian")
+RULE_BASED_SCENARIOS = PHASE1_SCENARIOS + PHASE2_SCENARIOS + PHASE2B_SCENARIOS + PHASE3A_SCENARIOS + PHASE3B_SCENARIOS + PHASE3C_SCENARIOS + PHASE4_SCENARIOS
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[4] / "configs" / "direct_scenarios.yaml"
 
 def validate_config(config: dict[str, Any]) -> None:
-    required = {"config_version", "detector_version", "enabled_scenarios", "feature_extraction", "speed_bands", "lateral_acceleration", "jerk", "turn_detection", "turn_speed_classification", "lane_change_detection", "road_feature_relations", "object_relations", "pedestrian_crosswalk_interactions", "object_path_crossing_interactions"}
+    required = {"config_version", "detector_version", "enabled_scenarios", "feature_extraction", "speed_bands", "lateral_acceleration", "jerk", "turn_detection", "turn_speed_classification", "lane_change_detection", "road_feature_relations", "object_relations", "pedestrian_crosswalk_interactions", "object_path_crossing_interactions", "traffic_relations", "traffic_interactions"}
     missing = sorted(required - config.keys())
     if missing: raise ValueError(f"rule configuration missing keys: {', '.join(missing)}")
     unknown = sorted(set(config["enabled_scenarios"]) - set(RULE_BASED_SCENARIOS))
@@ -83,6 +90,11 @@ def validate_config(config: dict[str, Any]) -> None:
         "maximum_temporary_lane_id_inconsistency_s",
         "minimum_event_duration_s",
         "minimum_topology_confidence",
+        "minimum_geometry_confidence",
+        "topology_entry_tolerance_m",
+        "intersection_turn_minimum_yaw_rate_rad_s",
+        "intersection_turn_minimum_accumulated_yaw_deg",
+        "intersection_turn_yaw_window_s",
     ):
         value = lane_change.get(key)
         if not isinstance(value, (int, float)) or value < 0:
@@ -105,9 +117,20 @@ def validate_config(config: dict[str, Any]) -> None:
             "lane_change_detection: suppress_lane_change_inside_intersection "
             "must be a boolean"
         )
+    if not isinstance(
+        lane_change.get("suppress_lane_change_during_intersection_turn"), bool
+    ):
+        raise ValueError(
+            "lane_change_detection: suppress_lane_change_during_intersection_turn "
+            "must be a boolean"
+        )
     if lane_change["minimum_topology_confidence"] > 1:
         raise ValueError(
             "lane_change_detection: minimum_topology_confidence must be <= 1"
+        )
+    if lane_change["minimum_geometry_confidence"] > 1:
+        raise ValueError(
+            "lane_change_detection: minimum_geometry_confidence must be <= 1"
         )
     for key in (
         "lane_change_resume_confirmation_frames",
@@ -336,6 +359,56 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(
             "object_path_crossing_interactions: detector_version is required"
         )
+    traffic_relations = config["traffic_relations"]
+    traffic_interactions = config["traffic_interactions"]
+    for section_name, section in (
+        ("traffic_relations", traffic_relations),
+        ("traffic_interactions", traffic_interactions),
+    ):
+        if not section.get("detector_version"):
+            raise ValueError(f"{section_name}: detector_version is required")
+        if not section.get("provenance"):
+            raise ValueError(f"{section_name}: provenance is required")
+    numeric_nonnegative = (
+        "stationary_speed_mps", "slow_speed_mps", "same_lane_lateral_entry_m",
+        "same_lane_lateral_release_m", "minimum_ahead_longitudinal_m",
+        "minimum_trail_longitudinal_m", "minimum_same_lane_confidence",
+        "minimum_track_age_s", "driveable_forward_m", "driveable_backward_m",
+        "driveable_lateral_m",
+    )
+    for key in numeric_nonnegative:
+        value = traffic_relations.get(key)
+        if not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f"traffic_relations: {key} must be non-negative")
+    if traffic_relations["same_lane_lateral_release_m"] < traffic_relations["same_lane_lateral_entry_m"]:
+        raise ValueError("traffic_relations: release lateral threshold must be >= entry")
+    if traffic_relations["minimum_same_lane_confidence"] > 1:
+        raise ValueError("traffic_relations: minimum_same_lane_confidence must be <= 1")
+    if not isinstance(traffic_relations.get("barrier_classes"), list):
+        raise ValueError("traffic_relations: barrier_classes must be a list")
+    numeric_interaction = (
+        "maximum_lead_gap_m", "slow_lead_entry_speed_mps",
+        "slow_lead_release_speed_mps", "slow_lead_entry_relative_speed_mps",
+        "slow_lead_release_relative_speed_mps", "minimum_duration_s",
+        "maximum_inactive_gap_s", "merge_gap_s",
+        "lane_change_object_minimum_duration_s", "stopping_moving_speed_mps",
+        "stopping_stopped_speed_mps", "stopping_transition_lookback_s",
+        "stationary_traffic_radius_m", "stationary_traffic_lateral_m",
+        "stationary_traffic_minimum_vehicle_count",
+        "stationary_traffic_minimum_duration_s", "behind_bike_maximum_gap_m",
+        "behind_pedestrian_maximum_gap_m", "pedestrian_corridor_lateral_m",
+        "pedestrian_conflict_lateral_m", "minimum_driveable_confidence",
+        "waiting_minimum_duration_s", "barrier_maximum_distance_m",
+        "barrier_minimum_intrusion_m", "barrier_minimum_duration_s",
+    )
+    for key in numeric_interaction:
+        value = traffic_interactions.get(key)
+        if not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f"traffic_interactions: {key} must be non-negative")
+    if traffic_interactions["slow_lead_release_speed_mps"] < traffic_interactions["slow_lead_entry_speed_mps"]:
+        raise ValueError("traffic_interactions: slow lead release speed must be >= entry speed")
+    if traffic_interactions["slow_lead_release_relative_speed_mps"] > traffic_interactions["slow_lead_entry_relative_speed_mps"]:
+        raise ValueError("traffic_interactions: slow lead relative release must be <= entry")
 
 def load_config(path: Path | str | None = None) -> dict[str, Any]:
     config_path = Path(path) if path is not None else DEFAULT_CONFIG_PATH
@@ -354,6 +427,7 @@ def detector_registry() -> tuple[ScenarioDetector, ...]:
         ObjectInteractionDetector(),
         PedestrianCrosswalkInteractionDetector(),
         ObjectPathCrossingDetector(),
+        TrafficInteractionDetector(),
     )
 
 def detect_events(
@@ -364,6 +438,7 @@ def detect_events(
     object_relations: dict[str, Any] | None = None,
     pedestrian_crosswalk_relations: dict[str, Any] | None = None,
     object_path_crossing_relations: dict[str, Any] | None = None,
+    traffic_relations: dict[str, Any] | None = None,
 ) -> tuple[list[ScenarioEvent], dict[str, Any]]:
     resolved = config or load_config(); validate_config(resolved); feature_config = resolved["feature_extraction"]
     features = extract_ego_motion_features(frames, max_sample_gap_s=feature_config["max_sample_gap_s"], heading_change_horizon_s=feature_config["heading_change_horizon_s"], jerk_mode=resolved["jerk"]["calculation_mode"])
@@ -394,6 +469,13 @@ def detect_events(
                     features,
                     resolved,
                     object_path_crossing_relations,
+                )
+            elif isinstance(detector, TrafficInteractionDetector):
+                detected = detector.detect(
+                    frames,
+                    features,
+                    resolved,
+                    traffic_relations,
                 )
             else:
                 detected = (
@@ -449,6 +531,14 @@ def detect_recording_events(
                     "ego_inside_topology_polygon",
                     "distance_to_topology_polygon_m",
                     "topology_confidence",
+                    "active_is_intersection",
+                    "active_topology_subtype",
+                    "active_topology_component",
+                    "component_geometry_confidence",
+                    "subtype_confidence",
+                    "intersection_evidence_score",
+                    "is_intersection_component",
+                    "topology_subtype",
                 )
                 if key in frame
             }
@@ -502,6 +592,52 @@ def detect_recording_events(
         resolved,
         object_path_crossing_payload,
     )
+    lane_change_events = [
+        event for event in events if event.scenario == "changing_lane"
+    ]
+    traffic_relation_payload = build_traffic_relations(
+        recording.get("frames", []),
+        extract_ego_motion_features(
+            recording.get("frames", []),
+            max_sample_gap_s=resolved["feature_extraction"]["max_sample_gap_s"],
+            heading_change_horizon_s=resolved["feature_extraction"][
+                "heading_change_horizon_s"
+            ],
+            jerk_mode=resolved["jerk"]["calculation_mode"],
+        ),
+        object_relation_payload,
+        resolved,
+        frame_context=frame_context,
+        lane_change_events=lane_change_events,
+        pedestrian_crosswalk_relations=pedestrian_crosswalk_payload,
+        object_path_crossing_relations=object_path_crossing_payload,
+    )
+    traffic_events, traffic_quality = detect_events(
+        recording.get("frames", []),
+        resolved,
+        frame_context=frame_context,
+        road_feature_relations=relations,
+        object_relations=object_relation_payload,
+        pedestrian_crosswalk_relations=pedestrian_crosswalk_payload,
+        object_path_crossing_relations=object_path_crossing_payload,
+        traffic_relations=traffic_relation_payload,
+    )
+    existing_keys = {
+        (event.scenario, event.start_frame, event.end_frame, event.evidence.get("physical_lane_change_event_id"))
+        for event in events
+    }
+    events.extend(
+        event
+        for event in traffic_events
+        if (
+            event.scenario,
+            event.start_frame,
+            event.end_frame,
+            event.evidence.get("physical_lane_change_event_id"),
+        )
+        not in existing_keys
+    )
+    events.sort(key=lambda event: (event.start_timestamp_s, event.scenario, event.end_timestamp_s))
     quality["object_path_crossing_relations"] = {
         **summarize_object_path_crossing_relations(
             object_path_crossing_payload
@@ -509,7 +645,29 @@ def detect_recording_events(
         "confirmed_event_count": len(crossing_events),
         "rejected_candidates": crossing_rejections,
     }
+    quality["traffic_relations"] = summarize_traffic_relations(
+        traffic_relation_payload
+    )
+    quality["traffic_detector_quality"] = traffic_quality
     return events, quality
+
+def detector_summary(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    resolved = config or load_config()
+    enabled = set(resolved["enabled_scenarios"])
+    supported = set(RULE_BASED_SCENARIOS)
+    return {
+        "implemented": sorted(supported),
+        "enabled": sorted(enabled),
+        "unsupported": [],
+        "explicitly_excluded": list(EXPLICITLY_EXCLUDED_SCENARIOS),
+        "registered_detectors": [
+            {
+                "name": detector.scenario_name,
+                "outputs": sorted(detector.output_scenarios),
+            }
+            for detector in detector_registry()
+        ],
+    }
 
 def events_overlapping_window(events: list[ScenarioEvent] | list[dict[str, Any]], start_frame: int, end_frame: int) -> list[dict[str, Any]]:
     result = []
@@ -519,7 +677,7 @@ def events_overlapping_window(events: list[ScenarioEvent] | list[dict[str, Any]]
     return result
 
 def compact_window_summary(events: list[dict[str, Any]], config_version: str) -> dict[str, Any]:
-    keys = ("start_speed_mps", "end_speed_mps", "trigger_speed_mps", "peak_abs_lateral_acceleration_mps2", "peak_jerk_mps3", "signed_heading_delta_rad", "peak_signed_yaw_rate_rad_s", "physical_turn_event_id", "physical_lane_change_event_id", "source_logical_lane_id", "target_logical_lane_id", "direction", "transition_frame", "road_feature_event_id", "crosswalk_id", "stopline_id", "entry_frame", "exit_confirmation_frame", "stationary_relation", "final_relation", "association_confidence", "object_interaction_event_id", "object_track_ids", "source_object_ids", "peak_simultaneous_count", "minimum_footprint_distance_m", "representative_frame", "peak_object_speed_mps", "velocity_sources", "object_class", "classification_reason", "pedestrian_crosswalk_event_id", "crosswalk_ids", "pedestrian_track_ids", "pedestrian_ids", "peak_pedestrian_count", "minimum_distance_m", "ego_crosswalk_relation", "pedestrian_crosswalk_relation", "object_path_crossing_event_id", "object_track_id", "original_class", "crossing_direction", "initial_side", "final_side", "approach_start_frame", "arc_entry_frame", "arc_exit_frame", "lateral_displacement_m", "minimum_path_distance_m", "representative_path_normal_speed_mps", "arc_dwell_duration_s", "directional_motion_fraction", "projected_intersection_confirmations", "projected_intersection_lcs_m", "intersection_path_progress_m", "crossing_angle_deg", "object_heading_lcs_rad", "heading_motion_difference_deg", "ego_time_to_intersection_s", "object_time_to_intersection_s", "time_to_intersection_difference_s")
+    keys = ("start_speed_mps", "end_speed_mps", "trigger_speed_mps", "peak_abs_lateral_acceleration_mps2", "peak_jerk_mps3", "signed_heading_delta_rad", "peak_signed_yaw_rate_rad_s", "physical_turn_event_id", "physical_lane_change_event_id", "source_logical_lane_id", "target_logical_lane_id", "direction", "transition_frame", "road_feature_event_id", "crosswalk_id", "stopline_id", "entry_frame", "exit_confirmation_frame", "stationary_relation", "final_relation", "association_confidence", "object_interaction_event_id", "object_track_ids", "source_object_ids", "peak_simultaneous_count", "minimum_footprint_distance_m", "representative_frame", "peak_object_speed_mps", "velocity_sources", "object_class", "classification_reason", "pedestrian_crosswalk_event_id", "crosswalk_ids", "pedestrian_track_ids", "pedestrian_ids", "peak_pedestrian_count", "minimum_distance_m", "ego_crosswalk_relation", "pedestrian_crosswalk_relation", "object_path_crossing_event_id", "object_track_id", "original_class", "crossing_direction", "initial_side", "final_side", "approach_start_frame", "arc_entry_frame", "arc_exit_frame", "lateral_displacement_m", "minimum_path_distance_m", "representative_path_normal_speed_mps", "arc_dwell_duration_s", "directional_motion_fraction", "projected_intersection_confirmations", "projected_intersection_lcs_m", "intersection_path_progress_m", "crossing_angle_deg", "object_heading_lcs_rad", "heading_motion_difference_deg", "ego_time_to_intersection_s", "object_time_to_intersection_s", "time_to_intersection_difference_s", "lead_object_id", "lead_source_object_ids", "lead_class", "lead_length_m", "lead_speed_mps", "lead_gap_m", "trail_object_id", "trail_source_object_ids", "trail_class", "trail_gap_m", "bike_object_id", "pedestrian_object_id", "relative_speed_mps", "time_headway_s", "ttc_s", "same_lane_confidence", "same_lane_source", "lane_change_direction", "target_lane_gap_m", "target_lane_association", "lead_persistence_frames", "lead_state", "ego_response", "relevant_vehicle_count", "nearby_vehicle_speed_min_mps", "nearby_vehicle_speed_max_mps", "stationary_duration_s", "driveable_area_confidence", "path_relation", "pedestrian_id", "crosswalk_relation", "path_conflict_geometry", "ego_response_onset_frame", "evidence_frames", "object_id", "object_subclass", "nearest_distance_m", "intrusion_m", "driveable_area_source")
     compact = [{"scenario": event["scenario"], "start_frame": event["start_frame"], "end_frame": event["end_frame"], "start_timestamp_s": event["start_timestamp_s"], "end_timestamp_s": event["end_timestamp_s"], "key_evidence": {key: event.get("evidence", {})[key] for key in keys if key in event.get("evidence", {})}} for event in events]
     return {"active_labels": sorted({event["scenario"] for event in events}), "events": compact, "rule_config_version": config_version}
 
@@ -554,16 +712,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Detect recording-level rule-based scenario events."
     )
-    parser.add_argument("canonical_json", type=Path)
+    parser.add_argument("canonical_json", type=Path, nargs="?")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--summary", action="store_true", help="Print detector support summary and exit.")
     parser.add_argument("--road-feature-debug-output", type=Path)
     parser.add_argument("--object-relation-debug-output", type=Path)
     parser.add_argument("--pedestrian-crosswalk-debug-output", type=Path)
     parser.add_argument("--object-path-crossing-debug-output", type=Path)
     args = parser.parse_args()
-    canonical = json.loads(args.canonical_json.read_text(encoding="utf-8"))
     config = load_config(args.config)
+    if args.summary:
+        print(json.dumps(detector_summary(config), ensure_ascii=False, indent=2))
+        return 0
+    if args.canonical_json is None:
+        parser.error("canonical_json is required unless --summary is used")
+    canonical = json.loads(args.canonical_json.read_text(encoding="utf-8"))
     events, quality = detect_recording_events(canonical, config)
     road_debug = None
     object_debug = None
