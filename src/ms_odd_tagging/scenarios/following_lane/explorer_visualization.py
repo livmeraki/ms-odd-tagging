@@ -387,10 +387,10 @@ def render_original_explorer_with_lane_tracker(
         "'LD line: intersection=true', '#d946ef', 'solid', 4.2, 0.82",
         "'LD line: intersection=true', '#d946ef', 'solid', 2.0, 0.82",
     )
-    original_output_dir_uri = base_explorer_path.parent.as_uri()
+    original_output_dir_uri = base_explorer_path.parent.resolve().as_uri()
     original_index_uri = (
         base_explorer_path.parent.parent / "dataset_odld_explorer_index.html"
-    ).as_uri()
+    ).resolve().as_uri()
     payload_json = json.dumps(
         _compact_payload(result),
         ensure_ascii=True,

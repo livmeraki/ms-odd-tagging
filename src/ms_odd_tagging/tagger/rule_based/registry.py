@@ -521,6 +521,7 @@ def detect_recording_events(
         for frame in recording.get("frames", [])
         if frame.get("frame_index") is not None
     }
+    topology_context_found = False
     if recording_frames_by_index:
         frame_context = frame_context or {}
         for frame_index, frame in recording_frames_by_index.items():
@@ -543,6 +544,17 @@ def detect_recording_events(
                 if key in frame
             }
             if topology:
+                topology_context_found = True
+                frame_context.setdefault(frame_index, {}).update(topology)
+    if recording.get("ld_feature_store") and not topology_context_found:
+        from ms_odd_tagging.ld_topology.pipeline import (
+            lane_geometry_roundabout_frame_context,
+        )
+
+        inferred_topology = lane_geometry_roundabout_frame_context(recording)
+        if inferred_topology:
+            frame_context = frame_context or {}
+            for frame_index, topology in inferred_topology.items():
                 frame_context.setdefault(frame_index, {}).update(topology)
     relations = build_road_feature_relations(
         recording, resolved["road_feature_relations"]

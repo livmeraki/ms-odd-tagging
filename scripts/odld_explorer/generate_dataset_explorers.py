@@ -298,7 +298,7 @@ classes.forEach(c => {{
   const opt = document.createElement('option');
   opt.value = c;
   opt.textContent = c;
-  opt.selected = ['car','pedestrian','bicycle','motorcycle','truck','bus','traffic_light_car','traffic_sign','obstacle_cone','obstacle_beacon','barrier_solid','barrier_fence'].includes(c);
+  opt.selected = true;
   filter.appendChild(opt);
 }});
 document.getElementById('classCounts').innerHTML = classes.map(c => `<div><b style="color:${{colorOf[c]}}">${{c}}</b>: ${{DATA.summary.classCounts[c]}}</div>`).join('');

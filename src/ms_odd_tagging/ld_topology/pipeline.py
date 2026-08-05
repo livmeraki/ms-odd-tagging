@@ -13,7 +13,9 @@ from .geometry import (
     acute_angle_delta,
     circle_polygon,
     distance,
+    finite_number,
     point_in_polygon,
+    polyline_length,
     polyline_distance,
     percentile,
     segment_circle_intersections,
@@ -933,6 +935,326 @@ def _angular_coverage(angles: list[float]) -> float:
     return 360.0 - max(gaps)
 
 
+def _solve_3x3(matrix: list[list[float]], values: list[float]) -> list[float] | None:
+    rows = [matrix[index][:] + [values[index]] for index in range(3)]
+    for col in range(3):
+        pivot = max(range(col, 3), key=lambda row: abs(rows[row][col]))
+        if abs(rows[pivot][col]) <= 1e-9:
+            return None
+        rows[col], rows[pivot] = rows[pivot], rows[col]
+        divisor = rows[col][col]
+        for item in range(col, 4):
+            rows[col][item] /= divisor
+        for row in range(3):
+            if row == col:
+                continue
+            factor = rows[row][col]
+            for item in range(col, 4):
+                rows[row][item] -= factor * rows[col][item]
+    return [rows[index][3] for index in range(3)]
+
+
+def _fit_circle(points: list[tuple[float, float]]) -> tuple[tuple[float, float], float] | None:
+    if len(points) < 6:
+        return None
+    matrix = [[0.0, 0.0, 0.0] for _ in range(3)]
+    values = [0.0, 0.0, 0.0]
+    for x, y in points:
+        row = [x, y, 1.0]
+        rhs = -(x * x + y * y)
+        for i in range(3):
+            values[i] += row[i] * rhs
+            for j in range(3):
+                matrix[i][j] += row[i] * row[j]
+    solution = _solve_3x3(matrix, values)
+    if solution is None:
+        return None
+    a, b, c = solution
+    center = (-a / 2.0, -b / 2.0)
+    radius_sq = center[0] * center[0] + center[1] * center[1] - c
+    if radius_sq <= 1e-9:
+        return None
+    return center, math.sqrt(radius_sq)
+
+
+def _lane_geometry_roundabout_metric(
+    lanes: list[LaneGeometry],
+    ego_point: tuple[float, float],
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    search_radius = float(config.get("lane_geometry_roundabout_search_radius_m", 35.0))
+    nearby = [
+        lane
+        for lane in lanes
+        if min(
+            polyline_distance(ego_point, lane.centerline),
+            min((distance(ego_point, point) for point in lane.polygon), default=math.inf),
+        )
+        <= search_radius
+    ]
+    if len(nearby) < int(config.get("lane_geometry_roundabout_min_lane_count", 1)):
+        return None
+    points = [point for lane in nearby for point in lane.centerline]
+    fit = _fit_circle(points)
+    if fit is None:
+        return None
+    center, radius = fit
+    total_length = sum(polyline_length(lane.centerline) for lane in nearby)
+    radii = [distance(center, point) for point in points]
+    mean_radius = sum(radii) / len(radii)
+    radial_spread = (max(radii) - min(radii)) / max(1.0, mean_radius)
+    angles = []
+    tangential_scores = []
+    directions = []
+    for lane in nearby:
+        for start, end in zip(lane.centerline, lane.centerline[1:]):
+            midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+            radius_angle = math.degrees(
+                math.atan2(midpoint[1] - center[1], midpoint[0] - center[0])
+            )
+            tangent = math.degrees(
+                math.atan2(end[1] - start[1], end[0] - start[0])
+            )
+            angles.append(radius_angle)
+            tangential_scores.append(
+                1.0 - abs(acute_angle_delta(tangent, radius_angle) - 90.0) / 90.0
+            )
+            cross = (midpoint[0] - center[0]) * (end[1] - start[1]) - (
+                midpoint[1] - center[1]
+            ) * (end[0] - start[0])
+            directions.append(1 if cross >= 0.0 else -1)
+    if not angles or not tangential_scores or not directions:
+        return None
+    coverage = _angular_coverage(angles)
+    tangent_score = sum(tangential_scores) / len(tangential_scores)
+    direction_consistency = abs(sum(directions)) / len(directions)
+    gates = {
+        "lane_count": len(nearby),
+        "total_centerline_length_m": round(total_length, 3),
+        "radius_m": round(radius, 3),
+        "angular_coverage_deg": round(coverage, 3),
+        "tangent_radial_score": round(tangent_score, 3),
+        "direction_consistency": round(direction_consistency, 3),
+        "radial_spread_ratio": round(radial_spread, 3),
+        "search_radius_m": search_radius,
+    }
+    passed = (
+        total_length + 1e-9
+        >= float(config.get("lane_geometry_roundabout_min_centerline_length_m", 30.0))
+        and radius + 1e-9
+        >= float(config.get("lane_geometry_roundabout_min_radius_m", 4.0))
+        and radius
+        <= float(config.get("lane_geometry_roundabout_max_radius_m", 35.0)) + 1e-9
+        and coverage + 1e-9
+        >= float(config.get("lane_geometry_roundabout_min_angular_coverage_deg", 300.0))
+        and tangent_score + 1e-9
+        >= float(config.get("lane_geometry_roundabout_min_tangent_radial_score", 0.35))
+        and direction_consistency + 1e-9
+        >= float(config.get("lane_geometry_roundabout_min_direction_consistency", 0.75))
+        and radial_spread
+        <= float(config.get("lane_geometry_roundabout_max_radial_spread_ratio", 2.25))
+    )
+    if not passed:
+        return None
+    confidence = min(
+        1.0,
+        0.25
+        + 0.25 * min(1.0, coverage / 360.0)
+        + 0.20 * tangent_score
+        + 0.20 * direction_consistency
+        + 0.10 * min(1.0, total_length / 120.0),
+    )
+    return {
+        **gates,
+        "center_lcs_m": [round(center[0], 3), round(center[1], 3)],
+        "confidence": round(confidence, 4),
+        "lane_ids": [lane.lane_id for lane in nearby],
+        "source": "lane_detection_aggregate_donut_geometry",
+    }
+
+
+def _ordered_point_ids(feature: dict[str, Any]) -> list[str]:
+    elements = feature.get("elements") or []
+    if elements:
+        return [
+            str(item["point_id"])
+            for item in sorted(elements, key=lambda item: item.get("order", 0))
+        ]
+    return [str(point_id) for point_id in feature.get("point_ids", [])]
+
+
+def _roundabout_metric_from_polylines(
+    polylines: list[tuple[str, tuple[tuple[float, float], ...]]],
+    config: dict[str, Any],
+    prefix: str,
+) -> dict[str, Any] | None:
+    points = [point for _line_id, polyline in polylines for point in polyline]
+    fit = _fit_circle(points)
+    if fit is None:
+        return None
+    center, radius = fit
+    radii = [distance(center, point) for point in points]
+    mean_radius = sum(radii) / len(radii)
+    radial_spread = (max(radii) - min(radii)) / max(1.0, mean_radius)
+    angles = []
+    tangential_scores = []
+    directions = []
+    total_length = 0.0
+    for _line_id, polyline in polylines:
+        for start, end in zip(polyline, polyline[1:]):
+            midpoint = ((start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0)
+            radius_angle = math.degrees(
+                math.atan2(midpoint[1] - center[1], midpoint[0] - center[0])
+            )
+            tangent = math.degrees(
+                math.atan2(end[1] - start[1], end[0] - start[0])
+            )
+            angles.append(radius_angle)
+            tangential_scores.append(
+                1.0 - abs(acute_angle_delta(tangent, radius_angle) - 90.0) / 90.0
+            )
+            cross = (midpoint[0] - center[0]) * (end[1] - start[1]) - (
+                midpoint[1] - center[1]
+            ) * (end[0] - start[0])
+            directions.append(1 if cross >= 0.0 else -1)
+            total_length += distance(start, end)
+    if not angles or not tangential_scores or not directions:
+        return None
+    coverage = _angular_coverage(angles)
+    tangent_score = sum(tangential_scores) / len(tangential_scores)
+    direction_consistency = abs(sum(directions)) / len(directions)
+    passed = (
+        len(polylines) >= int(config.get(f"{prefix}_min_line_count", 4))
+        and total_length + 1e-9 >= float(config.get(f"{prefix}_min_length_m", 60.0))
+        and radius + 1e-9 >= float(config.get(f"{prefix}_min_radius_m", 5.0))
+        and radius <= float(config.get(f"{prefix}_max_radius_m", 35.0)) + 1e-9
+        and coverage + 1e-9
+        >= float(config.get(f"{prefix}_min_angular_coverage_deg", 240.0))
+        and tangent_score + 1e-9
+        >= float(config.get(f"{prefix}_min_tangent_radial_score", 0.60))
+        and direction_consistency + 1e-9
+        >= float(config.get(f"{prefix}_min_direction_consistency", 0.85))
+        and radial_spread
+        <= float(config.get(f"{prefix}_max_radial_spread_ratio", 1.75))
+    )
+    if not passed:
+        return None
+    confidence = min(
+        1.0,
+        0.25
+        + 0.25 * min(1.0, coverage / 360.0)
+        + 0.20 * tangent_score
+        + 0.20 * direction_consistency
+        + 0.10 * min(1.0, total_length / 120.0),
+    )
+    return {
+        "line_count": len(polylines),
+        "total_line_length_m": round(total_length, 3),
+        "radius_m": round(radius, 3),
+        "angular_coverage_deg": round(coverage, 3),
+        "tangent_radial_score": round(tangent_score, 3),
+        "direction_consistency": round(direction_consistency, 3),
+        "radial_spread_ratio": round(radial_spread, 3),
+        "center_lcs_m": [round(center[0], 3), round(center[1], 3)],
+        "confidence": round(confidence, 4),
+        "line_ids": [line_id for line_id, _polyline in polylines],
+        "source": "raw_intersection_lane_line_donut_geometry",
+    }
+
+
+def _raw_lane_line_roundabout_metric(
+    recording: dict[str, Any],
+    ego_point: tuple[float, float],
+    config: dict[str, Any],
+) -> dict[str, Any] | None:
+    store = recording.get("ld_feature_store") or {}
+    point_index = {
+        str(point.get("point_id")): (
+            float((point.get("position_lcs_m") or [])[0]),
+            float((point.get("position_lcs_m") or [])[1]),
+        )
+        for point in store.get("points", [])
+        if len(point.get("position_lcs_m") or []) >= 2
+        and finite_number((point.get("position_lcs_m") or [])[0])
+        and finite_number((point.get("position_lcs_m") or [])[1])
+    }
+    search_radius = float(config.get("raw_lane_line_roundabout_search_radius_m", 45.0))
+    polylines: list[tuple[str, tuple[tuple[float, float], ...]]] = []
+    for feature in store.get("lane_lines", []):
+        attrs = feature.get("attributes") or {}
+        if attrs.get("intersection") is not True:
+            continue
+        points = tuple(
+            point_index[point_id]
+            for point_id in _ordered_point_ids(feature)
+            if point_id in point_index
+        )
+        if len(points) < 2:
+            continue
+        if polyline_distance(ego_point, points) > search_radius:
+            continue
+        polylines.append((str(feature.get("line_id")), points))
+    metric = _roundabout_metric_from_polylines(
+        polylines, config, "raw_lane_line_roundabout"
+    )
+    if metric is not None:
+        metric["search_radius_m"] = search_radius
+    return metric
+
+
+def lane_geometry_roundabout_frame_context(
+    recording: dict[str, Any],
+    config: dict[str, Any] | None = None,
+) -> dict[int, dict[str, Any]]:
+    config = load_config(
+        Path("configs/ld_topology.json")
+        if config is None and Path("configs/ld_topology.json").is_file()
+        else None,
+        overrides=config,
+    )
+    if not bool(config.get("enable_lane_geometry_roundabout_inference", True)):
+        return {}
+    lanes, _parse_meta = parse_scene(recording, config)
+    output: dict[int, dict[str, Any]] = {}
+    for frame in recording.get("frames", []):
+        frame_index = frame.get("frame_index")
+        ego = frame.get("ego") or {}
+        pos = ego.get("position_lcs_m") or []
+        if frame_index is None or len(pos) < 2:
+            continue
+        point = (float(pos[0]), float(pos[1]))
+        metric = _raw_lane_line_roundabout_metric(recording, point, config)
+        if metric is None:
+            metric = _lane_geometry_roundabout_metric(lanes, point, config)
+        if metric is None:
+            continue
+        component_id = f"lane_geometry_roundabout_{int(frame_index):06d}"
+        output[int(frame_index)] = {
+            "topology_class": "roundabout",
+            "topology_subtype": "roundabout",
+            "topology_confidence": metric["confidence"],
+            "topology_component_id": component_id,
+            "active_topology_component": component_id,
+            "active_is_intersection": True,
+            "active_topology_subtype": "roundabout",
+            "component_geometry_confidence": metric["confidence"],
+            "subtype_confidence": metric["confidence"],
+            "intersection_evidence_score": 0.0,
+            "is_intersection_component": True,
+            "intersection_geometry_source": "lane_detection_aggregate_donut_geometry",
+            "ego_inside_topology_polygon": True,
+            "distance_to_topology_polygon_m": 0.0,
+            "arm_count": 0,
+            "arm_angles_deg": [],
+            "opposite_pairs": [],
+            "circularity_score": metric["confidence"],
+            "internal_ambiguous_state": None,
+            "decision_reason": "roundabout inferred from aggregate lane-detection donut geometry",
+            "lane_geometry_roundabout": metric,
+        }
+    return output
+
+
 def classify_component(lanes: list[LaneGeometry], component: Component, arms: list[Arm], config: dict[str, Any]) -> dict[str, Any]:
     angles = [arm.angle_deg for arm in arms]
     opposite = _opposite_arm_pairs(arms, config)
@@ -1117,6 +1439,7 @@ def classify_scene(recording: dict[str, Any], config: dict[str, Any] | None = No
 def classify_recording(recording: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
     config = load_config(overrides=config)
     scene = classify_scene(recording, config)
+    inferred_roundabouts = lane_geometry_roundabout_frame_context(recording, config)
     frames = []
     previous_component_id = None
     for frame in recording.get("frames", []):
@@ -1124,6 +1447,13 @@ def classify_recording(recording: dict[str, Any], config: dict[str, Any] | None 
         pos = ego.get("position_lcs_m") or []
         point = (float(pos[0]), float(pos[1])) if len(pos) >= 2 else (math.inf, math.inf)
         best = _match_component(point, scene["components"], config, previous_component_id)
+        inferred = inferred_roundabouts.get(frame.get("frame_index"))
+        best_class = best.get("topology_class", "normal")
+        if inferred and (
+            not best.get("active_is_intersection", False)
+            or best_class in {"normal", "intersection_unknown"}
+        ):
+            best = inferred
         previous_component_id = best["topology_component_id"] if best["ego_inside_topology_polygon"] else None
         frames.append(
             {
@@ -1132,7 +1462,15 @@ def classify_recording(recording: dict[str, Any], config: dict[str, Any] | None 
                 **best,
             }
         )
-    return {**scene, "frames": frames}
+    return {
+        **scene,
+        "frames": frames,
+        "lane_geometry_roundabout_inference": {
+            "enabled": bool(config.get("enable_lane_geometry_roundabout_inference", True)),
+            "active_frame_count": len(inferred_roundabouts),
+            "source": "lane_detection_aggregate_donut_geometry",
+        },
+    }
 
 
 def _match_component(point: tuple[float, float], components: list[dict[str, Any]], config: dict[str, Any], previous_component_id: str | None) -> dict[str, Any]:

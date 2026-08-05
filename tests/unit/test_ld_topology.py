@@ -244,6 +244,38 @@ def test_roundabout_with_four_approaches():
     assert frame["arm_count"] >= 4
 
 
+def test_lane_detection_donut_without_intersection_marking_infers_roundabout():
+    circle_left, circle_right = [], []
+    for i in range(33):
+        a = 2 * math.pi * i / 32
+        circle_left.append((8 * math.cos(a), 8 * math.sin(a)))
+        circle_right.append((4 * math.cos(a), 4 * math.sin(a)))
+    ring = {
+        "left": circle_left,
+        "right": circle_right,
+        "left_i": False,
+        "right_i": False,
+    }
+    frame, result = _class_for([ring], [_frame(0, 6, 0)])
+    assert frame["topology_class"] == "roundabout"
+    assert frame["active_is_intersection"] is True
+    assert frame["intersection_geometry_source"] == "lane_detection_aggregate_donut_geometry"
+    assert frame["lane_geometry_roundabout"]["angular_coverage_deg"] >= 300.0
+    assert result["lane_geometry_roundabout_inference"]["active_frame_count"] == 1
+
+
+def test_open_curved_lane_without_donut_coverage_stays_normal():
+    curved = {
+        "left": [(-20, -2), (-8, 5), (0, 8), (8, 5), (20, -2)],
+        "right": [(-20, -6), (-8, 1), (0, 4), (8, 1), (20, -6)],
+        "left_i": False,
+        "right_i": False,
+    }
+    frame, result = _class_for([curved], [_frame(0, 0, 4)])
+    assert frame["topology_class"] == "normal"
+    assert result["lane_geometry_roundabout_inference"]["active_frame_count"] == 0
+
+
 def test_partial_intersection_marking_on_one_boundary_counts():
     spec = _lane((-30, 0), (30, 0), left_i=True, right_i=False, right_kind="road_boundary")
     scene = classify_scene(_recording([spec]))

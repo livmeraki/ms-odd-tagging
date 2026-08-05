@@ -348,6 +348,7 @@ TOPOLOGY_FRAME_FIELDS = (
     "active_topology_component",
     "active_is_intersection",
     "active_topology_subtype",
+    "lane_geometry_roundabout",
 )
 
 
@@ -443,6 +444,8 @@ def build_ld_topology_payload(topology: dict) -> dict:
                     "distance_to_topology_polygon_m"
                 ),
                 "decisionReason": frame.get("decision_reason"),
+                "intersectionGeometrySource": frame.get("intersection_geometry_source"),
+                "laneGeometryRoundabout": frame.get("lane_geometry_roundabout"),
             }
             for frame in frames
         ],
@@ -914,6 +917,8 @@ def build_ld_payload(canonical: dict) -> dict:
         "egoInsideTopologyPolygon": [],
         "distanceToTopologyPolygonM": [],
         "topologyComponentId": [],
+        "intersectionGeometrySource": [],
+        "laneGeometryRoundabout": [],
     }
     for frame in canonical["frames"]:
         identifiers = frame["ld"]["nearby_feature_ids"]
@@ -973,6 +978,12 @@ def build_ld_payload(canonical: dict) -> dict:
         )
         frame_context["topologyComponentId"].append(
             frame.get("topology_component_id")
+        )
+        frame_context["intersectionGeometrySource"].append(
+            frame.get("intersection_geometry_source")
+        )
+        frame_context["laneGeometryRoundabout"].append(
+            frame.get("lane_geometry_roundabout")
         )
 
     return {
@@ -2184,6 +2195,16 @@ function attachFeatureDebugHandler() {
 
 function formatDistance(value) { return value == null ? 'n/a' : `${Number(value).toFixed(2)} m`; }
 
+function formatRoundaboutMetric(metric) {
+  if (!metric) return 'roundabout evidence: none';
+  const source = metric.source || 'unknown source';
+  const radius = metric.radius_m == null ? 'n/a' : `${Number(metric.radius_m).toFixed(1)} m radius`;
+  const coverage = metric.angular_coverage_deg == null ? 'n/a' : `${Number(metric.angular_coverage_deg).toFixed(0)} deg coverage`;
+  const tangent = metric.tangent_radial_score == null ? 'n/a' : `tangent ${Number(metric.tangent_radial_score).toFixed(2)}`;
+  const count = metric.line_count ?? metric.lane_count ?? 'n/a';
+  return `roundabout evidence: ${source} · ${count} lines/lanes · ${radius} · ${coverage} · ${tangent}`;
+}
+
 function updateLdContext() {
   const i = currentIndex;
   const invalid = ld.summary.invalidLaneEndpointOrders;
@@ -2200,6 +2221,7 @@ function updateLdContext() {
     : null;
   const externalCorridors = topologyComponent ? topologyComponent.externalCorridorCandidateCount || 0 : 0;
   const physicalArms = topologyComponent ? topologyComponent.physicalArmCandidateCount || 0 : 0;
+  const roundaboutMetric = ldFrames.laneGeometryRoundabout ? ldFrames.laneGeometryRoundabout[i] : null;
   document.getElementById('ldContext').innerHTML =
     `<b>Frame ${i} LD context</b><br>` +
     `nearby: ${ldFrames.lineCount[i]} lines · ${ldFrames.laneCount[i]} lanes · ${ldFrames.boundaryCount[i]} boundaries · ${ldFrames.topologyCount[i]} topologies · ${ldFrames.roadmarkCount[i]} roadmarks<br>` +
@@ -2207,6 +2229,7 @@ function updateLdContext() {
     `detected topology: ${topologyClass} · subtype ${topologySubtype} · ${activeIntersection}<br>` +
     `external corridors considered: ${externalCorridors} · physical arm candidates: ${physicalArms}<br>` +
     `topology confidence: subtype ${topologyConfidence} · geometry ${topologyGeometryConfidence} · ${topologyInside} polygon · distance ${topologyDistance}<br>` +
+    `${formatRoundaboutMetric(roundaboutMetric)}<br>` +
     `nearest: line ${formatDistance(ldFrames.nearestLineM[i])} · boundary ${formatDistance(ldFrames.nearestBoundaryM[i])} · roadmark ${formatDistance(ldFrames.nearestRoadmarkM[i])}<br>` +
     `OD: lead ${ldFrames.leadObjectId[i] ?? 'none'} · motional within 30m ${ldFrames.nearbyMotionalCount[i]}<br>` +
     `source quality: ${invalid} invalid lane endpoint-order reference${invalid === 1 ? '' : 's'}`;
