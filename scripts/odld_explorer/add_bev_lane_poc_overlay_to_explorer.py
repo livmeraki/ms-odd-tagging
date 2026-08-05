@@ -117,7 +117,9 @@ function addBevLanePocTraces(traces) {{
     const candidateCount = (frame.candidate_lanes || []).length;
     const duplicateCount = (frame.rejections?.duplicates || []).length;
     const extensionCount = (frame.lane_extension?.boundaries || []).filter(item => item.extended).length;
-    status.textContent = `frame ${{frame.frame_index}} | ${{frame.status}} | source=${{frame.matching_source || 'unknown'}} | extended=${{extensionCount}} | candidates=${{candidateCount}} | duplicate rejects=${{duplicateCount}} | ego=${{frame.ego_lane?.lane_id || 'none'}}`;
+    const quality = frame.assignment_quality || frame.ego_lane?.assignment_quality || {{}};
+    const reasons = (quality.reasons || []).join(',') || 'none';
+    status.textContent = `frame ${{frame.frame_index}} | ${{frame.status}}/${{quality.state || 'unknown'}} | conf=${{Number(quality.confidence || 0).toFixed(2)}} | source=${{frame.matching_source || 'unknown'}} | extended=${{extensionCount}} | candidates=${{candidateCount}} | duplicate rejects=${{duplicateCount}} | ego=${{frame.ego_lane?.lane_id || 'none'}} | stable=${{frame.ego_lane?.stable_key || 'none'}} | reasons=${{reasons}}`;
   }}
 }}
 """

@@ -1,0 +1,13 @@
+Scenario: waiting_for_pedestrian_to_cross
+Definition: Ego is stopped or moving slowly because a pedestrian is crossing, entering, or clearly intending to enter ego's expected path.
+Do not tag based only on pedestrian proximity or ego stopping.
+Require a plausible pedestrian-ego path conflict and temporal ego response.
+Evaluate only this scenario for the supplied window.
+
+Return JSON with:
+recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
+event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
+ambiguities, insufficient_evidence, review_required.
+
+For a positive decision, at least one pedestrian object ID must be in primary_object_ids.
+

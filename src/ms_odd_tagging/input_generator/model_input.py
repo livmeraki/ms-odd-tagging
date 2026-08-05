@@ -1261,10 +1261,10 @@ def parse_args():
     )
     parser.add_argument(
         "--ld-boundary-attributes",
-        default="",
+        default="drivable,non_drivable",
         help=(
             "Comma-separated LD road-boundary attributes to render. "
-            "Default is empty, so drivable/non_drivable boundaries are hidden."
+            "Default renders drivable and non_drivable boundaries."
         ),
     )
     parser.add_argument(

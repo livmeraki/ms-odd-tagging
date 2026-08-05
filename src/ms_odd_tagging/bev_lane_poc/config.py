@@ -35,6 +35,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "resample_count": 20,
     "exclude_virtual_lane_lines": True,
     "include_drivable_road_boundaries": True,
+    "include_non_drivable_road_boundaries": True,
+    "enable_single_boundary_lane_candidates": True,
+    "single_boundary_nominal_lane_width_m": 3.5,
+    "single_boundary_minimum_length_m": 8.0,
+    "single_boundary_max_abs_lateral_at_ego_m": 5.5,
+    "single_boundary_max_ego_station_gap_m": 12.0,
+    "single_boundary_max_station_lateral_drift_m": 1.5,
+    "single_boundary_pair_score": 0.42,
     "deduplicate_centerline_distance_m": 0.75,
     "deduplicate_lateral_distance_m": 0.9,
     "minimum_adjacent_lateral_offset_m": 1.5,
@@ -49,6 +57,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "lane_extension_allow_curvature": True,
     "lane_extension_max_heading_change_deg": 30.0,
     "lane_extension_max_lateral_drift_m": 3.0,
+    "minimum_assignment_confidence": 0.35,
+    "minimum_assignment_forward_coverage_m": 8.0,
+    "minimum_assignment_backward_coverage_m": 0.0,
+    "maximum_assignment_abs_center_lateral_m": 2.8,
+    "minimum_assignment_width_at_ego_m": 2.2,
+    "maximum_assignment_width_at_ego_m": 5.4,
+    "minimum_stable_run_duration_s": 0.6,
 }
 
 

@@ -1,0 +1,11 @@
+Scenario: on_intersection
+Definition: Ego is spatially inside the effective intersection footprint where road corridors connect and lane structure opens, crosses, or branches.
+Do not tag an approach road, normal curve, simple merge/split, or an exited intersection.
+Existing topology output is supporting evidence only.
+Evaluate only this scenario for the supplied window.
+
+Return JSON with:
+recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
+event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
+ambiguities, insufficient_evidence, review_required.
+

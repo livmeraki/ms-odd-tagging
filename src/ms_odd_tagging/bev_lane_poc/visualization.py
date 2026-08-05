@@ -32,9 +32,8 @@ function draw(){const f=frames[+slider.value];ctx.clearRect(0,0,canvas.width,can
 const selected=new Set([f.ego_lane.lane_id,f.left_adjacent.lane_id,f.right_adjacent.lane_id]);for(const lane of f.candidate_lanes||[]){if(!selected.has(lane.lane_id))polygon(lane.polygon_bev_m,f,css('--candidate'),.07,1)}
 polygon(f.left_adjacent.polygon_bev_m,f,css('--left'),.18,2);polygon(f.right_adjacent.polygon_bev_m,f,css('--right'),.18,2);polygon(f.ego_lane.polygon_bev_m,f,css('--ego'),.42,5);
 const q=screen([0,0],f);ctx.fillStyle=css('--ego');ctx.beginPath();ctx.moveTo(q[0],q[1]-15);ctx.lineTo(q[0]-10,q[1]+11);ctx.lineTo(q[0]+10,q[1]+11);ctx.closePath();ctx.fill();
-document.getElementById('label').textContent=f.frame_index;document.getElementById('left').textContent=JSON.stringify(f.left_adjacent,null,2);document.getElementById('ego').textContent=JSON.stringify(f.ego_lane,null,2);document.getElementById('right').textContent=JSON.stringify(f.right_adjacent,null,2);document.getElementById('debug').textContent=JSON.stringify({status:f.status,matching:f.matching,adjacency:f.adjacency,rejections:f.rejections},null,2)}
+document.getElementById('label').textContent=f.frame_index;document.getElementById('left').textContent=JSON.stringify(f.left_adjacent,null,2);document.getElementById('ego').textContent=JSON.stringify(f.ego_lane,null,2);document.getElementById('right').textContent=JSON.stringify(f.right_adjacent,null,2);document.getElementById('debug').textContent=JSON.stringify({status:f.status,assignment_quality:f.assignment_quality,matching:f.matching,adjacency:f.adjacency,rejections:f.rejections,assignment_summary:data.assignment_summary},null,2)}
 slider.oninput=draw;document.getElementById('prev').onclick=()=>{slider.value=Math.max(0,+slider.value-1);draw()};document.getElementById('next').onclick=()=>{slider.value=Math.min(frames.length-1,+slider.value+1);draw()};if(frames.length)draw();
 </script></main></body></html>""".replace("__PAYLOAD__", payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")
-

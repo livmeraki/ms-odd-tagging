@@ -473,7 +473,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forward-m", type=float, default=95.0)
     parser.add_argument("--ld-line-patterns", default="solid,dashed")
     parser.add_argument("--ld-roadmark-classes", default="crosswalk,stopline")
-    parser.add_argument("--ld-boundary-attributes", default="")
+    parser.add_argument("--ld-boundary-attributes", default="drivable,non_drivable")
     parser.add_argument(
         "--profile-generation",
         action="store_true",
