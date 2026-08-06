@@ -33,6 +33,7 @@ DEFAULT_OUTPUT_DIR = OUTPUT_ROOT / "07_odld_scenario_explorers_gt_authoring_all_
 
 def recording_from_source(path: Path) -> str:
     for suffix in (
+        "_animated_odld_explorer_w_gt_authoring.html",
         "_following_lane_explorer.html",
         "_animated_odld_explorer.html",
     ):
@@ -92,15 +93,16 @@ def main() -> int:
     args = parser.parse_args()
 
     requested = set(args.recordings)
-    source_paths = sorted(args.source_dir.glob("*_following_lane_explorer.html"))
-    if not source_paths:
-        source_paths = sorted(
+    all_source_paths = sorted(args.source_dir.glob("*_following_lane_explorer.html"))
+    if not all_source_paths:
+        all_source_paths = sorted(
             args.source_dir.glob("*_animated_odld_explorer.html")
         )
+    source_paths = all_source_paths
     if requested:
         source_paths = [
             path
-            for path in source_paths
+            for path in all_source_paths
             if recording_from_source(path) in requested
         ]
     if not source_paths:
@@ -108,7 +110,7 @@ def main() -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     source_rows = source_manifest_rows(args.source_dir)
-    records = []
+    records_by_recording = {}
     for source in source_paths:
         recording = recording_from_source(source)
         gt_path = args.gt_dir / f"{recording}_frame_gt.json"
@@ -134,7 +136,45 @@ def main() -> int:
             print(f"Wrote {output}")
         row = index_row_for_authoring(source, output_name, source_rows)
         row["reviewFrames"] = len(payload["review_frames"])
-        records.append(row)
+        records_by_recording[recording] = row
+
+    for source in all_source_paths:
+        recording = recording_from_source(source)
+        if recording in records_by_recording:
+            continue
+        output_name = f"{recording}_animated_odld_explorer_w_gt_authoring.html"
+        if not (args.output_dir / output_name).is_file():
+            continue
+        row = index_row_for_authoring(source, output_name, source_rows)
+        gt_path = args.gt_dir / f"{recording}_frame_gt.json"
+        payload = build_review_payload(
+            args.frame_input_root,
+            recording,
+            gt_path if gt_path.is_file() else None,
+        )
+        row["reviewFrames"] = len(payload["review_frames"])
+        records_by_recording[recording] = row
+
+    for output in sorted(
+        args.output_dir.glob("*_animated_odld_explorer_w_gt_authoring.html")
+    ):
+        recording = recording_from_source(output)
+        if recording in records_by_recording:
+            continue
+        row = row_from_explorer(output)
+        gt_path = args.gt_dir / f"{recording}_frame_gt.json"
+        payload = build_review_payload(
+            args.frame_input_root,
+            recording,
+            gt_path if gt_path.is_file() else None,
+        )
+        row["reviewFrames"] = len(payload["review_frames"])
+        records_by_recording[recording] = row
+
+    records = [
+        records_by_recording[recording]
+        for recording in sorted(records_by_recording)
+    ]
 
     index = args.output_dir / "index.html"
     index.write_text(odld_index_html(records), encoding="utf-8")

@@ -18,5 +18,10 @@
   "dashed_drivable_boundary_score_bonus": 0.75,
   "same_logical_lane_score_bonus": 0.9,
   "minimum_recovered_boundary_overlap_m": 3.0,
+  "lane_continuation_maximum_gap_m": 15.0,
+  "lane_continuation_maximum_lateral_error_m": 1.25,
+  "lane_continuation_maximum_heading_difference_deg": 18.0,
+  "lane_continuation_maximum_curvature_difference_per_m": 0.08,
+  "lane_continuation_maximum_lane_width_difference_m": 0.9,
   "maximum_observed_route_upstream_gap_m": 25.0
 }

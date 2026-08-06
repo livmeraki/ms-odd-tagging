@@ -102,6 +102,102 @@ def test_gt_authoring_index_uses_odld_card_filter_layout(tmp_path: Path) -> None
     assert f"{recording}_animated_odld_explorer_w_gt_authoring.html" in page
 
 
+def test_gt_authoring_selective_regeneration_keeps_full_existing_index(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source_dir = tmp_path / "source"
+    output_dir = tmp_path / "output"
+    frame_root = tmp_path / "frames"
+    gt_dir = tmp_path / "gt"
+    source_dir.mkdir()
+    output_dir.mkdir()
+    frame_root.mkdir()
+    gt_dir.mkdir()
+    recordings = ["Rec_A", "Rec_B", "Rec_C"]
+    rows = []
+    for index, recording in enumerate(recordings):
+        source = source_dir / f"{recording}_animated_odld_explorer.html"
+        source.write_text("<html></html>", encoding="utf-8")
+        output = output_dir / f"{recording}_animated_odld_explorer_w_gt_authoring.html"
+        output.write_text(f"old {recording}", encoding="utf-8")
+        rows.append(
+            {
+                "recording": recording,
+                "file": source.name,
+                "frames": 3,
+                "duration": 0.2,
+                "objects": 0,
+                "lines": index,
+                "boundaries": index,
+                "roadmarks": index,
+                "tagScenarios": 1,
+                "tagEvents": 1,
+                "tagScenarioList": ["stationary"],
+                "topClasses": "none",
+                "thumbnail": "<svg></svg>",
+            }
+        )
+    (source_dir / "manifest.json").write_text(
+        json.dumps({"recordings": rows}),
+        encoding="utf-8",
+    )
+    orphan = "Rec_Orphan"
+    orphan_output = output_dir / f"{orphan}_animated_odld_explorer_w_gt_authoring.html"
+    orphan_payload = minimal_explorer_data()
+    orphan_payload["summary"]["recording"] = orphan
+    orphan_payload["ld"]["summary"] = {
+        "laneLines": 1,
+        "roadBoundaries": 2,
+        "roadmarks": 3,
+    }
+    orphan_output.write_text(
+        f"<html><script>const DATA = {json.dumps(orphan_payload)}; const GT_AUTHORING = {{}};</script></html>",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        gt_authoring_explorer,
+        "build_review_payload",
+        lambda *_args, **_kwargs: {"review_frames": [1, 2]},
+    )
+    monkeypatch.setattr(
+        gt_authoring_explorer,
+        "inject_authoring",
+        lambda page, recording, payload, source_dir_arg: f"new {recording}",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "add_gt_authoring_to_tagged_explorers.py",
+            "--source-dir",
+            str(source_dir),
+            "--output-dir",
+            str(output_dir),
+            "--frame-input-root",
+            str(frame_root),
+            "--gt-dir",
+            str(gt_dir),
+            "--regenerate-existing",
+            "Rec_B",
+        ],
+    )
+
+    assert gt_authoring_explorer.main() == 0
+
+    index = (output_dir / "index.html").read_text(encoding="utf-8")
+    assert all(
+        f"{recording}_animated_odld_explorer_w_gt_authoring.html" in index
+        for recording in [*recordings, orphan]
+    )
+    assert (output_dir / "Rec_B_animated_odld_explorer_w_gt_authoring.html").read_text(
+        encoding="utf-8"
+    ) == "new Rec_B"
+    assert (output_dir / "Rec_A_animated_odld_explorer_w_gt_authoring.html").read_text(
+        encoding="utf-8"
+    ) == "old Rec_A"
+
+
 def test_lanelet2_poc_overlay_duplicates_odld_explorer_controls_and_traces() -> None:
     page = base_explorer.scene_html(minimal_explorer_data())
     result = {

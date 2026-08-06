@@ -211,6 +211,335 @@ def test_explicit_non_drivable_boundary_excludes_lane_assignment():
     assert assignment["lane_id"] is None
 
 
+def test_abnormally_wide_exact_lane_polygon_is_rejected():
+    recording = synthetic_recording()
+    ego_right = next(
+        line for line in recording["ld_feature_store"]["lane_lines"]
+        if line["line_id"] == "ego-right"
+    )
+    for element in ego_right["elements"]:
+        point = next(
+            point
+            for point in recording["ld_feature_store"]["points"]
+            if point["point_id"] == element["point_id"]
+        )
+        point["position_lcs_m"][1] = -6.5
+
+    lanes, _ = build_lane_geometries(recording)
+    assignment = assign_point_to_lane((10.0, 0.0), 0.0, ["ego"], lanes)
+
+    assert lanes["ego"].assignment_valid is False
+    assert lanes["ego"].invalid_reason == "implausible_lane_width"
+    assert assignment["lane_id"] is None
+
+
+def test_short_referenced_range_expands_to_valid_long_full_edges():
+    recording = synthetic_recording()
+    for line in recording["ld_feature_store"]["lane_lines"]:
+        if line["line_id"] in {"ego-left", "ego-right"}:
+            lateral = 2.0 if line["line_id"] == "ego-left" else -2.0
+            line["elements"] = []
+            for index, x in enumerate((0.0, 5.0, 15.0, 24.0)):
+                point_id = f"{line['line_id']}-long-{index}"
+                recording["ld_feature_store"]["points"].append(
+                    {"point_id": point_id, "position_lcs_m": [x, lateral, 0.0]}
+                )
+                line["elements"].append({"point_id": point_id, "order": index})
+    ego_lane = next(
+        lane for lane in recording["ld_feature_store"]["lanes"]
+        if lane["lane_id"] == "ego"
+    )
+    ego_lane["boundaries"]["left"].update({"start_order": 0, "end_order": 1})
+    ego_lane["boundaries"]["right"].update({"start_order": 0, "end_order": 1})
+
+    lanes, _ = build_lane_geometries(recording)
+
+    assert lanes["ego"].assignment_valid is True
+    assert lanes["ego"].recovery_method == "validated_full_edge_range_expansion"
+    assert max(point[0] for point in lanes["ego"].centerline) == 24.0
+    assert lanes["ego"].recovery_evidence["left_forward_extension_m"] >= 18.0
+
+
+def test_genuinely_short_full_edges_remain_short():
+    recording = synthetic_recording()
+    for line in recording["ld_feature_store"]["lane_lines"]:
+        if line["line_id"] in {"ego-left", "ego-right"}:
+            lateral = 2.0 if line["line_id"] == "ego-left" else -2.0
+            line["elements"] = []
+            for index, x in enumerate((0.0, 5.0)):
+                point_id = f"{line['line_id']}-short-{index}"
+                recording["ld_feature_store"]["points"].append(
+                    {"point_id": point_id, "position_lcs_m": [x, lateral, 0.0]}
+                )
+                line["elements"].append({"point_id": point_id, "order": index})
+    ego_lane = next(
+        lane for lane in recording["ld_feature_store"]["lanes"]
+        if lane["lane_id"] == "ego"
+    )
+    ego_lane["boundaries"]["left"].update({"start_order": 0, "end_order": 1})
+    ego_lane["boundaries"]["right"].update({"start_order": 0, "end_order": 1})
+
+    lanes, _ = build_lane_geometries(recording)
+
+    assert lanes["ego"].assignment_valid is True
+    assert lanes["ego"].recovery_method is None
+    assert max(point[0] for point in lanes["ego"].centerline) == 5.0
+
+
+def test_intersection_exact_range_is_not_expanded_from_full_edges():
+    recording = synthetic_recording()
+    for line in recording["ld_feature_store"]["lane_lines"]:
+        if line["line_id"] in {"ego-left", "ego-right"}:
+            line["attributes"] = {"intersection": True, "pattern": "solid", "drivable": True}
+            lateral = 2.0 if line["line_id"] == "ego-left" else -2.0
+            line["elements"] = []
+            for index, x in enumerate((0.0, 5.0, 15.0, 30.0)):
+                point_id = f"{line['line_id']}-intersection-{index}"
+                recording["ld_feature_store"]["points"].append(
+                    {"point_id": point_id, "position_lcs_m": [x, lateral, 0.0]}
+                )
+                line["elements"].append({"point_id": point_id, "order": index})
+    ego_lane = next(
+        lane for lane in recording["ld_feature_store"]["lanes"]
+        if lane["lane_id"] == "ego"
+    )
+    ego_lane["boundaries"]["left"].update({"start_order": 0, "end_order": 1})
+    ego_lane["boundaries"]["right"].update({"start_order": 0, "end_order": 1})
+
+    lanes, _ = build_lane_geometries(recording)
+
+    assert lanes["ego"].assignment_valid is True
+    assert lanes["ego"].intersection_connector is True
+    assert lanes["ego"].recovery_method is None
+    assert max(point[0] for point in lanes["ego"].centerline) == 5.0
+
+
+def test_full_edge_expansion_rejects_disconnected_branch_gap():
+    recording = synthetic_recording()
+    for line in recording["ld_feature_store"]["lane_lines"]:
+        if line["line_id"] in {"ego-left", "ego-right"}:
+            lateral = 2.0 if line["line_id"] == "ego-left" else -2.0
+            line["elements"] = []
+            for index, x in enumerate((0.0, 5.0, 25.0, 30.0)):
+                point_id = f"{line['line_id']}-gap-{index}"
+                recording["ld_feature_store"]["points"].append(
+                    {"point_id": point_id, "position_lcs_m": [x, lateral, 0.0]}
+                )
+                line["elements"].append({"point_id": point_id, "order": index})
+    ego_lane = next(
+        lane for lane in recording["ld_feature_store"]["lanes"]
+        if lane["lane_id"] == "ego"
+    )
+    ego_lane["boundaries"]["left"].update({"start_order": 0, "end_order": 1})
+    ego_lane["boundaries"]["right"].update({"start_order": 0, "end_order": 1})
+
+    lanes, _ = build_lane_geometries(recording)
+
+    assert lanes["ego"].assignment_valid is True
+    assert lanes["ego"].recovery_method is None
+    assert max(point[0] for point in lanes["ego"].centerline) == 5.0
+
+
+def _append_synthetic_lane(recording, lane_id, center_points, width=4.0):
+    left_id, right_id = f"{lane_id}-left", f"{lane_id}-right"
+    half = width / 2.0
+    for edge_id, sign in ((left_id, 1.0), (right_id, -1.0)):
+        elements = []
+        for index, (x, y) in enumerate(center_points):
+            point_id = f"{edge_id}-{index}"
+            recording["ld_feature_store"]["points"].append(
+                {"point_id": point_id, "position_lcs_m": [x, y + sign * half, 0.0]}
+            )
+            elements.append({"point_id": point_id, "order": index})
+        recording["ld_feature_store"]["lane_lines"].append(
+            {
+                "line_id": edge_id,
+                "elements": elements,
+                "attributes": {"pattern": "solid", "drivable": True},
+            }
+        )
+    recording["ld_feature_store"]["lanes"].append(
+        {
+            "lane_id": lane_id,
+            "boundaries": {
+                "left": {
+                    "edge_id": left_id,
+                    "start_order": 0,
+                    "end_order": len(center_points) - 1,
+                    "edge_reference_valid": True,
+                    "endpoint_order_valid": True,
+                },
+                "right": {
+                    "edge_id": right_id,
+                    "start_order": 0,
+                    "end_order": len(center_points) - 1,
+                    "edge_reference_valid": True,
+                    "endpoint_order_valid": True,
+                },
+            },
+            "validity": {"boundary_ranges_valid": True},
+        }
+    )
+
+
+def continuation_record(lanes, lane_id):
+    continuations = lanes[lane_id].curvature_continuations
+    return next((item for item in continuations if item.get("destination_lane_id")), None)
+
+
+def test_curvature_aware_continuation_bridges_straight_gap():
+    recording = {
+        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
+        "frames": [],
+    }
+    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
+    _append_synthetic_lane(recording, "downstream", [(24.0, 0.0), (34.0, 0.0), (44.0, 0.0)])
+
+    lanes, _ = build_lane_geometries(recording)
+    continuation = continuation_record(lanes, "upstream")
+
+    assert continuation is not None
+    assert continuation["destination_lane_id"] == "downstream"
+    assert continuation["method"] == "curvature_aware_lane_continuation"
+    assert continuation["bridged_distance_m"] == 4.0
+    assert continuation["observed_vs_inferred"]["gap_polygon"] == "inferred_projection"
+
+
+def test_curvature_aware_continuation_bridges_curved_gap():
+    recording = {
+        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
+        "frames": [],
+    }
+    curve = lambda x: 0.006 * x * x
+    _append_synthetic_lane(recording, "upstream", [(0.0, curve(0.0)), (10.0, curve(10.0)), (20.0, curve(20.0))])
+    _append_synthetic_lane(recording, "downstream", [(24.0, curve(24.0)), (34.0, curve(34.0)), (44.0, curve(44.0))])
+
+    lanes, _ = build_lane_geometries(recording)
+    continuation = continuation_record(lanes, "upstream")
+
+    assert continuation is not None
+    assert continuation["destination_lane_id"] == "downstream"
+    assert continuation["accepted_candidate"]["curvature_difference_per_m"] < 0.08
+
+
+def test_curvature_aware_continuation_selects_correct_downstream_segment():
+    recording = {
+        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
+        "frames": [],
+    }
+    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
+    _append_synthetic_lane(recording, "correct", [(24.0, 0.0), (34.0, 0.0), (44.0, 0.0)])
+    _append_synthetic_lane(recording, "offset", [(24.0, 1.1), (34.0, 1.1), (44.0, 1.1)])
+
+    lanes, _ = build_lane_geometries(recording)
+    continuation = continuation_record(lanes, "upstream")
+
+    assert continuation is not None
+    assert continuation["destination_lane_id"] == "correct"
+
+
+def test_curvature_aware_continuation_rejects_adjacent_lane():
+    recording = {
+        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
+        "frames": [],
+    }
+    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
+    _append_synthetic_lane(recording, "adjacent", [(24.0, 4.0), (34.0, 4.0), (44.0, 4.0)])
+
+    lanes, _ = build_lane_geometries(recording)
+    continuation = continuation_record(lanes, "upstream")
+
+    assert continuation is None
+    debug = lanes["upstream"].curvature_continuations[0]
+    assert debug["candidate_next_segments"][0]["rejection_reasons"] == ["lateral_error"]
+
+
+def test_curvature_aware_continuation_rejects_wrong_intersection_branch():
+    recording = {
+        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
+        "frames": [],
+    }
+    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
+    _append_synthetic_lane(recording, "turn_branch", [(24.0, 0.0), (29.0, 5.0), (29.0, 15.0)])
+    for line in recording["ld_feature_store"]["lane_lines"]:
+        if line["line_id"].startswith("turn_branch"):
+            line["attributes"]["intersection"] = True
+
+    lanes, _ = build_lane_geometries(recording)
+    continuation = continuation_record(lanes, "upstream")
+
+    assert continuation is None
+
+
+def test_curvature_aware_continuation_leaves_ambiguous_missing_data_unbridged():
+    recording = {
+        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
+        "frames": [],
+    }
+    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
+    _append_synthetic_lane(recording, "too_far", [(50.0, 0.0), (60.0, 0.0), (70.0, 0.0)])
+
+    lanes, _ = build_lane_geometries(recording)
+    continuation = continuation_record(lanes, "upstream")
+
+    assert continuation is None
+    assert lanes["upstream"].curvature_continuations == ()
+
+
+def test_ego_continuation_does_not_suppress_adjacent_physical_lanes():
+    recording = {
+        "recording_id": "continuation-with-adjacent",
+        "ld_feature_store": {
+            "points": [],
+            "lane_lines": [],
+            "road_boundaries": [],
+            "lanes": [],
+            "topologies": [],
+        },
+        "frames": [
+            {
+                "frame_index": 0,
+                "timestamp_unix_s": 1000.0,
+                "time_since_start_s": 0.0,
+                "ego": {
+                    "position_lcs_m": [10.0, 0.0, 0.0],
+                    "heading_lcs_rad": 0.0,
+                    "speed_mps": 10.0,
+                },
+                "objects": [],
+                "ld": {
+                    "nearby_feature_ids": {
+                        "lanes": ["upstream", "downstream", "left", "right"]
+                    }
+                },
+            }
+        ],
+    }
+    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
+    _append_synthetic_lane(recording, "downstream", [(24.0, 0.0), (34.0, 0.0), (44.0, 0.0)])
+    _append_synthetic_lane(recording, "left", [(0.0, 4.0), (10.0, 4.0), (20.0, 4.0)])
+    _append_synthetic_lane(recording, "right", [(0.0, -4.0), (10.0, -4.0), (20.0, -4.0)])
+
+    result = run_following_lane(recording)
+    frame = result["frames"][0]
+
+    assert frame["ego_lane"]["lane_id"] == "upstream"
+    assert frame["left_lane"]["lane_id"] == "left"
+    assert frame["right_lane"]["lane_id"] == "right"
+    assert frame["left_lane"]["method"] == "geometric_fallback"
+    assert frame["right_lane"]["method"] == "geometric_fallback"
+    assert frame["left_lane"]["logical_lane_id"] != frame["ego_lane"]["logical_lane_id"]
+    assert frame["right_lane"]["logical_lane_id"] != frame["ego_lane"]["logical_lane_id"]
+    upstream = next(lane for lane in result["lane_geometry"] if lane["lane_id"] == "upstream")
+    continuation = next(
+        item
+        for item in upstream["curvature_continuations"]
+        if item.get("destination_lane_id")
+    )
+    assert continuation is not None
+    assert continuation["destination_lane_id"] == "downstream"
+
+
 def test_nearest_drivable_road_boundary_is_normalized_as_lane_line():
     recording = synthetic_recording()
     lines = recording["ld_feature_store"]["lane_lines"]

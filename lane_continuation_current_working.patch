@@ -1,0 +1,1269 @@
+diff --git a/configs/following_lane.json b/configs/following_lane.json
+index 993c4f9..212ef22 100644
+--- a/configs/following_lane.json
++++ b/configs/following_lane.json
+@@ -18,5 +18,10 @@
+   "dashed_drivable_boundary_score_bonus": 0.75,
+   "same_logical_lane_score_bonus": 0.9,
+   "minimum_recovered_boundary_overlap_m": 3.0,
++  "lane_continuation_maximum_gap_m": 15.0,
++  "lane_continuation_maximum_lateral_error_m": 1.25,
++  "lane_continuation_maximum_heading_difference_deg": 18.0,
++  "lane_continuation_maximum_curvature_difference_per_m": 0.08,
++  "lane_continuation_maximum_lane_width_difference_m": 0.9,
+   "maximum_observed_route_upstream_gap_m": 25.0
+ }
+diff --git a/src/ms_odd_tagging/scenarios/following_lane/detector.py b/src/ms_odd_tagging/scenarios/following_lane/detector.py
+index 409726c..855a970 100644
+--- a/src/ms_odd_tagging/scenarios/following_lane/detector.py
++++ b/src/ms_odd_tagging/scenarios/following_lane/detector.py
+@@ -48,6 +48,11 @@ DEFAULT_CONFIG = {
+     "dashed_drivable_boundary_score_bonus": 0.75,
+     "same_logical_lane_score_bonus": 0.9,
+     "minimum_recovered_boundary_overlap_m": 3.0,
++    "lane_continuation_maximum_gap_m": 15.0,
++    "lane_continuation_maximum_lateral_error_m": 1.25,
++    "lane_continuation_maximum_heading_difference_deg": 18.0,
++    "lane_continuation_maximum_curvature_difference_per_m": 0.08,
++    "lane_continuation_maximum_lane_width_difference_m": 0.9,
+     "maximum_observed_route_upstream_gap_m": 25.0,
+ }
+ 
+@@ -102,6 +107,19 @@ def run_following_lane(recording: dict[str, Any], config: dict[str, Any] | None
+         minimum_recovered_boundary_overlap_m=settings[
+             "minimum_recovered_boundary_overlap_m"
+         ],
++        continuation_maximum_gap_m=settings["lane_continuation_maximum_gap_m"],
++        continuation_maximum_lateral_error_m=settings[
++            "lane_continuation_maximum_lateral_error_m"
++        ],
++        continuation_maximum_heading_difference_deg=settings[
++            "lane_continuation_maximum_heading_difference_deg"
++        ],
++        continuation_maximum_curvature_difference_per_m=settings[
++            "lane_continuation_maximum_curvature_difference_per_m"
++        ],
++        continuation_maximum_lane_width_difference_m=settings[
++            "lane_continuation_maximum_lane_width_difference_m"
++        ],
+     )
+     logical_lane_ids = build_logical_lane_groups(lanes, topologies)
+     observations = []
+diff --git a/src/ms_odd_tagging/scenarios/following_lane/explorer_visualization.py b/src/ms_odd_tagging/scenarios/following_lane/explorer_visualization.py
+index 094d398..d68271f 100644
+--- a/src/ms_odd_tagging/scenarios/following_lane/explorer_visualization.py
++++ b/src/ms_odd_tagging/scenarios/following_lane/explorer_visualization.py
+@@ -19,7 +19,9 @@ TRACKER_CSS = """
+ TRACKER_CONTROLS = """
+     <div class="laneTrackerSection">
+       <h3>Generated Lane Tracker</h3>
+-      <label><input id="showLaneTracker" type="checkbox" checked /> Show left / ego / right lane areas</label>
++      <label><input id="showLaneTracker" type="checkbox" checked /> Show active ego lane area</label>
++      <label><input id="showLaneTrackerAdjacent" type="checkbox" checked /> Show left / right lane areas</label>
++      <label><input id="showLaneTrackerRoutes" type="checkbox" /> Show logical route continuity</label>
+       <label><input id="showLaneTrackerBridges" type="checkbox" checked /> Show probable gap extensions</label>
+       <label><input id="showLaneTrackerCenterlines" type="checkbox" /> Show tracked centerlines</label>
+       <label><input id="showLaneTrackerLead" type="checkbox" checked /> Highlight selected lead</label>
+@@ -27,6 +29,7 @@ TRACKER_CONTROLS = """
+       <div class="laneTrackerLegend">
+         <span style="--lane-color:#06b6d4">left</span>
+         <span style="--lane-color:#22c55e">ego</span>
++        <span style="--lane-color:#15803d">ego logical route</span>
+         <span style="--lane-color:#f59e0b">right</span>
+         <span style="--lane-color:#ef4444">lead</span>
+       </div>
+@@ -178,17 +181,18 @@ function trackerFrame() {
+ 
+ function trackerRoleDefinitions(frame) {
+   if (!frame) return [];
+-  return [
+-    ['left', frame.left_lane],
+-    ['ego', frame.ego_lane],
+-    ['right', frame.right_lane]
+-  ].filter(([, assignment]) => assignment && assignment.logical_lane_id);
++  const roles = [['ego', frame.ego_lane]];
++  if (document.getElementById('showLaneTrackerAdjacent').checked) {
++    roles.unshift(['left', frame.left_lane]);
++    roles.push(['right', frame.right_lane]);
++  }
++  return roles.filter(([, assignment]) => assignment && assignment.lane_id);
+ }
+ 
+-function trackerPolygonTrace(role, assignment) {
++function trackerPhysicalPolygonTrace(role, assignment) {
+   const x = [], y = [];
+   for (const lane of LANE_TRACKER.lanes) {
+-    if (lane.logical_lane_id !== assignment.logical_lane_id ||
++    if (lane.lane_id !== assignment.lane_id ||
+         !Array.isArray(lane.polygon_lcs_m) || lane.polygon_lcs_m.length < 3) continue;
+     for (const point of lane.polygon_lcs_m) {
+       x.push(point[0]); y.push(point[1]);
+@@ -202,15 +206,15 @@ function trackerPolygonTrace(role, assignment) {
+     x, y,
+     fill: 'toself',
+     fillcolor: TRACKER_COLORS[role] + '24',
+-    line: {color: TRACKER_COLORS[role], width: role === 'ego' ? 3 : 2},
+-    hovertemplate: `${role} tracked lane<br>confidence=${assignment.confidence || 'unknown'}<br>method=${assignment.method || 'unknown'}<extra></extra>`
++    line: {color: TRACKER_COLORS[role], width: role === 'ego' ? 5 : 3},
++    hovertemplate: `${role} active physical lane<br>physical=${assignment.lane_id || 'none'}<br>logical=${assignment.logical_lane_id || 'none'}<br>confidence=${assignment.confidence || 'unknown'}<br>method=${assignment.method || 'unknown'}<extra></extra>`
+   };
+ }
+ 
+-function trackerCenterlineTrace(role, assignment) {
++function trackerPhysicalCenterlineTrace(role, assignment) {
+   const x = [], y = [];
+   for (const lane of LANE_TRACKER.lanes) {
+-    if (lane.logical_lane_id !== assignment.logical_lane_id ||
++    if (lane.lane_id !== assignment.lane_id ||
+         !Array.isArray(lane.centerline_lcs_m) || lane.centerline_lcs_m.length < 2) continue;
+     for (const point of lane.centerline_lcs_m) {
+       x.push(point[0]); y.push(point[1]);
+@@ -226,7 +230,101 @@ function trackerCenterlineTrace(role, assignment) {
+   };
+ }
+ 
+-function trackerBridgeTrace(role, assignment) {
++function trackerCurvatureContinuationTraces(role, assignment) {
++  if (!assignment || !assignment.lane_id) return [];
++  const traces = [];
++  for (const lane of LANE_TRACKER.lanes) {
++    if (lane.lane_id !== assignment.lane_id ||
++        !Array.isArray(lane.curvature_continuations)) continue;
++    for (const continuation of lane.curvature_continuations) {
++      if (!continuation || !continuation.destination_lane_id) continue;
++      const gap = continuation.inferred_gap_polygon_lcs_m || [];
++      if (gap.length >= 3) {
++        const x = [], y = [];
++        for (const point of gap) {
++          x.push(point[0]); y.push(point[1]);
++        }
++        x.push(gap[0][0], null);
++        y.push(gap[0][1], null);
++        traces.push({
++          type: 'scatter', mode: 'lines',
++          name: `${role} inferred continuation gap`,
++          x, y,
++          fill: 'toself',
++          fillcolor: TRACKER_COLORS[role] + '12',
++          line: {color: '#84cc16', width: 3, dash: 'dash'},
++          hovertemplate:
++            `${role} inferred continuation gap<br>` +
++            `source=${continuation.source_lane_id || assignment.lane_id}<br>` +
++            `destination=${continuation.destination_lane_id || 'none'}<br>` +
++            `bridged=${continuation.bridged_distance_m || 'n/a'} m<br>` +
++            `${continuation.method || 'curvature continuation'}<extra></extra>`
++        });
++      }
++      const observed = continuation.observed_destination_polygon_lcs_m || [];
++      if (observed.length >= 3) {
++        const x = [], y = [];
++        for (const point of observed) {
++          x.push(point[0]); y.push(point[1]);
++        }
++        x.push(observed[0][0], null);
++        y.push(observed[0][1], null);
++        traces.push({
++          type: 'scatter', mode: 'lines',
++          name: `${role} observed downstream continuation`,
++          x, y,
++          fill: 'toself',
++          fillcolor: TRACKER_COLORS[role] + '16',
++          line: {color: '#65a30d', width: 3, dash: 'dot'},
++          hovertemplate:
++            `${role} observed downstream continuation<br>` +
++            `source=${continuation.source_lane_id || assignment.lane_id}<br>` +
++            `destination=${continuation.destination_lane_id || 'none'}<br>` +
++            `confidence=${continuation.confidence || 'reduced'}<extra></extra>`
++        });
++      }
++      const projected = continuation.projected_centerline_lcs_m || [];
++      if (projected.length >= 2) {
++        traces.push({
++          type: 'scattergl', mode: 'lines',
++          name: `${role} projected continuation path`,
++          x: projected.map(point => point[0]),
++          y: projected.map(point => point[1]),
++          line: {color: '#bef264', width: 2, dash: 'dashdot'},
++          hoverinfo: 'skip'
++        });
++      }
++    }
++  }
++  return traces;
++}
++
++function trackerEgoRouteTrace(assignment) {
++  if (!assignment || !assignment.logical_lane_id) return null;
++  const x = [], y = [];
++  for (const lane of LANE_TRACKER.lanes) {
++    if (lane.logical_lane_id !== assignment.logical_lane_id ||
++        lane.lane_id === assignment.lane_id ||
++        !Array.isArray(lane.polygon_lcs_m) || lane.polygon_lcs_m.length < 3) continue;
++    for (const point of lane.polygon_lcs_m) {
++      x.push(point[0]); y.push(point[1]);
++    }
++    x.push(lane.polygon_lcs_m[0][0], null);
++    y.push(lane.polygon_lcs_m[0][1], null);
++  }
++  if (!x.length) return null;
++  return {
++    type: 'scatter', mode: 'lines', name: 'ego logical route context',
++    x, y,
++    fill: 'toself',
++    fillcolor: TRACKER_COLORS.ego + '08',
++    line: {color: '#15803d', width: 1.5, dash: 'dot'},
++    hovertemplate: `ego logical route context<br>logical=${assignment.logical_lane_id || 'none'}<br>active physical lane=${assignment.lane_id || 'none'}<extra></extra>`
++  };
++}
++
++function trackerBridgeTrace(assignment) {
++  if (!assignment || !assignment.logical_lane_id) return null;
+   const x = [], y = [];
+   for (const bridge of LANE_TRACKER.bridges) {
+     if (bridge.logical_lane_id !== assignment.logical_lane_id ||
+@@ -239,12 +337,12 @@ function trackerBridgeTrace(role, assignment) {
+   }
+   if (!x.length) return null;
+   return {
+-    type: 'scatter', mode: 'lines', name: `${role} probable lane extension`,
++    type: 'scatter', mode: 'lines', name: 'ego logical route extension',
+     x, y,
+     fill: 'toself',
+-    fillcolor: TRACKER_COLORS[role] + '18',
+-    line: {color: TRACKER_COLORS[role], width: 2, dash: 'dash'},
+-    hovertemplate: `${role} probable gap extension<extra></extra>`
++    fillcolor: TRACKER_COLORS.ego + '10',
++    line: {color: '#15803d', width: 2, dash: 'dash'},
++    hovertemplate: `ego logical route probable gap extension<br>logical=${assignment.logical_lane_id || 'none'}<extra></extra>`
+   };
+ }
+ 
+@@ -254,18 +352,25 @@ function laneTrackerTraces() {
+   const traces = [];
+   if (document.getElementById('showLaneTracker').checked) {
+     for (const [role, assignment] of trackerRoleDefinitions(frame)) {
+-      const polygon = trackerPolygonTrace(role, assignment);
++      const polygon = trackerPhysicalPolygonTrace(role, assignment);
+       if (polygon) traces.push(polygon);
+-      if (document.getElementById('showLaneTrackerBridges').checked) {
+-        const bridge = trackerBridgeTrace(role, assignment);
+-        if (bridge) traces.push(bridge);
++      for (const continuation of trackerCurvatureContinuationTraces(role, assignment)) {
++        traces.push(continuation);
+       }
+       if (document.getElementById('showLaneTrackerCenterlines').checked) {
+-        const centerline = trackerCenterlineTrace(role, assignment);
++        const centerline = trackerPhysicalCenterlineTrace(role, assignment);
+         if (centerline) traces.push(centerline);
+       }
+     }
+   }
++  if (document.getElementById('showLaneTrackerRoutes').checked) {
++    const route = trackerEgoRouteTrace(frame.ego_lane);
++    if (route) traces.push(route);
++    if (document.getElementById('showLaneTrackerBridges').checked) {
++      const bridge = trackerBridgeTrace(frame.ego_lane);
++      if (bridge) traces.push(bridge);
++    }
++  }
+   if (document.getElementById('showLaneTrackerLead').checked &&
+       frame.lead && Array.isArray(frame.lead.position_lcs_m)) {
+     traces.push({
+@@ -298,6 +403,18 @@ function laneRoleSummary(role, assignment) {
+   return `${role}: ${assignment.confidence || 'unknown'} / ${assignment.method || 'unknown'}${direction}`;
+ }
+ 
++function laneContinuationSummary(assignment) {
++  if (!assignment || !assignment.lane_id) return 'continuation: none';
++  const lane = LANE_TRACKER.lanes.find(item => item.lane_id === assignment.lane_id);
++  const continuations = lane && Array.isArray(lane.curvature_continuations)
++    ? lane.curvature_continuations.filter(item => item.destination_lane_id)
++    : [];
++  if (!continuations.length) return 'continuation: none';
++  const first = continuations[0];
++  return `continuation: ${first.source_lane_id || assignment.lane_id} → ${first.destination_lane_id} · ` +
++    `${first.bridged_distance_m || 'n/a'} m inferred gap · ${first.confidence || 'reduced confidence'}`;
++}
++
+ function updateLaneTrackerReadout() {
+   const frame = trackerFrame();
+   const target = document.getElementById('laneTrackerReadout');
+@@ -313,6 +430,8 @@ function updateLaneTrackerReadout() {
+     `${laneRoleSummary('left', frame.left_lane)}<br>` +
+     `${laneRoleSummary('ego', frame.ego_lane)}<br>` +
+     `${laneRoleSummary('right', frame.right_lane)}<br>` +
++    `active ego physical: ${frame.ego_lane?.lane_id || 'none'} · ego logical route: ${frame.ego_lane?.logical_lane_id || 'none'}<br>` +
++    `${laneContinuationSummary(frame.ego_lane)}<br>` +
+     `${lead}<br>${frame.reason.replaceAll('_', ' ')}`;
+ }
+ """
+@@ -439,8 +558,8 @@ def render_original_explorer_with_lane_tracker(
+     page = _replace_once(
+         page,
+         "filter.addEventListener('change', render);",
+-        "for (const id of ['showLaneTracker','showLaneTrackerBridges',"
+-        "'showLaneTrackerCenterlines','showLaneTrackerLead',"
++        "for (const id of ['showLaneTracker','showLaneTrackerAdjacent','showLaneTrackerBridges',"
++        "'showLaneTrackerRoutes','showLaneTrackerCenterlines','showLaneTrackerLead',"
+         "'showLdGapExtensions']) "
+         "document.getElementById(id).addEventListener('change', render);\n"
+         "filter.addEventListener('change', render);",
+diff --git a/src/ms_odd_tagging/scenarios/following_lane/lane_geometry.py b/src/ms_odd_tagging/scenarios/following_lane/lane_geometry.py
+index d44dcb3..be8bbec 100644
+--- a/src/ms_odd_tagging/scenarios/following_lane/lane_geometry.py
++++ b/src/ms_odd_tagging/scenarios/following_lane/lane_geometry.py
+@@ -10,7 +10,7 @@ the two physical edges pass direction, overlap, and lane-width validation.
+ from __future__ import annotations
+ 
+ import math
+-from dataclasses import dataclass
++from dataclasses import dataclass, replace
+ from typing import Any, Iterable
+ 
+ 
+@@ -119,6 +119,7 @@ class LaneGeometry:
+     geometry_recovered: bool = False
+     recovery_method: str | None = None
+     recovery_evidence: dict[str, Any] | None = None
++    curvature_continuations: tuple[dict[str, Any], ...] = ()
+ 
+     def as_dict(self) -> dict[str, Any]:
+         return {
+@@ -139,6 +140,7 @@ class LaneGeometry:
+             "geometry_recovered": self.geometry_recovered,
+             "recovery_method": self.recovery_method,
+             "recovery_evidence": self.recovery_evidence,
++            "curvature_continuations": list(self.curvature_continuations),
+         }
+ 
+ 
+@@ -285,10 +287,369 @@ def _recover_full_edge_pair(
+     }
+ 
+ 
++def _lane_width_evidence(
++    left: list[tuple[float, float]],
++    right: list[tuple[float, float]],
++    *,
++    minimum_lane_width_m: float = 2.0,
++    maximum_lane_width_m: float = 6.0,
++    maximum_width_range_m: float = 2.5,
++) -> tuple[bool, dict[str, Any]]:
++    if len(left) < 2 or len(right) < 2:
++        return False, {"reason": "insufficient_boundary_points"}
++    count = max(8, min(80, max(len(left), len(right))))
++    left_r = resample_polyline(left, count)
++    right_r = resample_polyline(right, count)
++    direct = sum(distance(a, b) for a, b in zip(left_r, right_r))
++    reverse = sum(distance(a, b) for a, b in zip(left_r, reversed(right_r)))
++    if reverse < direct:
++        right_r = list(reversed(right_r))
++    widths = [distance(a, b) for a, b in zip(left_r, right_r)]
++    sorted_widths = sorted(widths)
++    median_width = sorted_widths[len(sorted_widths) // 2]
++    evidence = {
++        "minimum_lane_width_m": round(min(widths), 3),
++        "median_lane_width_m": round(median_width, 3),
++        "maximum_lane_width_m": round(max(widths), 3),
++        "lane_width_range_m": round(max(widths) - min(widths), 3),
++    }
++    valid = (
++        median_width >= minimum_lane_width_m
++        and median_width <= maximum_lane_width_m
++        and max(widths) - min(widths) <= maximum_width_range_m
++    )
++    if not valid:
++        evidence["reason"] = "implausible_lane_width"
++    return valid, evidence
++
++
++def _maximum_segment_gap(points: list[tuple[float, float]]) -> float:
++    if len(points) < 2:
++        return 0.0
++    return max(distance(a, b) for a, b in zip(points, points[1:]))
++
++
++def _projected_span(
++    points: list[tuple[float, float]],
++    axis: tuple[float, float],
++) -> tuple[float, float] | None:
++    if not points:
++        return None
++    stations = [point[0] * axis[0] + point[1] * axis[1] for point in points]
++    return min(stations), max(stations)
++
++
++def _full_edge_expansion_evidence(
++    exact_left: list[tuple[float, float]],
++    exact_right: list[tuple[float, float]],
++    expanded_left: list[tuple[float, float]],
++    expanded_right: list[tuple[float, float]],
++) -> dict[str, Any]:
++    heading = _endpoint_heading(expanded_left)
++    if heading is None:
++        heading = _endpoint_heading(expanded_right)
++    if heading is None:
++        return {}
++    axis = (math.cos(heading), math.sin(heading))
++    exact_left_span = _projected_span(exact_left, axis)
++    exact_right_span = _projected_span(exact_right, axis)
++    expanded_left_span = _projected_span(expanded_left, axis)
++    expanded_right_span = _projected_span(expanded_right, axis)
++    evidence: dict[str, Any] = {}
++    if exact_left_span and expanded_left_span:
++        evidence["left_forward_extension_m"] = round(
++            max(0.0, expanded_left_span[1] - exact_left_span[1]), 3
++        )
++        evidence["left_backward_extension_m"] = round(
++            max(0.0, exact_left_span[0] - expanded_left_span[0]), 3
++        )
++    if exact_right_span and expanded_right_span:
++        evidence["right_forward_extension_m"] = round(
++            max(0.0, expanded_right_span[1] - exact_right_span[1]), 3
++        )
++        evidence["right_backward_extension_m"] = round(
++            max(0.0, exact_right_span[0] - expanded_right_span[0]), 3
++        )
++    return evidence
++
++
++def _lane_median_width(lane: LaneGeometry) -> float | None:
++    if len(lane.left) < 2 or len(lane.right) < 2:
++        return None
++    count = max(8, min(30, max(len(lane.left), len(lane.right))))
++    widths = [
++        distance(a, b)
++        for a, b in zip(
++            resample_polyline(list(lane.left), count),
++            resample_polyline(list(lane.right), count),
++        )
++    ]
++    if not widths:
++        return None
++    return sorted(widths)[len(widths) // 2]
++
++
++def _polyline_curvature(points: tuple[tuple[float, float], ...], *, use_tail: bool) -> float:
++    if len(points) < 3:
++        return 0.0
++    sample = list(points[-5:] if use_tail else points[:5])
++    headings = []
++    lengths = []
++    for a, b in zip(sample, sample[1:]):
++        length = distance(a, b)
++        if length <= 1e-6:
++            continue
++        headings.append(math.atan2(b[1] - a[1], b[0] - a[0]))
++        lengths.append(length)
++    if len(headings) < 2:
++        return 0.0
++    unwrapped = [headings[0]]
++    for heading in headings[1:]:
++        unwrapped.append(unwrapped[-1] + wrap_angle(heading - unwrapped[-1]))
++    arc = sum(lengths)
++    if arc <= 1e-6:
++        return 0.0
++    return (unwrapped[-1] - unwrapped[0]) / arc
++
++
++def _project_constant_curvature(
++    start: tuple[float, float],
++    heading: float,
++    curvature: float,
++    length_m: float,
++    *,
++    steps: int = 12,
++) -> list[tuple[float, float]]:
++    if length_m <= 0:
++        return [start]
++    count = max(3, min(40, steps))
++    points = [start]
++    x, y = start
++    ds = length_m / (count - 1)
++    current_heading = heading
++    for _ in range(1, count):
++        mid_heading = current_heading + curvature * ds * 0.5
++        x += math.cos(mid_heading) * ds
++        y += math.sin(mid_heading) * ds
++        current_heading += curvature * ds
++        points.append((x, y))
++    return points
++
++
++def _curve_heading_at(heading: float, curvature: float, length_m: float) -> float:
++    return heading + curvature * max(0.0, length_m)
++
++
++def _lateral_error_to_heading(
++    source_end: tuple[float, float],
++    heading: float,
++    point: tuple[float, float],
++) -> float:
++    dx, dy = point[0] - source_end[0], point[1] - source_end[1]
++    return abs(-math.sin(heading) * dx + math.cos(heading) * dy)
++
++
++def _continuation_gap_polygon(
++    projected: list[tuple[float, float]],
++    width_m: float,
++) -> list[tuple[float, float]]:
++    if len(projected) < 2:
++        return []
++    left: list[tuple[float, float]] = []
++    right: list[tuple[float, float]] = []
++    half_width = width_m / 2.0
++    for index, point in enumerate(projected):
++        if index + 1 < len(projected):
++            next_point = projected[index + 1]
++            heading = math.atan2(next_point[1] - point[1], next_point[0] - point[0])
++        else:
++            previous = projected[index - 1]
++            heading = math.atan2(point[1] - previous[1], point[0] - previous[0])
++        normal = (-math.sin(heading), math.cos(heading))
++        left.append((point[0] + normal[0] * half_width, point[1] + normal[1] * half_width))
++        right.append((point[0] - normal[0] * half_width, point[1] - normal[1] * half_width))
++    return left + list(reversed(right))
++
++
++def _curvature_aware_lane_continuations(
++    lanes: dict[str, LaneGeometry],
++    *,
++    maximum_gap_m: float = 15.0,
++    maximum_lateral_error_m: float = 1.25,
++    maximum_heading_difference_deg: float = 18.0,
++    maximum_curvature_difference_per_m: float = 0.08,
++    maximum_lane_width_difference_m: float = 0.9,
++) -> dict[str, LaneGeometry]:
++    updated: dict[str, LaneGeometry] = {}
++    valid_lanes = [
++        lane
++        for lane in lanes.values()
++        if lane.assignment_valid
++        and not lane.intersection_connector
++        and len(lane.centerline) >= 2
++    ]
++    for source in lanes.values():
++        if (
++            not source.assignment_valid
++            or source.intersection_connector
++            or len(source.centerline) < 3
++            or len(source.left) < 2
++            or len(source.right) < 2
++        ):
++            updated[source.lane_id] = source
++            continue
++        source_heading = math.atan2(
++            source.centerline[-1][1] - source.centerline[-2][1],
++            source.centerline[-1][0] - source.centerline[-2][0],
++        )
++        source_curvature = _polyline_curvature(source.centerline, use_tail=True)
++        source_width = _lane_median_width(source)
++        if source_width is None:
++            updated[source.lane_id] = source
++            continue
++        candidates = []
++        debug_candidates = []
++        for destination in valid_lanes:
++            if destination.lane_id == source.lane_id or len(destination.centerline) < 3:
++                continue
++            dx = destination.centerline[0][0] - source.centerline[-1][0]
++            dy = destination.centerline[0][1] - source.centerline[-1][1]
++            forward_gap = math.cos(source_heading) * dx + math.sin(source_heading) * dy
++            gap = math.hypot(dx, dy)
++            if forward_gap <= 0.1 or gap > maximum_gap_m:
++                continue
++            projected = _project_constant_curvature(
++                source.centerline[-1],
++                source_heading,
++                source_curvature,
++                gap,
++            )
++            projected_end = projected[-1]
++            lateral_error = _lateral_error_to_heading(
++                source.centerline[-1],
++                source_heading,
++                destination.centerline[0],
++            )
++            projection_error = distance(projected_end, destination.centerline[0])
++            destination_heading = math.atan2(
++                destination.centerline[1][1] - destination.centerline[0][1],
++                destination.centerline[1][0] - destination.centerline[0][0],
++            )
++            expected_heading = _curve_heading_at(source_heading, source_curvature, gap)
++            heading_difference = abs(math.degrees(wrap_angle(destination_heading - expected_heading)))
++            destination_curvature = _polyline_curvature(destination.centerline, use_tail=False)
++            curvature_difference = abs(destination_curvature - source_curvature)
++            destination_width = _lane_median_width(destination)
++            width_difference = (
++                math.inf
++                if destination_width is None
++                else abs(destination_width - source_width)
++            )
++            rejection_reasons = []
++            if lateral_error > maximum_lateral_error_m:
++                rejection_reasons.append("lateral_error")
++            if heading_difference > maximum_heading_difference_deg:
++                rejection_reasons.append("heading_difference")
++            if curvature_difference > maximum_curvature_difference_per_m:
++                rejection_reasons.append("curvature_difference")
++            if width_difference > maximum_lane_width_difference_m:
++                rejection_reasons.append("lane_width_difference")
++            if (
++                source.left_edge_id == destination.right_edge_id
++                or source.right_edge_id == destination.left_edge_id
++            ):
++                rejection_reasons.append("adjacent_lane_boundary_swap")
++            score = (
++                gap
++                + projection_error * 4.0
++                + lateral_error * 3.0
++                + heading_difference * 0.08
++                + curvature_difference * 15.0
++                + width_difference
++            )
++            record = {
++                "candidate_lane_id": destination.lane_id,
++                "gap_m": round(gap, 3),
++                "lateral_error_m": round(lateral_error, 3),
++                "projection_error_m": round(projection_error, 3),
++                "heading_difference_deg": round(heading_difference, 2),
++                "curvature_difference_per_m": round(curvature_difference, 4),
++                "lane_width_difference_m": round(width_difference, 3)
++                if math.isfinite(width_difference)
++                else None,
++                "score": round(score, 3),
++                "rejection_reasons": rejection_reasons,
++            }
++            debug_candidates.append(record)
++            if rejection_reasons:
++                continue
++            candidates.append((score, destination, projected, record))
++        if not candidates:
++            updated[source.lane_id] = replace(
++                source,
++                curvature_continuations=(
++                    {
++                        "source_lane_id": source.lane_id,
++                        "observed_segment_end_lcs_m": list(source.centerline[-1]),
++                        "source_heading_deg": round(math.degrees(source_heading), 2),
++                        "source_curvature_per_m": round(source_curvature, 5),
++                        "accepted": False,
++                        "candidate_next_segments": debug_candidates[:8],
++                    },
++                ) if debug_candidates else (),
++            )
++            continue
++        _, destination, projected, accepted_record = min(
++            candidates,
++            key=lambda item: (item[0], item[1].lane_id),
++        )
++        gap_polygon = _continuation_gap_polygon(projected, source_width)
++        updated[source.lane_id] = replace(
++            source,
++            curvature_continuations=(
++                {
++                    "source_lane_id": source.lane_id,
++                    "destination_lane_id": destination.lane_id,
++                    "confidence": "inferred_gap_reduced_confidence",
++                    "method": "curvature_aware_lane_continuation",
++                    "observed_segment_end_lcs_m": list(source.centerline[-1]),
++                    "projected_centerline_lcs_m": [list(point) for point in projected],
++                    "inferred_gap_polygon_lcs_m": [list(point) for point in gap_polygon],
++                    "observed_destination_polygon_lcs_m": [
++                        list(point) for point in destination.polygon
++                    ],
++                    "observed_destination_centerline_lcs_m": [
++                        list(point) for point in destination.centerline
++                    ],
++                    "bridged_distance_m": accepted_record["gap_m"],
++                    "source_heading_deg": round(math.degrees(source_heading), 2),
++                    "source_curvature_per_m": round(source_curvature, 5),
++                    "accepted_candidate": accepted_record,
++                    "candidate_next_segments": debug_candidates[:8],
++                    "observed_vs_inferred": {
++                        "source_polygon": "observed_ld",
++                        "gap_polygon": "inferred_projection",
++                        "destination_polygon": "observed_ld",
++                    },
++                },
++            ),
++        )
++    for lane_id, lane in lanes.items():
++        updated.setdefault(lane_id, lane)
++    return updated
++
++
+ def build_lane_geometries(
+     recording: dict[str, Any],
+     *,
+     minimum_recovered_boundary_overlap_m: float = 3.0,
++    minimum_full_edge_expansion_m: float = 6.0,
++    maximum_full_edge_segment_gap_m: float = 10.0,
++    continuation_maximum_gap_m: float = 15.0,
++    continuation_maximum_lateral_error_m: float = 1.25,
++    continuation_maximum_heading_difference_deg: float = 18.0,
++    continuation_maximum_curvature_difference_per_m: float = 0.08,
++    continuation_maximum_lane_width_difference_m: float = 0.9,
+ ) -> tuple[dict[str, LaneGeometry], list[dict[str, Any]]]:
+     store = recording.get("ld_feature_store") or {}
+     point_lookup = {
+@@ -392,6 +753,49 @@ def build_lane_geometries(
+                     recovery_evidence["recovered_sides"] = recovered_sides
+                     geometry_recovered = True
+                     recovery_method = "validated_aligned_full_edge_pair"
++        elif (
++            not intersection_evidence
++            and left_edge is not None
++            and right_edge is not None
++            and left_attributes.get("pattern") != "virtual"
++            and right_attributes.get("pattern") != "virtual"
++        ):
++            full_left = _full_edge_points(left_edge, point_lookup)
++            full_right = _full_edge_points(right_edge, point_lookup)
++            if (
++                len(full_left) >= len(left)
++                and len(full_right) >= len(right)
++                and _maximum_segment_gap(full_left) <= maximum_full_edge_segment_gap_m
++                and _maximum_segment_gap(full_right) <= maximum_full_edge_segment_gap_m
++            ):
++                expanded = _recover_full_edge_pair(
++                    full_left,
++                    full_right,
++                    minimum_overlap_m=max(
++                        minimum_recovered_boundary_overlap_m,
++                        minimum_full_edge_expansion_m,
++                    ),
++                )
++                if expanded is not None:
++                    expanded_left, expanded_right, expansion_evidence = expanded
++                    expansion_evidence.update(
++                        _full_edge_expansion_evidence(
++                            left,
++                            right,
++                            expanded_left,
++                            expanded_right,
++                        )
++                    )
++                    forward_extension = max(
++                        float(expansion_evidence.get("left_forward_extension_m", 0.0)),
++                        float(expansion_evidence.get("right_forward_extension_m", 0.0)),
++                    )
++                    if forward_extension >= minimum_full_edge_expansion_m:
++                        left, right = expanded_left, expanded_right
++                        recovery_evidence = expansion_evidence
++                        recovery_evidence["recovered_sides"] = ["left", "right"]
++                        geometry_recovered = True
++                        recovery_method = "validated_full_edge_range_expansion"
+         boundary_range_valid = exact_boundary_range_valid or geometry_recovered
+         drivable_values = [
+             attributes.get("drivable")
+@@ -404,11 +808,20 @@ def build_lane_geometries(
+             drivable_status = "explicitly_drivable"
+         else:
+             drivable_status = "unknown"
+-        valid = boundary_range_valid and drivable_status != "explicitly_non_drivable"
++        width_valid = False
++        if boundary_range_valid:
++            width_valid, _ = _lane_width_evidence(left, right)
++        valid = (
++            boundary_range_valid
++            and width_valid
++            and drivable_status != "explicitly_non_drivable"
++        )
+         reason = (
+             None
+             if valid
+             else "explicit_non_drivable_boundary"
++            if boundary_range_valid and width_valid
++            else "implausible_lane_width"
+             if boundary_range_valid
+             else "invalid_or_incomplete_boundary_range"
+         )
+@@ -433,6 +846,18 @@ def build_lane_geometries(
+             bool(intersection_evidence), tuple(intersection_evidence),
+             geometry_recovered, recovery_method, recovery_evidence,
+         )
++    result = _curvature_aware_lane_continuations(
++        result,
++        maximum_gap_m=continuation_maximum_gap_m,
++        maximum_lateral_error_m=continuation_maximum_lateral_error_m,
++        maximum_heading_difference_deg=continuation_maximum_heading_difference_deg,
++        maximum_curvature_difference_per_m=(
++            continuation_maximum_curvature_difference_per_m
++        ),
++        maximum_lane_width_difference_m=(
++            continuation_maximum_lane_width_difference_m
++        ),
++    )
+     return result, topologies
+ 
+ 
+diff --git a/tests/unit/test_following_lane.py b/tests/unit/test_following_lane.py
+index dbabc58..1266327 100644
+--- a/tests/unit/test_following_lane.py
++++ b/tests/unit/test_following_lane.py
+@@ -211,6 +211,335 @@ def test_explicit_non_drivable_boundary_excludes_lane_assignment():
+     assert assignment["lane_id"] is None
+ 
+ 
++def test_abnormally_wide_exact_lane_polygon_is_rejected():
++    recording = synthetic_recording()
++    ego_right = next(
++        line for line in recording["ld_feature_store"]["lane_lines"]
++        if line["line_id"] == "ego-right"
++    )
++    for element in ego_right["elements"]:
++        point = next(
++            point
++            for point in recording["ld_feature_store"]["points"]
++            if point["point_id"] == element["point_id"]
++        )
++        point["position_lcs_m"][1] = -6.5
++
++    lanes, _ = build_lane_geometries(recording)
++    assignment = assign_point_to_lane((10.0, 0.0), 0.0, ["ego"], lanes)
++
++    assert lanes["ego"].assignment_valid is False
++    assert lanes["ego"].invalid_reason == "implausible_lane_width"
++    assert assignment["lane_id"] is None
++
++
++def test_short_referenced_range_expands_to_valid_long_full_edges():
++    recording = synthetic_recording()
++    for line in recording["ld_feature_store"]["lane_lines"]:
++        if line["line_id"] in {"ego-left", "ego-right"}:
++            lateral = 2.0 if line["line_id"] == "ego-left" else -2.0
++            line["elements"] = []
++            for index, x in enumerate((0.0, 5.0, 15.0, 24.0)):
++                point_id = f"{line['line_id']}-long-{index}"
++                recording["ld_feature_store"]["points"].append(
++                    {"point_id": point_id, "position_lcs_m": [x, lateral, 0.0]}
++                )
++                line["elements"].append({"point_id": point_id, "order": index})
++    ego_lane = next(
++        lane for lane in recording["ld_feature_store"]["lanes"]
++        if lane["lane_id"] == "ego"
++    )
++    ego_lane["boundaries"]["left"].update({"start_order": 0, "end_order": 1})
++    ego_lane["boundaries"]["right"].update({"start_order": 0, "end_order": 1})
++
++    lanes, _ = build_lane_geometries(recording)
++
++    assert lanes["ego"].assignment_valid is True
++    assert lanes["ego"].recovery_method == "validated_full_edge_range_expansion"
++    assert max(point[0] for point in lanes["ego"].centerline) == 24.0
++    assert lanes["ego"].recovery_evidence["left_forward_extension_m"] >= 18.0
++
++
++def test_genuinely_short_full_edges_remain_short():
++    recording = synthetic_recording()
++    for line in recording["ld_feature_store"]["lane_lines"]:
++        if line["line_id"] in {"ego-left", "ego-right"}:
++            lateral = 2.0 if line["line_id"] == "ego-left" else -2.0
++            line["elements"] = []
++            for index, x in enumerate((0.0, 5.0)):
++                point_id = f"{line['line_id']}-short-{index}"
++                recording["ld_feature_store"]["points"].append(
++                    {"point_id": point_id, "position_lcs_m": [x, lateral, 0.0]}
++                )
++                line["elements"].append({"point_id": point_id, "order": index})
++    ego_lane = next(
++        lane for lane in recording["ld_feature_store"]["lanes"]
++        if lane["lane_id"] == "ego"
++    )
++    ego_lane["boundaries"]["left"].update({"start_order": 0, "end_order": 1})
++    ego_lane["boundaries"]["right"].update({"start_order": 0, "end_order": 1})
++
++    lanes, _ = build_lane_geometries(recording)
++
++    assert lanes["ego"].assignment_valid is True
++    assert lanes["ego"].recovery_method is None
++    assert max(point[0] for point in lanes["ego"].centerline) == 5.0
++
++
++def test_intersection_exact_range_is_not_expanded_from_full_edges():
++    recording = synthetic_recording()
++    for line in recording["ld_feature_store"]["lane_lines"]:
++        if line["line_id"] in {"ego-left", "ego-right"}:
++            line["attributes"] = {"intersection": True, "pattern": "solid", "drivable": True}
++            lateral = 2.0 if line["line_id"] == "ego-left" else -2.0
++            line["elements"] = []
++            for index, x in enumerate((0.0, 5.0, 15.0, 30.0)):
++                point_id = f"{line['line_id']}-intersection-{index}"
++                recording["ld_feature_store"]["points"].append(
++                    {"point_id": point_id, "position_lcs_m": [x, lateral, 0.0]}
++                )
++                line["elements"].append({"point_id": point_id, "order": index})
++    ego_lane = next(
++        lane for lane in recording["ld_feature_store"]["lanes"]
++        if lane["lane_id"] == "ego"
++    )
++    ego_lane["boundaries"]["left"].update({"start_order": 0, "end_order": 1})
++    ego_lane["boundaries"]["right"].update({"start_order": 0, "end_order": 1})
++
++    lanes, _ = build_lane_geometries(recording)
++
++    assert lanes["ego"].assignment_valid is True
++    assert lanes["ego"].intersection_connector is True
++    assert lanes["ego"].recovery_method is None
++    assert max(point[0] for point in lanes["ego"].centerline) == 5.0
++
++
++def test_full_edge_expansion_rejects_disconnected_branch_gap():
++    recording = synthetic_recording()
++    for line in recording["ld_feature_store"]["lane_lines"]:
++        if line["line_id"] in {"ego-left", "ego-right"}:
++            lateral = 2.0 if line["line_id"] == "ego-left" else -2.0
++            line["elements"] = []
++            for index, x in enumerate((0.0, 5.0, 25.0, 30.0)):
++                point_id = f"{line['line_id']}-gap-{index}"
++                recording["ld_feature_store"]["points"].append(
++                    {"point_id": point_id, "position_lcs_m": [x, lateral, 0.0]}
++                )
++                line["elements"].append({"point_id": point_id, "order": index})
++    ego_lane = next(
++        lane for lane in recording["ld_feature_store"]["lanes"]
++        if lane["lane_id"] == "ego"
++    )
++    ego_lane["boundaries"]["left"].update({"start_order": 0, "end_order": 1})
++    ego_lane["boundaries"]["right"].update({"start_order": 0, "end_order": 1})
++
++    lanes, _ = build_lane_geometries(recording)
++
++    assert lanes["ego"].assignment_valid is True
++    assert lanes["ego"].recovery_method is None
++    assert max(point[0] for point in lanes["ego"].centerline) == 5.0
++
++
++def _append_synthetic_lane(recording, lane_id, center_points, width=4.0):
++    left_id, right_id = f"{lane_id}-left", f"{lane_id}-right"
++    half = width / 2.0
++    for edge_id, sign in ((left_id, 1.0), (right_id, -1.0)):
++        elements = []
++        for index, (x, y) in enumerate(center_points):
++            point_id = f"{edge_id}-{index}"
++            recording["ld_feature_store"]["points"].append(
++                {"point_id": point_id, "position_lcs_m": [x, y + sign * half, 0.0]}
++            )
++            elements.append({"point_id": point_id, "order": index})
++        recording["ld_feature_store"]["lane_lines"].append(
++            {
++                "line_id": edge_id,
++                "elements": elements,
++                "attributes": {"pattern": "solid", "drivable": True},
++            }
++        )
++    recording["ld_feature_store"]["lanes"].append(
++        {
++            "lane_id": lane_id,
++            "boundaries": {
++                "left": {
++                    "edge_id": left_id,
++                    "start_order": 0,
++                    "end_order": len(center_points) - 1,
++                    "edge_reference_valid": True,
++                    "endpoint_order_valid": True,
++                },
++                "right": {
++                    "edge_id": right_id,
++                    "start_order": 0,
++                    "end_order": len(center_points) - 1,
++                    "edge_reference_valid": True,
++                    "endpoint_order_valid": True,
++                },
++            },
++            "validity": {"boundary_ranges_valid": True},
++        }
++    )
++
++
++def continuation_record(lanes, lane_id):
++    continuations = lanes[lane_id].curvature_continuations
++    return next((item for item in continuations if item.get("destination_lane_id")), None)
++
++
++def test_curvature_aware_continuation_bridges_straight_gap():
++    recording = {
++        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
++        "frames": [],
++    }
++    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
++    _append_synthetic_lane(recording, "downstream", [(24.0, 0.0), (34.0, 0.0), (44.0, 0.0)])
++
++    lanes, _ = build_lane_geometries(recording)
++    continuation = continuation_record(lanes, "upstream")
++
++    assert continuation is not None
++    assert continuation["destination_lane_id"] == "downstream"
++    assert continuation["method"] == "curvature_aware_lane_continuation"
++    assert continuation["bridged_distance_m"] == 4.0
++    assert continuation["observed_vs_inferred"]["gap_polygon"] == "inferred_projection"
++
++
++def test_curvature_aware_continuation_bridges_curved_gap():
++    recording = {
++        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
++        "frames": [],
++    }
++    curve = lambda x: 0.006 * x * x
++    _append_synthetic_lane(recording, "upstream", [(0.0, curve(0.0)), (10.0, curve(10.0)), (20.0, curve(20.0))])
++    _append_synthetic_lane(recording, "downstream", [(24.0, curve(24.0)), (34.0, curve(34.0)), (44.0, curve(44.0))])
++
++    lanes, _ = build_lane_geometries(recording)
++    continuation = continuation_record(lanes, "upstream")
++
++    assert continuation is not None
++    assert continuation["destination_lane_id"] == "downstream"
++    assert continuation["accepted_candidate"]["curvature_difference_per_m"] < 0.08
++
++
++def test_curvature_aware_continuation_selects_correct_downstream_segment():
++    recording = {
++        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
++        "frames": [],
++    }
++    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
++    _append_synthetic_lane(recording, "correct", [(24.0, 0.0), (34.0, 0.0), (44.0, 0.0)])
++    _append_synthetic_lane(recording, "offset", [(24.0, 1.1), (34.0, 1.1), (44.0, 1.1)])
++
++    lanes, _ = build_lane_geometries(recording)
++    continuation = continuation_record(lanes, "upstream")
++
++    assert continuation is not None
++    assert continuation["destination_lane_id"] == "correct"
++
++
++def test_curvature_aware_continuation_rejects_adjacent_lane():
++    recording = {
++        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
++        "frames": [],
++    }
++    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
++    _append_synthetic_lane(recording, "adjacent", [(24.0, 4.0), (34.0, 4.0), (44.0, 4.0)])
++
++    lanes, _ = build_lane_geometries(recording)
++    continuation = continuation_record(lanes, "upstream")
++
++    assert continuation is None
++    debug = lanes["upstream"].curvature_continuations[0]
++    assert debug["candidate_next_segments"][0]["rejection_reasons"] == ["lateral_error"]
++
++
++def test_curvature_aware_continuation_rejects_wrong_intersection_branch():
++    recording = {
++        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
++        "frames": [],
++    }
++    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
++    _append_synthetic_lane(recording, "turn_branch", [(24.0, 0.0), (29.0, 5.0), (29.0, 15.0)])
++    for line in recording["ld_feature_store"]["lane_lines"]:
++        if line["line_id"].startswith("turn_branch"):
++            line["attributes"]["intersection"] = True
++
++    lanes, _ = build_lane_geometries(recording)
++    continuation = continuation_record(lanes, "upstream")
++
++    assert continuation is None
++
++
++def test_curvature_aware_continuation_leaves_ambiguous_missing_data_unbridged():
++    recording = {
++        "ld_feature_store": {"points": [], "lane_lines": [], "road_boundaries": [], "lanes": [], "topologies": []},
++        "frames": [],
++    }
++    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
++    _append_synthetic_lane(recording, "too_far", [(50.0, 0.0), (60.0, 0.0), (70.0, 0.0)])
++
++    lanes, _ = build_lane_geometries(recording)
++    continuation = continuation_record(lanes, "upstream")
++
++    assert continuation is None
++    assert lanes["upstream"].curvature_continuations == ()
++
++
++def test_ego_continuation_does_not_suppress_adjacent_physical_lanes():
++    recording = {
++        "recording_id": "continuation-with-adjacent",
++        "ld_feature_store": {
++            "points": [],
++            "lane_lines": [],
++            "road_boundaries": [],
++            "lanes": [],
++            "topologies": [],
++        },
++        "frames": [
++            {
++                "frame_index": 0,
++                "timestamp_unix_s": 1000.0,
++                "time_since_start_s": 0.0,
++                "ego": {
++                    "position_lcs_m": [10.0, 0.0, 0.0],
++                    "heading_lcs_rad": 0.0,
++                    "speed_mps": 10.0,
++                },
++                "objects": [],
++                "ld": {
++                    "nearby_feature_ids": {
++                        "lanes": ["upstream", "downstream", "left", "right"]
++                    }
++                },
++            }
++        ],
++    }
++    _append_synthetic_lane(recording, "upstream", [(0.0, 0.0), (10.0, 0.0), (20.0, 0.0)])
++    _append_synthetic_lane(recording, "downstream", [(24.0, 0.0), (34.0, 0.0), (44.0, 0.0)])
++    _append_synthetic_lane(recording, "left", [(0.0, 4.0), (10.0, 4.0), (20.0, 4.0)])
++    _append_synthetic_lane(recording, "right", [(0.0, -4.0), (10.0, -4.0), (20.0, -4.0)])
++
++    result = run_following_lane(recording)
++    frame = result["frames"][0]
++
++    assert frame["ego_lane"]["lane_id"] == "upstream"
++    assert frame["left_lane"]["lane_id"] == "left"
++    assert frame["right_lane"]["lane_id"] == "right"
++    assert frame["left_lane"]["method"] == "geometric_fallback"
++    assert frame["right_lane"]["method"] == "geometric_fallback"
++    assert frame["left_lane"]["logical_lane_id"] != frame["ego_lane"]["logical_lane_id"]
++    assert frame["right_lane"]["logical_lane_id"] != frame["ego_lane"]["logical_lane_id"]
++    upstream = next(lane for lane in result["lane_geometry"] if lane["lane_id"] == "upstream")
++    continuation = next(
++        item
++        for item in upstream["curvature_continuations"]
++        if item.get("destination_lane_id")
++    )
++    assert continuation is not None
++    assert continuation["destination_lane_id"] == "downstream"
++
++
+ def test_nearest_drivable_road_boundary_is_normalized_as_lane_line():
+     recording = synthetic_recording()
+     lines = recording["ld_feature_store"]["lane_lines"]
+diff --git a/tests/unit/test_following_lane_explorer_visualization.py b/tests/unit/test_following_lane_explorer_visualization.py
+index 16c8e53..514f26d 100644
+--- a/tests/unit/test_following_lane_explorer_visualization.py
++++ b/tests/unit/test_following_lane_explorer_visualization.py
+@@ -47,6 +47,7 @@ renderLdTimeline();
+                 "state": "following_lane_without_lead",
+                 "reason": "no_stable_lead_in_ego_route_lane",
+                 "ego_lane": {
++                    "lane_id": "ego-physical",
+                     "logical_lane_id": "route_lane_0001",
+                     "confidence": "high",
+                     "method": "polygon_and_heading",
+@@ -63,8 +64,16 @@ renderLdTimeline();
+ 
+     assert "const LANE_TRACKER =" in page
+     assert 'id="showLaneTracker"' in page
++    assert 'id="showLaneTrackerAdjacent" type="checkbox" checked />' in page
++    assert 'id="showLaneTrackerRoutes"' in page
+     assert 'id="laneTrackerTimeline"' not in page
+     assert "traces.unshift(...laneTrackerTraces());" in page
++    assert "function trackerPhysicalPolygonTrace" in page
++    assert "lane.lane_id !== assignment.lane_id" in page
++    assert "showLaneTrackerAdjacent" in page
++    assert "roles.unshift(['left', frame.left_lane]);" in page
++    assert "function trackerEgoRouteTrace" in page
++    assert "ego logical route context" in page
+     assert "updateLaneTrackerTimelineCursor();" not in page
+     assert "renderLaneTrackerTimeline();" not in page
+     assert 'id="showLdGapExtensions"' in page
+@@ -76,3 +85,99 @@ renderLdTimeline();
+     assert '<input id="followEgo" type="checkbox" checked />' in page
+     assert '<input id="showNearbyLd" type="checkbox" />' in page
+     assert "'LD line: intersection=true', '#d946ef', 'solid', 2.0, 0.82" in page
++
++
++def test_lane_tracker_active_highlight_uses_physical_lane_id(tmp_path: Path):
++    base = tmp_path / "original.html"
++    base.write_text(
++        """<!doctype html><html><head><style></style></head><body>
++<main><aside>
++<label><input id="followEgo" type="checkbox" /> Follow ego with current zoom</label>
++<label><input id="showNearbyLd" type="checkbox" checked /> Highlight current nearby LD</label>
++    <div id="animControls">
++</aside><section>
++    <div class="panel"><div id="map"></div></div>
++</section></main><script>
++const DATA = {};
++const DEBUG_BASE = `debug/${encodeURIComponent(DATA.summary.recording)}`;
++const traj = {rel_t:[0]};
++let currentIndex = 0;
++function setFrame(index) {
++  updateLdTimelineCursor();
++}
++function ldTraces(){return [];}
++const intersectionStyle = ['LD line: intersection=true', '#d946ef', 'solid', 4.2, 0.82];
++function render() {
++  const traces = [];
++  traces.unshift(...ldTraces());
++}
++filter.addEventListener('change', render);
++renderTimeline();
++renderLdTimeline();
++</script></body></html>""",
++        encoding="utf-8",
++    )
++    result = {
++        "recording_id": "sample",
++        "lane_geometry": [
++            {
++                "lane_id": "ego-physical",
++                "logical_lane_id": "route_lane_0001",
++                "polygon_lcs_m": [[0, 0], [1, 0], [1, 1]],
++                "centerline_lcs_m": [[0, 0], [1, 1]],
++            },
++            {
++                "lane_id": "rejected-right",
++                "logical_lane_id": "route_lane_0001",
++                "polygon_lcs_m": [[0, -2], [1, -2], [1, -1]],
++                "centerline_lcs_m": [[0, -2], [1, -1]],
++            },
++            {
++                "lane_id": "left-physical",
++                "logical_lane_id": "route_lane_0002",
++                "polygon_lcs_m": [[0, 2], [1, 2], [1, 3]],
++                "centerline_lcs_m": [[0, 2], [1, 3]],
++            },
++        ],
++        "probable_lane_bridges": [
++            {"logical_lane_id": "route_lane_0001", "polygon_lcs_m": [[2, 0], [3, 0], [3, 1]]}
++        ],
++        "intervals": [],
++        "frames": [
++            {
++                "frame_index": 0,
++                "time_since_start_s": 0.0,
++                "state": "following_lane_without_lead",
++                "reason": "no_stable_lead_in_ego_route_lane",
++                "ego_lane": {
++                    "lane_id": "ego-physical",
++                    "logical_lane_id": "route_lane_0001",
++                    "confidence": "high",
++                    "method": "polygon_and_heading",
++                },
++                "left_lane": {
++                    "lane_id": "left-physical",
++                    "logical_lane_id": "route_lane_0002",
++                },
++                "right_lane": {
++                    "lane_id": None,
++                    "logical_lane_id": None,
++                    "rejected_lane_id": "rejected-right",
++                    "method": "same_route_lane_as_ego_rejected",
++                    "confidence": "unknown",
++                },
++                "lead": None,
++            }
++        ],
++    }
++    output = tmp_path / "combined.html"
++    render_original_explorer_with_lane_tracker(base, result, output)
++    page = output.read_text(encoding="utf-8")
++
++    assert "lane.lane_id !== assignment.lane_id" in page
++    assert "lane.logical_lane_id !== assignment.logical_lane_id" in page
++    assert "lane.lane_id === assignment.lane_id" in page
++    assert "showLaneTrackerRoutes" in page
++    assert "showLaneTrackerAdjacent" in page
++    assert "active ego physical:" in page
++    assert "same_route_lane_as_ego_rejected" in page

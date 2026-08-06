@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import math
 from pathlib import Path
 from typing import Any
+
+from PIL import Image, ImageDraw
 
 
 def _rel(path: Path, base: Path) -> str:
@@ -41,6 +44,41 @@ def _read_raw_content(path: Path | None) -> tuple[str | None, dict[str, Any] | N
     return content, data.get("response", {}).get("usage")
 
 
+def _make_contact_sheet(candidate: dict[str, Any], candidate_id: str, run_root: Path) -> Path | None:
+    image_paths = [Path(path) for path in candidate.get("bev_paths", []) if Path(path).is_file()]
+    if not image_paths:
+        return None
+    out_dir = run_root / "review_contact_sheets"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{candidate_id}_contact.jpg"
+    if out_path.is_file():
+        return out_path
+
+    thumb_w = 360
+    label_h = 22
+    gap = 8
+    cols = min(3, len(image_paths))
+    rows = math.ceil(len(image_paths) / cols)
+    thumbs: list[tuple[Image.Image, str]] = []
+    for path in image_paths:
+        image = Image.open(path).convert("RGB")
+        scale = thumb_w / image.width
+        thumb_h = max(1, int(image.height * scale))
+        image = image.resize((thumb_w, thumb_h), Image.Resampling.LANCZOS)
+        thumbs.append((image, path.stem.rsplit("_frame_", 1)[-1]))
+    cell_h = max(image.height for image, _ in thumbs) + label_h
+    sheet = Image.new("RGB", (cols * thumb_w + (cols + 1) * gap, rows * cell_h + (rows + 1) * gap), "white")
+    draw = ImageDraw.Draw(sheet)
+    for index, (image, label) in enumerate(thumbs):
+        row, col = divmod(index, cols)
+        x = gap + col * (thumb_w + gap)
+        y = gap + row * (cell_h + gap)
+        sheet.paste(image, (x, y + label_h))
+        draw.text((x, y), f"frame {label}", fill=(20, 28, 36))
+    sheet.save(out_path, quality=88)
+    return out_path
+
+
 def _load_rows(run_root: Path, candidate_root: Path, scenario: str) -> list[dict[str, Any]]:
     manifest_path = run_root / f"manifest_{scenario}.json"
     if not manifest_path.is_file():
@@ -57,7 +95,7 @@ def _load_rows(run_root: Path, candidate_root: Path, scenario: str) -> list[dict
         candidate = _load_json(candidate_path).get("candidate", {}) if candidate_path.is_file() else {}
         raw_path = _latest_match(run_root / "raw_responses" / scenario, f"{candidate_id}_*.json")
         request_path = _latest_match(run_root / "request_payloads" / scenario, f"{candidate_id}_*.json")
-        contact_path = run_root / "review_contact_sheets" / f"{candidate_id}_contact.jpg"
+        contact_path = _make_contact_sheet(candidate, candidate_id, run_root)
         raw_content, usage = _read_raw_content(raw_path)
         rows.append(
             {
@@ -237,4 +275,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

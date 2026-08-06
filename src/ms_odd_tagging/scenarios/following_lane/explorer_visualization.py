@@ -19,7 +19,9 @@ TRACKER_CSS = """
 TRACKER_CONTROLS = """
     <div class="laneTrackerSection">
       <h3>Generated Lane Tracker</h3>
-      <label><input id="showLaneTracker" type="checkbox" checked /> Show left / ego / right lane areas</label>
+      <label><input id="showLaneTracker" type="checkbox" checked /> Show active ego lane area</label>
+      <label><input id="showLaneTrackerAdjacent" type="checkbox" checked /> Show left / right lane areas</label>
+      <label><input id="showLaneTrackerRoutes" type="checkbox" /> Show logical route continuity</label>
       <label><input id="showLaneTrackerBridges" type="checkbox" checked /> Show probable gap extensions</label>
       <label><input id="showLaneTrackerCenterlines" type="checkbox" /> Show tracked centerlines</label>
       <label><input id="showLaneTrackerLead" type="checkbox" checked /> Highlight selected lead</label>
@@ -27,6 +29,7 @@ TRACKER_CONTROLS = """
       <div class="laneTrackerLegend">
         <span style="--lane-color:#06b6d4">left</span>
         <span style="--lane-color:#22c55e">ego</span>
+        <span style="--lane-color:#15803d">ego logical route</span>
         <span style="--lane-color:#f59e0b">right</span>
         <span style="--lane-color:#ef4444">lead</span>
       </div>
@@ -178,17 +181,18 @@ function trackerFrame() {
 
 function trackerRoleDefinitions(frame) {
   if (!frame) return [];
-  return [
-    ['left', frame.left_lane],
-    ['ego', frame.ego_lane],
-    ['right', frame.right_lane]
-  ].filter(([, assignment]) => assignment && assignment.logical_lane_id);
+  const roles = [['ego', frame.ego_lane]];
+  if (document.getElementById('showLaneTrackerAdjacent').checked) {
+    roles.unshift(['left', frame.left_lane]);
+    roles.push(['right', frame.right_lane]);
+  }
+  return roles.filter(([, assignment]) => assignment && assignment.lane_id);
 }
 
-function trackerPolygonTrace(role, assignment) {
+function trackerPhysicalPolygonTrace(role, assignment) {
   const x = [], y = [];
   for (const lane of LANE_TRACKER.lanes) {
-    if (lane.logical_lane_id !== assignment.logical_lane_id ||
+    if (lane.lane_id !== assignment.lane_id ||
         !Array.isArray(lane.polygon_lcs_m) || lane.polygon_lcs_m.length < 3) continue;
     for (const point of lane.polygon_lcs_m) {
       x.push(point[0]); y.push(point[1]);
@@ -202,15 +206,15 @@ function trackerPolygonTrace(role, assignment) {
     x, y,
     fill: 'toself',
     fillcolor: TRACKER_COLORS[role] + '24',
-    line: {color: TRACKER_COLORS[role], width: role === 'ego' ? 3 : 2},
-    hovertemplate: `${role} tracked lane<br>confidence=${assignment.confidence || 'unknown'}<br>method=${assignment.method || 'unknown'}<extra></extra>`
+    line: {color: TRACKER_COLORS[role], width: role === 'ego' ? 5 : 3},
+    hovertemplate: `${role} active physical lane<br>physical=${assignment.lane_id || 'none'}<br>logical=${assignment.logical_lane_id || 'none'}<br>confidence=${assignment.confidence || 'unknown'}<br>method=${assignment.method || 'unknown'}<extra></extra>`
   };
 }
 
-function trackerCenterlineTrace(role, assignment) {
+function trackerPhysicalCenterlineTrace(role, assignment) {
   const x = [], y = [];
   for (const lane of LANE_TRACKER.lanes) {
-    if (lane.logical_lane_id !== assignment.logical_lane_id ||
+    if (lane.lane_id !== assignment.lane_id ||
         !Array.isArray(lane.centerline_lcs_m) || lane.centerline_lcs_m.length < 2) continue;
     for (const point of lane.centerline_lcs_m) {
       x.push(point[0]); y.push(point[1]);
@@ -226,7 +230,101 @@ function trackerCenterlineTrace(role, assignment) {
   };
 }
 
-function trackerBridgeTrace(role, assignment) {
+function trackerCurvatureContinuationTraces(role, assignment) {
+  if (!assignment || !assignment.lane_id) return [];
+  const traces = [];
+  for (const lane of LANE_TRACKER.lanes) {
+    if (lane.lane_id !== assignment.lane_id ||
+        !Array.isArray(lane.curvature_continuations)) continue;
+    for (const continuation of lane.curvature_continuations) {
+      if (!continuation || !continuation.destination_lane_id) continue;
+      const gap = continuation.inferred_gap_polygon_lcs_m || [];
+      if (gap.length >= 3) {
+        const x = [], y = [];
+        for (const point of gap) {
+          x.push(point[0]); y.push(point[1]);
+        }
+        x.push(gap[0][0], null);
+        y.push(gap[0][1], null);
+        traces.push({
+          type: 'scatter', mode: 'lines',
+          name: `${role} inferred continuation gap`,
+          x, y,
+          fill: 'toself',
+          fillcolor: TRACKER_COLORS[role] + '12',
+          line: {color: '#84cc16', width: 3, dash: 'dash'},
+          hovertemplate:
+            `${role} inferred continuation gap<br>` +
+            `source=${continuation.source_lane_id || assignment.lane_id}<br>` +
+            `destination=${continuation.destination_lane_id || 'none'}<br>` +
+            `bridged=${continuation.bridged_distance_m || 'n/a'} m<br>` +
+            `${continuation.method || 'curvature continuation'}<extra></extra>`
+        });
+      }
+      const observed = continuation.observed_destination_polygon_lcs_m || [];
+      if (observed.length >= 3) {
+        const x = [], y = [];
+        for (const point of observed) {
+          x.push(point[0]); y.push(point[1]);
+        }
+        x.push(observed[0][0], null);
+        y.push(observed[0][1], null);
+        traces.push({
+          type: 'scatter', mode: 'lines',
+          name: `${role} observed downstream continuation`,
+          x, y,
+          fill: 'toself',
+          fillcolor: TRACKER_COLORS[role] + '16',
+          line: {color: '#65a30d', width: 3, dash: 'dot'},
+          hovertemplate:
+            `${role} observed downstream continuation<br>` +
+            `source=${continuation.source_lane_id || assignment.lane_id}<br>` +
+            `destination=${continuation.destination_lane_id || 'none'}<br>` +
+            `confidence=${continuation.confidence || 'reduced'}<extra></extra>`
+        });
+      }
+      const projected = continuation.projected_centerline_lcs_m || [];
+      if (projected.length >= 2) {
+        traces.push({
+          type: 'scattergl', mode: 'lines',
+          name: `${role} projected continuation path`,
+          x: projected.map(point => point[0]),
+          y: projected.map(point => point[1]),
+          line: {color: '#bef264', width: 2, dash: 'dashdot'},
+          hoverinfo: 'skip'
+        });
+      }
+    }
+  }
+  return traces;
+}
+
+function trackerEgoRouteTrace(assignment) {
+  if (!assignment || !assignment.logical_lane_id) return null;
+  const x = [], y = [];
+  for (const lane of LANE_TRACKER.lanes) {
+    if (lane.logical_lane_id !== assignment.logical_lane_id ||
+        lane.lane_id === assignment.lane_id ||
+        !Array.isArray(lane.polygon_lcs_m) || lane.polygon_lcs_m.length < 3) continue;
+    for (const point of lane.polygon_lcs_m) {
+      x.push(point[0]); y.push(point[1]);
+    }
+    x.push(lane.polygon_lcs_m[0][0], null);
+    y.push(lane.polygon_lcs_m[0][1], null);
+  }
+  if (!x.length) return null;
+  return {
+    type: 'scatter', mode: 'lines', name: 'ego logical route context',
+    x, y,
+    fill: 'toself',
+    fillcolor: TRACKER_COLORS.ego + '08',
+    line: {color: '#15803d', width: 1.5, dash: 'dot'},
+    hovertemplate: `ego logical route context<br>logical=${assignment.logical_lane_id || 'none'}<br>active physical lane=${assignment.lane_id || 'none'}<extra></extra>`
+  };
+}
+
+function trackerBridgeTrace(assignment) {
+  if (!assignment || !assignment.logical_lane_id) return null;
   const x = [], y = [];
   for (const bridge of LANE_TRACKER.bridges) {
     if (bridge.logical_lane_id !== assignment.logical_lane_id ||
@@ -239,12 +337,12 @@ function trackerBridgeTrace(role, assignment) {
   }
   if (!x.length) return null;
   return {
-    type: 'scatter', mode: 'lines', name: `${role} probable lane extension`,
+    type: 'scatter', mode: 'lines', name: 'ego logical route extension',
     x, y,
     fill: 'toself',
-    fillcolor: TRACKER_COLORS[role] + '18',
-    line: {color: TRACKER_COLORS[role], width: 2, dash: 'dash'},
-    hovertemplate: `${role} probable gap extension<extra></extra>`
+    fillcolor: TRACKER_COLORS.ego + '10',
+    line: {color: '#15803d', width: 2, dash: 'dash'},
+    hovertemplate: `ego logical route probable gap extension<br>logical=${assignment.logical_lane_id || 'none'}<extra></extra>`
   };
 }
 
@@ -254,16 +352,23 @@ function laneTrackerTraces() {
   const traces = [];
   if (document.getElementById('showLaneTracker').checked) {
     for (const [role, assignment] of trackerRoleDefinitions(frame)) {
-      const polygon = trackerPolygonTrace(role, assignment);
+      const polygon = trackerPhysicalPolygonTrace(role, assignment);
       if (polygon) traces.push(polygon);
-      if (document.getElementById('showLaneTrackerBridges').checked) {
-        const bridge = trackerBridgeTrace(role, assignment);
-        if (bridge) traces.push(bridge);
+      for (const continuation of trackerCurvatureContinuationTraces(role, assignment)) {
+        traces.push(continuation);
       }
       if (document.getElementById('showLaneTrackerCenterlines').checked) {
-        const centerline = trackerCenterlineTrace(role, assignment);
+        const centerline = trackerPhysicalCenterlineTrace(role, assignment);
         if (centerline) traces.push(centerline);
       }
+    }
+  }
+  if (document.getElementById('showLaneTrackerRoutes').checked) {
+    const route = trackerEgoRouteTrace(frame.ego_lane);
+    if (route) traces.push(route);
+    if (document.getElementById('showLaneTrackerBridges').checked) {
+      const bridge = trackerBridgeTrace(frame.ego_lane);
+      if (bridge) traces.push(bridge);
     }
   }
   if (document.getElementById('showLaneTrackerLead').checked &&
@@ -298,6 +403,18 @@ function laneRoleSummary(role, assignment) {
   return `${role}: ${assignment.confidence || 'unknown'} / ${assignment.method || 'unknown'}${direction}`;
 }
 
+function laneContinuationSummary(assignment) {
+  if (!assignment || !assignment.lane_id) return 'continuation: none';
+  const lane = LANE_TRACKER.lanes.find(item => item.lane_id === assignment.lane_id);
+  const continuations = lane && Array.isArray(lane.curvature_continuations)
+    ? lane.curvature_continuations.filter(item => item.destination_lane_id)
+    : [];
+  if (!continuations.length) return 'continuation: none';
+  const first = continuations[0];
+  return `continuation: ${first.source_lane_id || assignment.lane_id} → ${first.destination_lane_id} · ` +
+    `${first.bridged_distance_m || 'n/a'} m inferred gap · ${first.confidence || 'reduced confidence'}`;
+}
+
 function updateLaneTrackerReadout() {
   const frame = trackerFrame();
   const target = document.getElementById('laneTrackerReadout');
@@ -313,6 +430,8 @@ function updateLaneTrackerReadout() {
     `${laneRoleSummary('left', frame.left_lane)}<br>` +
     `${laneRoleSummary('ego', frame.ego_lane)}<br>` +
     `${laneRoleSummary('right', frame.right_lane)}<br>` +
+    `active ego physical: ${frame.ego_lane?.lane_id || 'none'} · ego logical route: ${frame.ego_lane?.logical_lane_id || 'none'}<br>` +
+    `${laneContinuationSummary(frame.ego_lane)}<br>` +
     `${lead}<br>${frame.reason.replaceAll('_', ' ')}`;
 }
 """
@@ -439,8 +558,8 @@ def render_original_explorer_with_lane_tracker(
     page = _replace_once(
         page,
         "filter.addEventListener('change', render);",
-        "for (const id of ['showLaneTracker','showLaneTrackerBridges',"
-        "'showLaneTrackerCenterlines','showLaneTrackerLead',"
+        "for (const id of ['showLaneTracker','showLaneTrackerAdjacent','showLaneTrackerBridges',"
+        "'showLaneTrackerRoutes','showLaneTrackerCenterlines','showLaneTrackerLead',"
         "'showLdGapExtensions']) "
         "document.getElementById(id).addEventListener('change', render);\n"
         "filter.addEventListener('change', render);",
