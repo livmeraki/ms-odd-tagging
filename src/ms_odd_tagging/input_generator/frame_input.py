@@ -20,6 +20,10 @@ from ms_odd_tagging.input_generator.generation_profile import (
     GenerationProfiler,
     finalize_profile,
 )
+from ms_odd_tagging.input_generator.frame_tags import (
+    export_frame_tag_files,
+    scenario_key_set,
+)
 
 from .model_input import (
     DEFAULT_LD_LINE_PATTERNS,
@@ -351,8 +355,24 @@ def build_recording(
         ),
         encoding="utf-8",
     )
+    frame_tags_dir = recording_dir / "recording_frame_tags_1fps"
+    frame_tags_manifest = export_frame_tag_files(
+        recording_id=recording_id,
+        frames=recording.get("frames", []),
+        events=events,
+        output_dir=frame_tags_dir,
+        scenarios=scenario_key_set(
+            events=events,
+            configured_scenarios=config["enabled_scenarios"],
+        ),
+        rule_config_version=config["config_version"],
+        source_event_json=rule_path.name,
+    )
     if profiler is not None:
-        profiler.add_output_files([rule_path])
+        profiler.add_output_files(
+            [rule_path, frame_tags_dir / "manifest.json"]
+            + [frame_tags_dir / row["path"] for row in frame_tags_manifest["frames"]]
+        )
 
     rows = []
     progress = ProgressReporter(f"frame-input {recording_id}", len(frames), "frame")
@@ -424,6 +444,7 @@ def build_recording(
         "generated_frame_count": len(rows),
         "frames_per_second": frames_per_second,
         "recording_rule_events": str(rule_path),
+        "recording_frame_tags": str(frame_tags_dir),
         "frames": rows,
     }, len(rows)
 

@@ -6,7 +6,12 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 
-ScenarioName = Literal["waiting_for_pedestrian_to_cross", "on_intersection"]
+ScenarioName = Literal[
+    "waiting_for_pedestrian_to_cross",
+    "on_intersection",
+    "starting_u_turn",
+    "traffic_light_episode",
+]
 
 
 @dataclass(frozen=True)
@@ -72,5 +77,5 @@ class ValidationResult:
     review_required: bool
     reasons: list[str]
     decision: VlmDecision | None = None
+    decisions: list[VlmDecision] = field(default_factory=list)
     raw_text: str | None = None
-

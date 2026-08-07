@@ -25,6 +25,10 @@ from ms_odd_tagging.features.traffic_relations import (
     build_traffic_relations,
     summarize_traffic_relations,
 )
+from ms_odd_tagging.features.traffic_light_context import (
+    build_traffic_light_context,
+    summarize_traffic_light_context,
+)
 from .base import ScenarioDetector
 from .crosswalks import CrosswalkRelationDetector
 from .dynamics import JerkDetector, LateralAccelerationDetector, SPEED_BAND_ORDER, SpeedBandDetector
@@ -51,7 +55,7 @@ RULE_BASED_SCENARIOS = PHASE1_SCENARIOS + PHASE2_SCENARIOS + PHASE2B_SCENARIOS +
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[4] / "configs" / "direct_scenarios.yaml"
 
 def validate_config(config: dict[str, Any]) -> None:
-    required = {"config_version", "detector_version", "enabled_scenarios", "feature_extraction", "speed_bands", "lateral_acceleration", "jerk", "turn_detection", "turn_speed_classification", "lane_change_detection", "road_feature_relations", "object_relations", "pedestrian_crosswalk_interactions", "object_path_crossing_interactions", "traffic_relations", "traffic_interactions"}
+    required = {"config_version", "detector_version", "enabled_scenarios", "feature_extraction", "speed_bands", "lateral_acceleration", "jerk", "turn_detection", "turn_speed_classification", "lane_change_detection", "road_feature_relations", "object_relations", "pedestrian_crosswalk_interactions", "object_path_crossing_interactions", "traffic_relations", "traffic_interactions", "traffic_light_context"}
     missing = sorted(required - config.keys())
     if missing: raise ValueError(f"rule configuration missing keys: {', '.join(missing)}")
     unknown = sorted(set(config["enabled_scenarios"]) - set(RULE_BASED_SCENARIOS))
@@ -409,6 +413,37 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("traffic_interactions: slow lead release speed must be >= entry speed")
     if traffic_interactions["slow_lead_release_relative_speed_mps"] > traffic_interactions["slow_lead_entry_relative_speed_mps"]:
         raise ValueError("traffic_interactions: slow lead relative release must be <= entry")
+    traffic_light = config["traffic_light_context"]
+    if not traffic_light.get("detector_version"):
+        raise ValueError("traffic_light_context: detector_version is required")
+    if not traffic_light.get("provenance"):
+        raise ValueError("traffic_light_context: provenance is required")
+    for key in (
+        "intersection_approach_distance_m",
+        "minimum_intersection_topology_confidence",
+        "traffic_light_lateral_entry_m",
+        "traffic_light_lateral_release_m",
+        "traffic_light_backward_tolerance_m",
+        "maximum_stopline_traffic_light_longitudinal_gap_m",
+        "minimum_relevant_traffic_light_confidence",
+        "stationary_speed_mps",
+        "minimum_event_duration_s",
+        "maximum_missing_gap_s",
+        "event_merge_gap_s",
+    ):
+        value = traffic_light.get(key)
+        if not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f"traffic_light_context: {key} must be non-negative")
+    for key in ("stopping_acceleration_mps2", "accelerating_acceleration_mps2"):
+        value = traffic_light.get(key)
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"traffic_light_context: {key} must be numeric")
+    if traffic_light["traffic_light_lateral_release_m"] < traffic_light["traffic_light_lateral_entry_m"]:
+        raise ValueError("traffic_light_context: release lateral threshold must be >= entry")
+    if traffic_light["minimum_intersection_topology_confidence"] > 1:
+        raise ValueError("traffic_light_context: topology confidence threshold must be <= 1")
+    if traffic_light["minimum_relevant_traffic_light_confidence"] > 1:
+        raise ValueError("traffic_light_context: relevant-light confidence threshold must be <= 1")
 
 def load_config(path: Path | str | None = None) -> dict[str, Any]:
     config_path = Path(path) if path is not None else DEFAULT_CONFIG_PATH
@@ -439,6 +474,7 @@ def detect_events(
     pedestrian_crosswalk_relations: dict[str, Any] | None = None,
     object_path_crossing_relations: dict[str, Any] | None = None,
     traffic_relations: dict[str, Any] | None = None,
+    traffic_light_context: dict[str, Any] | None = None,
 ) -> tuple[list[ScenarioEvent], dict[str, Any]]:
     resolved = config or load_config(); validate_config(resolved); feature_config = resolved["feature_extraction"]
     features = extract_ego_motion_features(frames, max_sample_gap_s=feature_config["max_sample_gap_s"], heading_change_horizon_s=feature_config["heading_change_horizon_s"], jerk_mode=resolved["jerk"]["calculation_mode"])
@@ -607,16 +643,17 @@ def detect_recording_events(
     lane_change_events = [
         event for event in events if event.scenario == "changing_lane"
     ]
+    traffic_features = extract_ego_motion_features(
+        recording.get("frames", []),
+        max_sample_gap_s=resolved["feature_extraction"]["max_sample_gap_s"],
+        heading_change_horizon_s=resolved["feature_extraction"][
+            "heading_change_horizon_s"
+        ],
+        jerk_mode=resolved["jerk"]["calculation_mode"],
+    )
     traffic_relation_payload = build_traffic_relations(
         recording.get("frames", []),
-        extract_ego_motion_features(
-            recording.get("frames", []),
-            max_sample_gap_s=resolved["feature_extraction"]["max_sample_gap_s"],
-            heading_change_horizon_s=resolved["feature_extraction"][
-                "heading_change_horizon_s"
-            ],
-            jerk_mode=resolved["jerk"]["calculation_mode"],
-        ),
+        traffic_features,
         object_relation_payload,
         resolved,
         frame_context=frame_context,
@@ -660,6 +697,18 @@ def detect_recording_events(
     quality["traffic_relations"] = summarize_traffic_relations(
         traffic_relation_payload
     )
+    traffic_light_payload = build_traffic_light_context(
+        recording,
+        traffic_features,
+        relations,
+        traffic_relation_payload,
+        resolved,
+        frame_context=frame_context,
+    )
+    quality["traffic_light_context"] = summarize_traffic_light_context(
+        traffic_light_payload
+    )
+    events.sort(key=lambda event: (event.start_timestamp_s, event.scenario, event.end_timestamp_s))
     quality["traffic_detector_quality"] = traffic_quality
     return events, quality
 
@@ -732,6 +781,7 @@ def main() -> int:
     parser.add_argument("--object-relation-debug-output", type=Path)
     parser.add_argument("--pedestrian-crosswalk-debug-output", type=Path)
     parser.add_argument("--object-path-crossing-debug-output", type=Path)
+    parser.add_argument("--traffic-light-context-debug-output", type=Path)
     args = parser.parse_args()
     config = load_config(args.config)
     if args.summary:
@@ -802,6 +852,40 @@ def main() -> int:
             parents=True, exist_ok=True
         )
         args.object_path_crossing_debug_output.write_text(
+            json.dumps(debug, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    if args.traffic_light_context_debug_output:
+        road_debug = road_debug or build_road_feature_relations(
+            canonical, config["road_feature_relations"]
+        )
+        object_debug = object_debug or build_object_relations(
+            canonical, config["object_relations"]
+        )
+        feature_config = config["feature_extraction"]
+        features = extract_ego_motion_features(
+            canonical.get("frames", []),
+            max_sample_gap_s=feature_config["max_sample_gap_s"],
+            heading_change_horizon_s=feature_config["heading_change_horizon_s"],
+            jerk_mode=config["jerk"]["calculation_mode"],
+        )
+        traffic_debug = build_traffic_relations(
+            canonical.get("frames", []),
+            features,
+            object_debug,
+            config,
+        )
+        debug = build_traffic_light_context(
+            canonical,
+            features,
+            road_debug,
+            traffic_debug,
+            config,
+        )
+        args.traffic_light_context_debug_output.parent.mkdir(
+            parents=True, exist_ok=True
+        )
+        args.traffic_light_context_debug_output.write_text(
             json.dumps(debug, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )

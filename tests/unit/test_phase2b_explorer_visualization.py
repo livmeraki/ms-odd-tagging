@@ -11,6 +11,7 @@ SCRIPT_DIR = Path(__file__).resolve().parents[2] / "scripts" / "odld_explorer"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import generate_odld_dataset_explorers_w_scenario_tag as explorer  # noqa: E402
+import generate_odld_dataset_explorers_w_frame_scenario_tag as frame_explorer  # noqa: E402
 
 from ms_odd_tagging.tagger.rule_based.scenario_event import ScenarioEvent  # noqa: E402
 
@@ -691,7 +692,7 @@ def test_stale_window_events_are_replaced_by_current_detection(
         explorer, "detect_recording_events", lambda canonical, config: ([current], {})
     )
     payload = explorer.build_tag_payload("sample", tmp_path, _canonical())
-    assert payload["configVersion"] == "phase3c-forward-arc-crossing-v3"
+    assert payload["configVersion"] == "phase2-traffic-light-vlm-episode-candidates-v1"
     assert payload["sourceKind"] == (
         "canonical_per_frame_rule_events_stale_window_replaced"
     )
@@ -731,6 +732,67 @@ def test_unreliable_jerk_events_are_hidden_from_visualization(
     assert [event["scenario"] for event in payload["events"]] == [
         "traversing_crosswalk"
     ]
+
+
+def test_frame_explorer_loads_frame_tags_without_event_source(tmp_path: Path) -> None:
+    tag_dir = tmp_path / "sample_motional_frame_tags_odld_1fps"
+    tag_dir.mkdir()
+    manifest = {
+        "schema_version": "motional-scenario-frame-tags-1fps-manifest-v1",
+        "recording_id": "sample",
+        "source_event_json": "sample_motional_windows_odld.json",
+        "rule_config_version": "test",
+        "scenarios": ["high_magnitude_speed", "near_multiple_pedestrians"],
+        "frames": [
+            {"frame": 0, "timestamp_s": 0.0, "path": "frame_000000.json"},
+            {"frame": 10, "timestamp_s": 1.0, "path": "frame_000010.json"},
+        ],
+    }
+    (tag_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    for payload in (
+        {
+            "schema_version": "motional-scenario-frame-tags-1fps-v1",
+            "recording_id": "sample",
+            "frame": 0,
+            "timestamp_s": 0.0,
+            "tags": {
+                "motional_scenarios": {
+                    "high_magnitude_speed": True,
+                    "near_multiple_pedestrians": False,
+                }
+            },
+        },
+        {
+            "schema_version": "motional-scenario-frame-tags-1fps-v1",
+            "recording_id": "sample",
+            "frame": 10,
+            "timestamp_s": 1.0,
+            "tags": {
+                "motional_scenarios": {
+                    "high_magnitude_speed": True,
+                    "near_multiple_pedestrians": True,
+                }
+            },
+        },
+    ):
+        (tag_dir / f"frame_{payload['frame']:06d}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    tags = frame_explorer.build_frame_tag_payload("sample", tmp_path)
+
+    assert tags["sourceKind"] == "frame_based_motional_scenario_tags_1fps"
+    assert tags["frameTagByFrame"]["10"] == {
+        "high_magnitude_speed": True,
+        "near_multiple_pedestrians": True,
+    }
+    assert [event["scenario"] for event in tags["events"]] == [
+        "high_magnitude_speed",
+        "near_multiple_pedestrians",
+    ]
+    assert "tags.frameTagByFrame[String(currentIndex)]" in (
+        frame_explorer.TAG_SCRIPT_FUNCTIONS
+    )
 
 
 def test_canonical_with_ld_topology_adds_frame_context() -> None:
@@ -810,7 +872,7 @@ def test_ld_topology_payload_is_compact_for_explorer() -> None:
 def test_relation_payload_contains_geometry_states_and_footprint() -> None:
     payload = explorer.build_road_feature_payload(_canonical())
     assert payload["schemaVersion"] == "road-feature-relations-v1"
-    assert payload["configVersion"] == "phase3c-forward-arc-crossing-v3"
+    assert payload["configVersion"] == "phase2-traffic-light-vlm-episode-candidates-v1"
     assert payload["egoFootprint"] == {"length_m": 4.8, "width_m": 2.0}
     assert payload["tracks"][0]["trackId"] == "crosswalk:cw1"
     assert payload["tracks"][0]["x"]
@@ -862,7 +924,7 @@ def test_phase3a_object_payload_and_overlay_hooks() -> None:
     ]
     payload = explorer.build_object_relation_payload(canonical)
     assert payload["schemaVersion"] == "ego-object-relations-v1"
-    assert payload["configVersion"] == "phase3c-forward-arc-crossing-v3"
+    assert payload["configVersion"] == "phase2-traffic-light-vlm-episode-candidates-v1"
     assert payload["frames"][0]["objects"][0]["category"] == "pedestrian"
     assert payload["frames"][0]["objects"][0]["annotationType"] == "dynamic"
     assert payload["frames"][0]["objects"][0]["speedMps"] == 5.0
@@ -924,7 +986,7 @@ def test_phase3c_path_crossing_payload_controls_and_colors() -> None:
     assert payload["schemaVersion"] == (
         "object-ego-forward-arc-crossing-relations-v3"
     )
-    assert payload["configVersion"] == "phase3c-forward-arc-crossing-v3"
+    assert payload["configVersion"] == "phase2-traffic-light-vlm-episode-candidates-v1"
     assert payload["arc"]["outer_radius_m"] == 30.0
     assert payload["arc"]["half_angle_deg"] == 30.0
     assert payload["egoPath"]
@@ -948,3 +1010,88 @@ def test_phase3c_path_crossing_payload_controls_and_colors() -> None:
         "crossed_by_vehicle",
     ):
         assert f"{label}:" in explorer.TAG_SCRIPT_FUNCTIONS
+
+
+def test_traffic_light_context_payload_controls_and_overlay_hooks() -> None:
+    canonical = _canonical()
+    stopline = {
+        "roadmark_id": "sl1",
+        "class": "stopline",
+        "subclass": None,
+        "shape_type": "polygon",
+        "points": [
+            {"position_lcs_m": [11.8, -3.0, 0.0]},
+            {"position_lcs_m": [12.2, -3.0, 0.0]},
+            {"position_lcs_m": [12.2, 3.0, 0.0]},
+            {"position_lcs_m": [11.8, 3.0, 0.0]},
+        ],
+        "attributes": {},
+        "ignored": False,
+    }
+    canonical["ld_feature_store"]["roadmarks"].append(stopline)
+    for frame in canonical["frames"]:
+        frame["objects"] = [
+            {
+                "object_id": "tl-main",
+                "class": "traffic_light_car",
+                "subclass": None,
+                "annotation_type": "static",
+                "position_lcs_m": [12.0, 1.0, 0.0],
+                "dimensions_m": {"length": 0.5, "width": 0.5, "height": 2.0},
+            },
+            {
+                "object_id": "lead",
+                "class": "car",
+                "subclass": None,
+                "annotation_type": "dynamic",
+                "position_lcs_m": [8.0, 0.0, 0.0],
+                "dimensions_m": {"length": 4.5, "width": 1.8, "height": 1.6},
+                "heading_relative_rad": 0.0,
+                "velocity_lcs_mps": [0.0, 0.0, 0.0],
+                "velocity_source": "measured",
+            },
+        ]
+        frame["ld"]["nearby_feature_ids"]["roadmarks"] = ["cw1", "sl1"]
+        frame["topology_class"] = "x-intersection"
+        frame["topology_confidence"] = 0.8
+        frame["distance_to_topology_polygon_m"] = 5.0
+    payload = explorer.build_traffic_light_context_payload(canonical)
+    assert payload["schemaVersion"] == "traffic-light-context-v1"
+    assert payload["configVersion"] == "phase2-traffic-light-vlm-episode-candidates-v1"
+    assert payload["frames"][0]["isTrafficLightIntersection"] is True
+    assert payload["frames"][0]["relevantTrafficLightIds"] == ["tl-main"]
+    assert payload["frames"][0]["stopline"]["id"] == "stopline:sl1"
+    assert payload["frames"][0]["lead"]["objectId"] == "object:lead"
+    for control in (
+        "showTrafficLightContext",
+        "showRelevantTrafficLights",
+        "showTrafficLightStoplines",
+        "showTrafficLightLead",
+        "showTrafficLightIntersectionFootprint",
+    ):
+        assert f'id="{control}"' in explorer.TAG_CONTROLS_HTML
+    assert 'id="trafficLightContext"' in explorer.TAG_CONTROLS_HTML
+    assert "const trafficLightContext = DATA.trafficLightContext" in explorer.TAG_SCRIPT_SETUP
+    assert "trafficLightContextTraces()" in explorer.TAG_SCRIPT_FUNCTIONS
+    assert "trafficLightObjectTraces()" in explorer.TAG_SCRIPT_FUNCTIONS
+    assert "trafficLightStoplineTraces()" in explorer.TAG_SCRIPT_FUNCTIONS
+    assert "trafficLightLeadTraces()" in explorer.TAG_SCRIPT_FUNCTIONS
+    assert "trafficLightIntersectionFootprintTrace()" in explorer.TAG_SCRIPT_FUNCTIONS
+    assert "updateTrafficLightContext()" in explorer.TAG_SCRIPT_FUNCTIONS
+    for label in (
+        "accelerating_at_traffic_light_with_lead",
+        "accelerating_at_traffic_light_without_lead",
+        "stationary_at_traffic_light_with_lead",
+        "stationary_at_traffic_light_without_lead",
+        "stopping_at_traffic_light_with_lead",
+        "stopping_at_traffic_light_without_lead",
+    ):
+        assert label in explorer.TAG_SCRIPT_FUNCTIONS
+    for evidence_key in (
+        "traffic_light_context",
+        "intersection_state",
+        "stopline_distance_m",
+        "ego_state",
+        "lead_longitudinal_distance_m",
+    ):
+        assert f'"{evidence_key}"' in inspect.getsource(explorer.compact_tag_evidence)

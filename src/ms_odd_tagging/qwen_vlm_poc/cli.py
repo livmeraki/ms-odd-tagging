@@ -152,10 +152,12 @@ def main() -> int:
             "review_required": validation.review_required,
             "reasons": validation.reasons,
             "decision": validation.decision.to_dict() if validation.decision else None,
+            "decisions": [decision.to_dict() for decision in validation.decisions],
         }
         manifest["validation"].append(validation_row)
-        if validation.accepted and validation.decision is not None:
-            accepted_by_recording.setdefault(candidate.recording_id, []).append((candidate, validation.decision))
+        if validation.accepted and validation.decisions:
+            for decision in validation.decisions:
+                accepted_by_recording.setdefault(candidate.recording_id, []).append((candidate, decision))
         elif args.export_review_bundles and validation.review_required:
             review_path = _copy_review_bundle(bundle_path, output_root, validation.reasons[0] if validation.reasons else "review_required")
             manifest["review_bundles"].append(str(review_path))

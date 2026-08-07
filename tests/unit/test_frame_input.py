@@ -11,6 +11,15 @@ from ms_odd_tagging.input_generator.frame_input import (
     following_lane_intervals_to_events,
     sample_frames_by_rate,
 )
+from ms_odd_tagging.input_generator.frame_tags import (
+    active_scenarios_from_event_json,
+    active_scenarios_from_frame_json,
+    export_frame_tags_from_event_json,
+    export_frame_tag_files,
+    sample_frames_nearest_1fps,
+    scenario_key_set,
+)
+from ms_odd_tagging.tagger.rule_based.registry import RULE_BASED_SCENARIOS
 from ms_odd_tagging.validator.frame_schema import validate_frame_file
 
 
@@ -68,6 +77,123 @@ def test_build_frame_json_is_single_frame_and_has_one_bev() -> None:
     assert "time_window" not in payload
     assert "bev_keyframes" not in payload
     assert "rule_based_events" not in payload
+
+
+def test_1fps_frame_tags_match_event_ranges_for_every_sampled_frame(tmp_path: Path) -> None:
+    frames = [
+        {"frame_index": index, "time_since_start_s": index * 0.1}
+        for index in range(26)
+    ]
+    event_json = {
+        "recording_id": "rec",
+        "rule_config_version": "test",
+        "scenario_taxonomy": ["following_lane_with_lead"],
+        "rule_based_events": [
+            {
+                "scenario": "high_magnitude_speed",
+                "start_frame": 9,
+                "end_frame": 11,
+                "start_timestamp_s": 0.9,
+                "end_timestamp_s": 1.1,
+            },
+            {
+                "scenario": "near_multiple_pedestrians",
+                "start_frame": 10,
+                "end_frame": 20,
+                "start_timestamp_s": 1.0,
+                "end_timestamp_s": 2.0,
+            },
+        ],
+    }
+    scenarios = scenario_key_set(
+        event_payload=event_json,
+        configured_scenarios=["waiting_for_pedestrian_to_cross"],
+    )
+    manifest = export_frame_tag_files(
+        recording_id="rec",
+        frames=frames,
+        events=event_json["rule_based_events"],
+        output_dir=tmp_path / "rec_motional_frame_tags_odld_1fps",
+        scenarios=scenarios,
+        rule_config_version="test",
+        source_event_json="recording_rule_events.json",
+    )
+
+    assert [frame["frame_index"] for frame in sample_frames_nearest_1fps(frames)] == [
+        0,
+        10,
+        20,
+    ]
+    assert len(manifest["frames"]) == 3
+    assert set(manifest["scenarios"]) >= set(RULE_BASED_SCENARIOS)
+    assert "following_lane_with_lead" in manifest["scenarios"]
+    assert "waiting_for_pedestrian_to_cross" in manifest["scenarios"]
+    for row in manifest["frames"]:
+        frame_payload = json.loads(
+            (tmp_path / "rec_motional_frame_tags_odld_1fps" / row["path"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        tags = frame_payload["tags"]["motional_scenarios"]
+        assert set(tags) == set(manifest["scenarios"])
+        assert active_scenarios_from_frame_json(frame_payload) == (
+            active_scenarios_from_event_json(event_json, row["frame"])
+        )
+
+
+def test_frame_tags_from_existing_event_json_preserve_near_multiple_vehicles(
+    tmp_path: Path,
+) -> None:
+    canonical_path = tmp_path / "rec_canonical_odld_frames.json"
+    canonical_path.write_text(
+        json.dumps(
+            {
+                "recording_id": "rec",
+                "scenario_taxonomy": [],
+                "frames": [
+                    {"frame_index": 0, "time_since_start_s": 0.0},
+                    {"frame_index": 10, "time_since_start_s": 1.0},
+                    {"frame_index": 20, "time_since_start_s": 2.0},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    event_path = tmp_path / "recording_rule_events.json"
+    event_payload = {
+        "schema_version": "rule-based-scenario-events-v1",
+        "recording_id": "rec",
+        "rule_based_events": [
+            {
+                "scenario": "near_multiple_vehicles",
+                "start_frame": 3,
+                "end_frame": 20,
+                "start_timestamp_s": 0.3,
+                "end_timestamp_s": 2.0,
+            }
+        ],
+    }
+    event_path.write_text(json.dumps(event_payload), encoding="utf-8")
+
+    manifest = export_frame_tags_from_event_json(
+        canonical_path=canonical_path,
+        event_json_path=event_path,
+        output_dir=tmp_path / "rec_motional_frame_tags_odld_1fps",
+    )
+
+    frame_0 = json.loads(
+        (tmp_path / "rec_motional_frame_tags_odld_1fps" / "frame_000000.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    frame_10 = json.loads(
+        (tmp_path / "rec_motional_frame_tags_odld_1fps" / "frame_000010.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["scenario_count"] >= len(RULE_BASED_SCENARIOS)
+    assert frame_0["tags"]["motional_scenarios"]["near_multiple_vehicles"] is False
+    assert frame_10["tags"]["motional_scenarios"]["near_multiple_vehicles"] is True
 
 
 def test_frame_schema_validates_same_frame_bev(tmp_path: Path) -> None:
@@ -143,9 +269,21 @@ def test_build_recording_writes_following_lane_events(
                     "following_lane_without_lead",
                 ],
                 "frames": [
-                    sample_frame(0),
-                    sample_frame(1),
-                    sample_frame(2),
+                    {
+                        **sample_frame(0),
+                        "time_since_start_s": 0.0,
+                        "timestamp_unix_s": 1000.0,
+                    },
+                    {
+                        **sample_frame(1),
+                        "time_since_start_s": 1.0,
+                        "timestamp_unix_s": 1001.0,
+                    },
+                    {
+                        **sample_frame(2),
+                        "time_since_start_s": 2.0,
+                        "timestamp_unix_s": 1002.0,
+                    },
                 ],
             }
         ),
@@ -227,3 +365,19 @@ def test_build_recording_writes_following_lane_events(
         "following_lane_with_lead",
         "following_lane_without_lead",
     ]
+    frame_tag_dir = tmp_path / "out" / "rec" / "recording_frame_tags_1fps"
+    frame_tags = json.loads(
+        (frame_tag_dir / "frame_000000.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert frame_tags["tags"]["motional_scenarios"][
+        "following_lane_with_lead"
+    ] is True
+    frame_tags_2 = json.loads(
+        (frame_tag_dir / "frame_000002.json").read_text(encoding="utf-8")
+    )
+    assert frame_tags_2["tags"]["motional_scenarios"][
+        "following_lane_without_lead"
+    ] is True
+    assert "stationary" in frame_tags_2["tags"]["motional_scenarios"]

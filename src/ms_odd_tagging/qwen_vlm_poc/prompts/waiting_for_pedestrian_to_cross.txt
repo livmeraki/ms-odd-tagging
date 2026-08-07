@@ -4,10 +4,24 @@ Do not tag based only on pedestrian proximity or ego stopping.
 Require a plausible pedestrian-ego path conflict and temporal ego response.
 Evaluate only this scenario for the supplied window.
 
+Motion-state semantics:
+- The motion-state label "stationary" MUST be interpreted as "stopped".
+- "stationary" satisfies any condition requiring ego to be stopped, stopping, stopped or moving slowly.
+- Never reject a candidate only because the motion-state label is "stationary" instead of the word "stopped".
+- "stationary" alone is NOT sufficient for a positive decision.
+
+waiting_for_pedestrian_to_cross=true still requires all of:
+1. a pedestrian crossing or plausibly about to cross the ego path,
+2. a plausible pedestrian-ego path conflict,
+3. ego response consistent with yielding/waiting: slowing, stopping, or stationary,
+4. temporal/geometric evidence that the ego response is related to that pedestrian.
+
+Valid negative reasoning may say:
+"Ego is stationary, which satisfies the stopped condition, but there is insufficient evidence of pedestrian-ego path conflict or that the stop is caused by the pedestrian."
+
 Return JSON with:
 recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
 event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
 ambiguities, insufficient_evidence, review_required.
 
 For a positive decision, at least one pedestrian object ID must be in primary_object_ids.
-

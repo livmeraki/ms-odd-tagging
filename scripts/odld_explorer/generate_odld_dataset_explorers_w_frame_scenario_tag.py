@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate tagged interactive OD + LD + ego-trajectory explorers.
+"""Generate frame-tagged interactive OD + LD + ego-trajectory explorers.
 
 The established OD explorer supplies the interaction shell.  This generator
 adds the complete recording-level LD map once, compact per-frame nearby-ID
@@ -15,14 +15,12 @@ import html
 import json
 import math
 import re
-import shutil
 import time
 from collections import Counter
 from pathlib import Path
 
 import generate_dataset_explorers as base
 from ms_odd_tagging.common.progress import ProgressReporter
-from ms_odd_tagging.features.ego_motion import extract_ego_motion_features
 from ms_odd_tagging.features.road_feature_relations import (
     build_road_feature_relations,
 )
@@ -30,15 +28,9 @@ from ms_odd_tagging.features.object_relations import build_object_relations
 from ms_odd_tagging.features.object_path_crossing_relations import (
     build_object_path_crossing_relations,
 )
-from ms_odd_tagging.features.traffic_light_context import build_traffic_light_context
-from ms_odd_tagging.features.traffic_relations import build_traffic_relations
 from ms_odd_tagging.ld_topology.config import load_config as load_ld_topology_config
 from ms_odd_tagging.ld_topology.pipeline import classify_recording
-from ms_odd_tagging.tagger.rule_based.registry import (
-    PHASE4_SCENARIOS,
-    detect_recording_events,
-    load_config,
-)
+from ms_odd_tagging.tagger.rule_based.registry import PHASE4_SCENARIOS, load_config
 from ms_odd_tagging.scenarios.following_lane.detector import run_following_lane
 from ms_odd_tagging.scenarios.following_lane.explorer_visualization import (
     render_original_explorer_with_lane_tracker,
@@ -55,19 +47,15 @@ DEFAULT_WINDOW_DIR = Path(
     "quick_exploration_outputs/scenario_tagging_pipeline_odld/02_motional_windows"
 )
 DEFAULT_OUTPUT_DIR = Path(
-    "quick_exploration_outputs/dataset_scene_explorers_odld_w_scenario_tag"
+    "quick_exploration_outputs/dataset_scene_explorers_odld_w_frame_scenario_tag"
 )
 DEFAULT_INDEX_PATH = Path(
-    "quick_exploration_outputs/dataset_odld_explorer_w_scenario_tag_index.html"
+    "quick_exploration_outputs/dataset_odld_explorer_w_frame_scenario_tag_index.html"
 )
 DEFAULT_LD_TOPOLOGY_CONFIG = Path("configs/ld_topology.json")
 EXPLORER_DATA_MARKER = re.compile(r"const DATA = (\{.*?\});\s*const ", re.DOTALL)
 HIDDEN_VISUALIZATION_SCENARIOS = {"high_magnitude_jerk"}
 MANIFEST_SCHEMA_VERSION = "odld-animated-explorer-manifest-v1"
-PLOTLY_ASSET_NAME = "plotly-2.35.2.min.js"
-PLOTLY_CDN_SCRIPT = (
-    '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
-)
 INDEX_ROW_KEYS = (
     "recording",
     "file",
@@ -89,40 +77,6 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     if text.count(old) != 1:
         raise ValueError(f"Unable to inject {label}: expected one marker, found {text.count(old)}")
     return text.replace(old, new, 1)
-
-
-def find_existing_plotly_asset(output_dir: Path) -> Path | None:
-    search_roots = [output_dir, *list(output_dir.parents)[:4]]
-    for root in search_roots:
-        direct = root / "assets" / PLOTLY_ASSET_NAME
-        if direct.is_file():
-            return direct
-        for child in root.glob("*/assets/" + PLOTLY_ASSET_NAME):
-            if child.is_file():
-                return child
-    return None
-
-
-def ensure_local_plotly_asset(output_dir: Path) -> str | None:
-    target = output_dir / "assets" / PLOTLY_ASSET_NAME
-    if target.is_file():
-        return f"assets/{PLOTLY_ASSET_NAME}"
-    source = find_existing_plotly_asset(output_dir)
-    if source is None:
-        return None
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-    return f"assets/{PLOTLY_ASSET_NAME}"
-
-
-def make_odld_html_ssh_friendly(page: str) -> str:
-    """Prefer SVG Plotly traces so ODLD pages render without WebGL support."""
-    page = page.replace("type: 'scattergl'", "type: 'scatter'")
-    page = page.replace(
-        "CDN version requires network access to Plotly. If plots are blank, check that cdn.plot.ly is reachable.",
-        "ODLD pages use local Plotly and SVG traces for SSH/browser compatibility.",
-    )
-    return page
 
 
 def quaternion_available(bbox: dict) -> bool:
@@ -275,24 +229,6 @@ def compact_tag_evidence(value: object) -> object:
             "object_time_to_intersection_s",
             "time_to_intersection_difference_s",
             "forward_arc",
-            "traffic_light_context",
-            "traffic_light_context_schema_version",
-            "relevant_traffic_light_ids",
-            "traffic_light_context_confidence",
-            "intersection_state",
-            "intersection_state_counts",
-            "stopline_distance_m",
-            "stopline_relation",
-            "stopline_relation_counts",
-            "ego_state",
-            "ego_speed_mps",
-            "ego_acceleration_mps2",
-            "lead_exists",
-            "lead_longitudinal_distance_m",
-            "lead_lateral_distance_m",
-            "lead_confidence",
-            "lead_same_path_compatible",
-            "phase1_dependency",
         )
         return {key: value[key] for key in preferred if key in value}
     if isinstance(value, list):
@@ -300,90 +236,118 @@ def compact_tag_evidence(value: object) -> object:
     return value
 
 
-def tag_event_payload(event: dict) -> dict:
-    return {
-        "scenario": event["scenario"],
-        "startFrame": event["start_frame"],
-        "endFrame": event["end_frame"],
-        "startTime": event["start_timestamp_s"],
-        "endTime": event["end_timestamp_s"],
-        "durationSec": event.get("duration_s"),
-        "confidence": event.get("confidence"),
-        "detectorVersion": event.get("detector_version"),
-        "evidence": compact_tag_evidence(event.get("evidence") or {}),
-        "source": event.get("source", "rule_based"),
-    }
-
-
-def following_lane_event_payload(interval: dict) -> dict:
-    return {
-        "scenario": interval["scenario"],
-        "startFrame": interval["start_frame_index"],
-        "endFrame": interval["end_frame_index"],
-        "startTime": interval["start_time_since_start_s"],
-        "endTime": interval["end_time_since_start_s"],
-        "durationSec": (
-            interval["end_time_since_start_s"]
-            - interval["start_time_since_start_s"]
-        ),
-        "confidence": None,
-        "detectorVersion": "following_lane_tracker",
-        "evidence": compact_tag_evidence(
-            {
-                "frame_count": interval.get("frame_count"),
-                "boundary_convention": interval.get("boundary_convention"),
-            }
-        ),
-        "source": "generated_lane_tracker",
-    }
-
-
-def build_tag_payload(recording: str, window_dir: Path, canonical: dict) -> dict:
-    """Load or regenerate dynamic recording-level rule-based events.
-
-    Event bounds use inclusive first/last samples. Legacy overlapping five-second
-    candidate windows are never used for visualization tags.
-    """
-    candidates = [
-        window_dir / f"{recording}_motional_windows_odld.json",
-        window_dir / f"{recording}_motional_windows.json",
+def frame_tag_dir_candidates(recording: str, frame_tag_dir: Path) -> list[Path]:
+    return [
+        frame_tag_dir / f"{recording}_motional_frame_tags_odld_1fps",
+        frame_tag_dir / f"{recording}_motional_frame_tags_1fps",
+        frame_tag_dir / recording / "recording_frame_tags_1fps",
     ]
-    source_path = next((path for path in candidates if path.is_file()), None)
-    windows = {}
-    if source_path is not None:
-        with source_path.open(encoding="utf-8") as handle:
-            windows = json.load(handle)
 
-    config = load_config()
-    rule_events = windows.get("rule_based_events") or []
-    saved_config_version = windows.get("rule_config_version")
-    if rule_events and saved_config_version == config["config_version"]:
-        events = [tag_event_payload(event) for event in rule_events]
-        source_kind = "recording_rule_based_events"
-        config_version = saved_config_version
-    else:
-        detected, _ = detect_recording_events(canonical, config)
-        events = [tag_event_payload(event.to_dict()) for event in detected]
-        source_kind = (
-            "canonical_per_frame_rule_events_stale_window_replaced"
-            if rule_events
-            else "canonical_per_frame_rule_events"
-        )
-        config_version = config["config_version"]
 
-    events = [
-        event
-        for event in events
-        if event["scenario"] not in HIDDEN_VISUALIZATION_SCENARIOS
-    ]
-    scenarios = sorted({event["scenario"] for event in events})
+def _frame_tag_events(frames: list[dict], scenarios: list[str]) -> list[dict]:
+    timestamps = {
+        int(frame["frame"]): frame.get("timestamp_s")
+        for frame in frames
+        if isinstance(frame.get("frame"), int)
+    }
+    events = []
+    for scenario in scenarios:
+        start_frame = None
+        end_frame = None
+        for frame in frames:
+            frame_index = int(frame["frame"])
+            active = (
+                ((frame.get("tags") or {}).get("motional_scenarios") or {})
+                .get(scenario)
+                is True
+            )
+            if active and start_frame is None:
+                start_frame = frame_index
+            if active:
+                end_frame = frame_index
+            if not active and start_frame is not None and end_frame is not None:
+                events.append(
+                    {
+                        "scenario": scenario,
+                        "startFrame": start_frame,
+                        "endFrame": end_frame,
+                        "startTime": timestamps.get(start_frame),
+                        "endTime": timestamps.get(end_frame),
+                        "durationSec": None,
+                        "confidence": None,
+                        "detectorVersion": "frame-tags",
+                        "evidence": {"source": "frame_tags"},
+                        "source": "frame_tags",
+                    }
+                )
+                start_frame = None
+                end_frame = None
+        if start_frame is not None and end_frame is not None:
+            events.append(
+                {
+                    "scenario": scenario,
+                    "startFrame": start_frame,
+                    "endFrame": end_frame,
+                    "startTime": timestamps.get(start_frame),
+                    "endTime": timestamps.get(end_frame),
+                    "durationSec": None,
+                    "confidence": None,
+                    "detectorVersion": "frame-tags",
+                    "evidence": {"source": "frame_tags"},
+                    "source": "frame_tags",
+                }
+            )
+    return sorted(events, key=lambda event: (event["startFrame"], event["scenario"]))
+
+
+def build_frame_tag_payload(recording: str, frame_tag_dir: Path) -> dict:
+    source_dir = next(
+        (
+            path
+            for path in frame_tag_dir_candidates(recording, frame_tag_dir)
+            if path.is_dir() and (path / "manifest.json").is_file()
+        ),
+        None,
+    )
+    if source_dir is None:
+        return {
+            "available": False,
+            "source": None,
+            "sourceKind": "missing_frame_tags",
+            "configVersion": None,
+            "scenarios": [],
+            "events": [],
+            "frames": [],
+            "frameTagByFrame": {},
+        }
+    with (source_dir / "manifest.json").open(encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    frames = []
+    for row in manifest.get("frames") or []:
+        frame_path = source_dir / row["path"]
+        with frame_path.open(encoding="utf-8") as handle:
+            frames.append(json.load(handle))
+    frames.sort(key=lambda frame: int(frame["frame"]))
+    scenarios = sorted(
+        set(manifest.get("scenarios") or [])
+        | {
+            scenario
+            for frame in frames
+            for scenario in (((frame.get("tags") or {}).get("motional_scenarios") or {}).keys())
+        }
+    )
     return {
-        "available": bool(events),
-        "source": source_path.name if source_path is not None else None,
-        "sourceKind": source_kind,
-        "configVersion": config_version,
+        "available": bool(frames),
+        "source": source_dir.name,
+        "sourceKind": "frame_based_motional_scenario_tags_1fps",
+        "configVersion": manifest.get("rule_config_version"),
         "scenarios": scenarios,
-        "events": events,
+        "events": _frame_tag_events(frames, scenarios),
+        "frames": frames,
+        "frameTagByFrame": {
+            str(frame["frame"]): (frame.get("tags") or {}).get("motional_scenarios") or {}
+            for frame in frames
+        },
     }
 
 
@@ -510,27 +474,6 @@ def build_ld_topology_payload(topology: dict) -> dict:
             for frame in frames
         ],
     }
-
-
-def add_following_lane_tags(tags: dict, following: dict) -> dict:
-    events = list(tags.get("events") or [])
-    events.extend(
-        following_lane_event_payload(interval)
-        for interval in following.get("intervals", [])
-        if interval.get("scenario")
-    )
-    events.sort(
-        key=lambda event: (
-            event.get("startFrame", -1),
-            event.get("scenario", ""),
-        )
-    )
-    tags = dict(tags)
-    tags["available"] = bool(events)
-    tags["scenarios"] = sorted({event["scenario"] for event in events})
-    tags["events"] = events
-    tags["sourceKind"] = f"{tags.get('sourceKind') or 'scenario_tags'}+generated_lane_tracker"
-    return tags
 
 
 def build_road_feature_payload(canonical: dict) -> dict:
@@ -788,223 +731,6 @@ def build_object_path_crossing_payload(canonical: dict) -> dict:
         ],
         "trajectories": trajectories,
         "frames": compact_frames,
-    }
-
-
-def _rule_frame_context(canonical: dict) -> dict[int, dict]:
-    context = {}
-    for frame in canonical.get("frames", []):
-        frame_index = frame.get("frame_index")
-        if frame_index is None:
-            continue
-        context[frame_index] = {
-            key: frame[key]
-            for key in (
-                "topology_class",
-                "ego_inside_topology_polygon",
-                "distance_to_topology_polygon_m",
-                "topology_confidence",
-                "active_is_intersection",
-                "active_topology_subtype",
-                "active_topology_component",
-                "component_geometry_confidence",
-                "subtype_confidence",
-                "intersection_evidence_score",
-                "is_intersection_component",
-                "topology_subtype",
-                "logical_lane_id",
-                "left_logical_lane_id",
-                "right_logical_lane_id",
-            )
-            if key in frame
-        }
-    return context
-
-
-def build_traffic_light_context_payload(canonical: dict) -> dict:
-    """Compact Phase 1 traffic-light context for map/debug inspection."""
-    config = load_config()
-    feature_config = config["feature_extraction"]
-    features = extract_ego_motion_features(
-        canonical.get("frames", []),
-        max_sample_gap_s=feature_config["max_sample_gap_s"],
-        heading_change_horizon_s=feature_config["heading_change_horizon_s"],
-        jerk_mode=config["jerk"]["calculation_mode"],
-    )
-    road_relations = build_road_feature_relations(
-        canonical, config["road_feature_relations"]
-    )
-    object_relations = build_object_relations(canonical, config["object_relations"])
-    frame_context = _rule_frame_context(canonical)
-    traffic_relations = build_traffic_relations(
-        canonical.get("frames", []),
-        features,
-        object_relations,
-        config,
-        frame_context=frame_context,
-    )
-    payload = build_traffic_light_context(
-        canonical,
-        features,
-        road_relations,
-        traffic_relations,
-        config,
-        frame_context=frame_context,
-    )
-
-    def compact_light(light: dict) -> dict:
-        return {
-            "objectId": light.get("object_id"),
-            "className": light.get("class_name"),
-            "x": (light.get("position_lcs_m") or [None, None])[0],
-            "y": (light.get("position_lcs_m") or [None, None])[1],
-            "distanceM": light.get("distance_m"),
-            "longitudinalM": light.get("signed_longitudinal_m"),
-            "lateralM": light.get("signed_lateral_m"),
-            "associationConfidence": light.get("association_confidence"),
-            "associationConfidenceLabel": light.get(
-                "association_confidence_label"
-            ),
-            "associationReasons": light.get("association_reasons", []),
-            "relevant": light.get("relevant") is True,
-        }
-
-    def compact_frame(frame: dict) -> dict:
-        stopline = frame.get("stopline") or {}
-        motion = frame.get("ego_motion") or {}
-        lead = frame.get("lead") or {}
-        evidence = frame.get("evidence") or {}
-        topology = evidence.get("topology") or {}
-        return {
-            "frameIndex": frame.get("frame_index"),
-            "time": frame.get("timestamp_s"),
-            "isTrafficLightIntersection": frame.get(
-                "is_traffic_light_intersection"
-            )
-            is True,
-            "confidence": frame.get("confidence"),
-            "confidenceLabel": frame.get("confidence_label"),
-            "intersectionState": frame.get("intersection_state"),
-            "trafficLights": [
-                compact_light(light) for light in frame.get("traffic_lights", [])
-            ],
-            "relevantTrafficLightIds": frame.get(
-                "relevant_traffic_light_ids", []
-            ),
-            "stopline": {
-                "id": stopline.get("id"),
-                "distanceM": stopline.get("distance_m"),
-                "relation": stopline.get("relation"),
-                "before": stopline.get("before_stopline") is True,
-                "on": stopline.get("on_stopline") is True,
-                "passed": stopline.get("passed_stopline") is True,
-                "confidence": stopline.get("confidence"),
-                "associationConfidence": stopline.get("association_confidence"),
-                "associatedTrafficLightIds": stopline.get(
-                    "associated_traffic_light_ids", []
-                ),
-                "evidence": stopline.get("evidence", {}),
-            },
-            "egoMotion": {
-                "speedMps": motion.get("speed_mps"),
-                "accelerationMps2": motion.get("acceleration_mps2"),
-                "stationary": motion.get("stationary") is True,
-                "stopping": motion.get("stopping") is True,
-                "accelerating": motion.get("accelerating") is True,
-                "temporalState": motion.get("temporal_state"),
-            },
-            "lead": {
-                "exists": lead.get("exists") is True,
-                "objectId": lead.get("object_id"),
-                "sourceObjectIds": lead.get("source_object_ids", []),
-                "longitudinalDistanceM": lead.get("longitudinal_distance_m"),
-                "lateralDistanceM": lead.get("lateral_distance_m"),
-                "samePathCompatible": lead.get("same_path_compatible") is True,
-                "confidence": lead.get("confidence"),
-                "evidence": lead.get("evidence", {}),
-            },
-            "topology": {
-                "isIntersection": topology.get("is_intersection") is True,
-                "inside": topology.get("inside") is True,
-                "distanceM": topology.get("distance_m"),
-                "confidence": topology.get("confidence"),
-                "className": topology.get("topology_class"),
-                "activeSubtype": topology.get("active_topology_subtype"),
-            },
-        }
-
-    return {
-        "schemaVersion": payload.get("schema_version"),
-        "configVersion": config["config_version"],
-        "frames": [compact_frame(frame) for frame in payload.get("frames", [])],
-    }
-
-
-def build_vlm_traffic_light_episode_payload(recording: str, qwen_root: Path | None = None) -> dict:
-    """Load Qwen traffic-light episode candidates/decisions for ODLD debug display."""
-    root = qwen_root or Path("outputs") / "qwen_vlm_poc"
-    candidate_dir = root / "candidates" / "traffic_light_episode" / recording
-    episodes = []
-    if candidate_dir.is_dir():
-        for path in sorted(candidate_dir.glob("*.json")):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            candidate = data.get("candidate") or {}
-            evidence = candidate.get("evidence") or []
-            tl_context = next(
-                (item for item in evidence if item.get("kind") == "traffic_light_context"),
-                {},
-            )
-            episodes.append(
-                {
-                    "candidateId": candidate.get("candidate_id"),
-                    "startFrame": candidate.get("start_frame"),
-                    "endFrame": candidate.get("end_frame"),
-                    "startTime": candidate.get("start_timestamp_s"),
-                    "endTime": candidate.get("end_timestamp_s"),
-                    "selectedFrameIndices": candidate.get("selected_frame_indices", []),
-                    "bevPaths": candidate.get("bev_paths", []),
-                    "recallReasons": candidate.get("recall_reasons", []),
-                    "metadata": candidate.get("metadata", {}),
-                    "trafficLightContextFrames": (tl_context.get("data") or {}).get("frames", []),
-                    "vlmOutputTags": [],
-                }
-            )
-    by_candidate = {item["candidateId"]: item for item in episodes if item.get("candidateId")}
-    for manifest_path in sorted(root.glob("manifest_traffic_light_episode*.json")):
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        for row in manifest.get("validation", []):
-            candidate_id = row.get("candidate_id")
-            episode = by_candidate.get(candidate_id)
-            if not episode:
-                continue
-            episode["vlmOutputTags"] = [
-                {
-                    "scenario": decision.get("scenario"),
-                    "confidence": decision.get("confidence"),
-                    "startFrame": decision.get("event_start_frame"),
-                    "endFrame": decision.get("event_end_frame"),
-                    "reason": decision.get("reason"),
-                    "evidenceIds": decision.get("evidence_ids", []),
-                    "reviewRequired": decision.get("review_required") is True,
-                }
-                for decision in row.get("decisions", [])
-            ]
-            episode["validation"] = {
-                "accepted": row.get("accepted") is True,
-                "reviewRequired": row.get("review_required") is True,
-                "reasons": row.get("reasons", []),
-                "manifest": str(manifest_path),
-            }
-    return {
-        "schemaVersion": "odld-vlm-traffic-light-episodes-v1",
-        "sourceRoot": str(root),
-        "episodes": episodes,
     }
 
 
@@ -1478,7 +1204,6 @@ TAG_STYLE = """
   .roadFeatureReadout { background: #fff7ed; color: #7c2d12; }
   .objectRelationReadout { background: #f0fdfa; color: #134e4a; }
   .pathCrossingReadout { background: #f5f3ff; color: #4c1d95; }
-  .trafficLightReadout { background: #fef2f2; color: #7f1d1d; }
   #tagTimeline { height: 420px; }
 """
 
@@ -1498,12 +1223,6 @@ TAG_CONTROLS_HTML = """
       <label><input id="showDynamicObjectVelocities" type="checkbox" checked /> Dynamic-object velocities and vectors</label>
       <label><input id="showPathCrossingRelations" type="checkbox" checked /> Ego forward arc and crossing states</label>
       <label><input id="showConfirmedCrossingsOnly" type="checkbox" checked /> Confirmed crossing objects only</label>
-      <label><input id="showTrafficLightContext" type="checkbox" checked /> Traffic-light context</label>
-      <label><input id="showRelevantTrafficLights" type="checkbox" checked /> Relevant traffic lights</label>
-      <label><input id="showTrafficLightStoplines" type="checkbox" checked /> Traffic-light stoplines</label>
-      <label><input id="showTrafficLightLead" type="checkbox" checked /> Traffic-light lead vehicle</label>
-      <label><input id="showTrafficLightIntersectionFootprint" type="checkbox" checked /> Traffic-light intersection footprint</label>
-      <label><input id="showTrafficLightVlmEpisodes" type="checkbox" checked /> VLM traffic-light episodes</label>
       <label>Crossing object
         <select id="pathCrossingObjectFilter">
           <option value="all" selected>active confirmed crossings</option>
@@ -1516,8 +1235,7 @@ TAG_CONTROLS_HTML = """
       <div id="roadFeatureContext" class="tagReadout roadFeatureReadout"></div>
       <div id="objectRelationContext" class="tagReadout objectRelationReadout"></div>
       <div id="pathCrossingContext" class="tagReadout pathCrossingReadout"></div>
-      <div id="trafficLightContext" class="tagReadout trafficLightReadout"></div>
-      <div class="note">Scenario tags use inclusive frame/time sample bounds and include generated following-lane intervals.</div>
+      <div class="note">Scenario tags are loaded from per-frame motional scenario booleans.</div>
     </div>
 """
 
@@ -1527,8 +1245,6 @@ const tags = DATA.tags;
 const roadFeatureRelations = DATA.roadFeatureRelations;
 const objectRelations = DATA.objectRelations;
 const pathCrossingRelations = DATA.pathCrossingRelations;
-const trafficLightContext = DATA.trafficLightContext || {frames: []};
-const vlmTrafficLightEpisodes = DATA.vlmTrafficLightEpisodes || {episodes: []};
 const SHARED_TIME_RANGE = [0, traj.rel_t[traj.rel_t.length - 1]];
 const SHARED_TIMELINE_MARGIN = {l: 190, r: 85, t: 30, b: 65};
 const SHARED_TIME_PLOT_IDS = ['tagTimeline', 'timeline', 'ldTimeline'];
@@ -1582,25 +1298,10 @@ const TAG_COLORS = {
   near_pedestrian_on_crosswalk: '#e11d48',
   near_pedestrian_on_crosswalk_with_ego: '#9f1239',
   crossed_by_bike: '#0f766e', crossed_by_motorcycle: '#6d28d9',
-  crossed_by_vehicle: '#1d4ed8',
-  accelerating_at_traffic_light_with_lead: '#16a34a',
-  accelerating_at_traffic_light_without_lead: '#84cc16',
-  stationary_at_traffic_light_with_lead: '#7f1d1d',
-  stationary_at_traffic_light_without_lead: '#b91c1c',
-  stopping_at_traffic_light_with_lead: '#ea580c',
-  stopping_at_traffic_light_without_lead: '#f97316'
+  crossed_by_vehicle: '#1d4ed8'
 };
 
 function tagColor(scenario) { return TAG_COLORS[scenario] || '#64748b'; }
-
-const TRAFFIC_LIGHT_BEHAVIOR_TAGS = new Set([
-  'accelerating_at_traffic_light_with_lead',
-  'accelerating_at_traffic_light_without_lead',
-  'stationary_at_traffic_light_with_lead',
-  'stationary_at_traffic_light_without_lead',
-  'stopping_at_traffic_light_with_lead',
-  'stopping_at_traffic_light_without_lead'
-]);
 
 function sharedTimelineXAxis(extra = {}) {
   return {title: 'time since start (s)', range: [...SHARED_TIME_RANGE], domain: [0, 1], ...extra};
@@ -1629,7 +1330,18 @@ function attachSharedTimeAxis(plotId) {
 
 function activeTagEvents() {
   if (!document.getElementById('showTags').checked) return [];
-  return tags.events.filter(event => event.startFrame <= currentIndex && currentIndex <= event.endFrame);
+  const frameTags = tags.frameTagByFrame[String(currentIndex)] || {};
+  return Object.entries(frameTags)
+    .filter(([, active]) => active === true)
+    .map(([scenario]) => ({
+      scenario,
+      startFrame: currentIndex,
+      endFrame: currentIndex,
+      startTime: traj.rel_t[currentIndex],
+      endTime: traj.rel_t[currentIndex],
+      evidence: {source: 'frame_tags'},
+      source: 'frame_tags'
+    }));
 }
 
 const roadFeatureTrackById = Object.fromEntries(
@@ -2147,319 +1859,6 @@ function updatePathCrossingContext() {
     `<b>Frame ${currentIndex} path crossing · ${mode}</b><br>${lines.join('<br>')}`;
 }
 
-function currentTrafficLightFrame() {
-  return trafficLightContext.frames[currentIndex] || null;
-}
-
-function relationText(value) {
-  return String(value || 'unknown').replaceAll('_', ' ');
-}
-
-function trafficLightContextEnabled() {
-  return document.getElementById('showTrafficLightContext')?.checked;
-}
-
-function trafficLightVlmEpisodesEnabled() {
-  return document.getElementById('showTrafficLightVlmEpisodes')?.checked;
-}
-
-function activeTrafficLightEpisodes() {
-  if (!trafficLightVlmEpisodesEnabled()) return [];
-  return (vlmTrafficLightEpisodes.episodes || []).filter(episode =>
-    Number(episode.startFrame) <= currentIndex && Number(episode.endFrame) >= currentIndex
-  );
-}
-
-function trafficLightObjectTraces() {
-  if (!trafficLightContextEnabled() ||
-      !document.getElementById('showRelevantTrafficLights').checked) return [];
-  const frame = currentTrafficLightFrame();
-  if (!frame || !frame.trafficLights.length) return [];
-  const allLights = frame.trafficLights.filter(light => light.x != null && light.y != null);
-  const rejected = allLights.filter(light => !light.relevant);
-  const relevant = allLights.filter(light => light.relevant);
-  const traces = [];
-  if (rejected.length) {
-    traces.push({
-      type: 'scattergl', mode: 'markers+text', name: 'traffic lights: not selected',
-      x: rejected.map(light => light.x), y: rejected.map(light => light.y),
-      text: rejected.map(light => light.objectId || ''),
-      textposition: 'bottom center',
-      marker: {
-        size: 13, symbol: 'triangle-up',
-        color: 'rgba(8,145,178,0.40)',
-        line: {color: '#0e7490', width: 1.5}
-      },
-      customdata: rejected.map(light => [
-        light.objectId, light.distanceM, light.associationConfidence,
-        light.associationConfidenceLabel, (light.associationReasons || []).join(' · ')
-      ]),
-      hovertemplate:
-        'traffic light %{customdata[0]}' +
-        '<br>ego distance=%{customdata[1]:.2f} m' +
-        '<br>association=%{customdata[2]:.2f} (%{customdata[3]})' +
-        '<br>%{customdata[4]}<extra></extra>'
-    });
-  }
-  if (relevant.length) {
-    traces.push({
-      type: 'scattergl', mode: 'markers+text', name: 'relevant traffic lights',
-      x: relevant.map(light => light.x), y: relevant.map(light => light.y),
-      text: relevant.map(light => light.objectId || ''),
-      textposition: 'top center',
-      marker: {
-        size: 22, symbol: 'star',
-        color: '#dc2626',
-        line: {color: '#ffffff', width: 2}
-      },
-      customdata: relevant.map(light => [
-        light.objectId, light.distanceM, light.associationConfidence,
-        light.associationConfidenceLabel, (light.associationReasons || []).join(' · ')
-      ]),
-      hovertemplate:
-        'RELEVANT traffic light %{customdata[0]}' +
-        '<br>ego distance=%{customdata[1]:.2f} m' +
-        '<br>association=%{customdata[2]:.2f} (%{customdata[3]})' +
-        '<br>%{customdata[4]}<extra></extra>'
-    });
-  }
-  return traces;
-}
-
-function trafficLightStoplineTraces() {
-  if (!trafficLightContextEnabled() ||
-      !document.getElementById('showTrafficLightStoplines').checked) return [];
-  const frame = currentTrafficLightFrame();
-  const roadFrame = currentRoadFeatureFrame();
-  if (!frame || !roadFrame) return [];
-  const selectedStoplineId = frame.stopline?.id;
-  const candidates = (roadFrame.stoplines || []).filter(relation =>
-    relation.valid && (
-      relation.trackId === selectedStoplineId ||
-      relation.observed ||
-      (relation.pathCompatible && !['far', 'unknown'].includes(relation.state))
-    )
-  );
-  const traces = [];
-  for (const relation of candidates) {
-    const track = roadFeatureTrackById[relation.trackId];
-    if (!track || !track.x.length) continue;
-    const selected = relation.trackId === selectedStoplineId;
-    const x = [...track.x, track.x[0]];
-    const y = [...track.y, track.y[0]];
-    traces.push({
-      type: 'scatter', mode: selected ? 'lines+markers+text' : 'lines',
-      name: selected ? 'relevant TL stopline' : 'nearby stopline',
-      x, y,
-      text: selected ? x.map(() => relation.trackId) : undefined,
-      textposition: 'top center',
-      line: {
-        color: selected ? '#dc2626' : '#fb923c',
-        width: selected ? 7 : 3,
-        dash: selected ? 'solid' : 'dot'
-      },
-      marker: selected ? {size: 7, color: '#dc2626'} : undefined,
-      customdata: x.map(() => [
-        relation.trackId,
-        selected ? frame.stopline.distanceM : relation.signedDistanceM,
-        selected ? frame.stopline.relation : relation.state,
-        selected ? frame.stopline.associationConfidence : 'candidate',
-      ]),
-      hovertemplate:
-        '%{customdata[0]}' +
-        '<br>distance=%{customdata[1]:.2f} m' +
-        '<br>relation=%{customdata[2]}' +
-        '<br>confidence=%{customdata[3]}<extra></extra>'
-    });
-  }
-  return traces;
-}
-
-function trafficLightLeadTraces() {
-  if (!trafficLightContextEnabled() ||
-      !document.getElementById('showTrafficLightLead').checked) return [];
-  const frame = currentTrafficLightFrame();
-  if (!frame) return [];
-  const objects = currentObjectRelationFrame().objects.filter(
-    item => item.category === 'vehicle' && item.inside
-  );
-  const lead = frame.lead || {};
-  const leadTrackId = lead.objectId;
-  const leadObject = objects.find(item => item.trackId === leadTrackId);
-  const rejected = objects.filter(item => item.trackId !== leadTrackId);
-  const traces = [];
-  if (rejected.length) {
-    traces.push({
-      type: 'scattergl', mode: 'markers', name: 'lead rejected vehicles',
-      x: rejected.map(item => item.x), y: rejected.map(item => item.y),
-      marker: {
-        size: 10, symbol: 'circle-open',
-        color: 'rgba(37,99,235,0.45)',
-        line: {color: '#2563eb', width: 1.5}
-      },
-      customdata: rejected.map(item => [
-        item.trackId, item.longitudinalM, item.lateralM, item.distanceM
-      ]),
-      hovertemplate:
-        'not selected as TL lead %{customdata[0]}' +
-        '<br>longitudinal=%{customdata[1]:.2f} m' +
-        '<br>lateral=%{customdata[2]:.2f} m' +
-        '<br>footprint distance=%{customdata[3]:.2f} m<extra></extra>'
-    });
-  }
-  if (lead.exists && leadObject) {
-    traces.push({
-      type: 'scattergl', mode: 'lines+markers+text', name: 'traffic-light lead',
-      x: [traj.x[currentIndex], leadObject.x],
-      y: [traj.y[currentIndex], leadObject.y],
-      text: ['', lead.objectId || 'lead'],
-      textposition: 'top center',
-      line: {color: '#16a34a', width: 4},
-      marker: {
-        size: [8, 20],
-        symbol: ['circle', 'diamond'],
-        color: ['#16a34a', '#16a34a'],
-        line: {color: '#ffffff', width: 2}
-      },
-      customdata: [[
-        lead.objectId, lead.longitudinalDistanceM, lead.lateralDistanceM,
-        lead.confidence, lead.samePathCompatible
-      ], [
-        lead.objectId, lead.longitudinalDistanceM, lead.lateralDistanceM,
-        lead.confidence, lead.samePathCompatible
-      ]],
-      hovertemplate:
-        'TL lead %{customdata[0]}' +
-        '<br>longitudinal=%{customdata[1]:.2f} m' +
-        '<br>lateral=%{customdata[2]:.2f} m' +
-        '<br>confidence=%{customdata[3]}' +
-        '<br>same/path compatible=%{customdata[4]}<extra></extra>'
-    });
-  }
-  return traces;
-}
-
-function trafficLightIntersectionFootprintTrace() {
-  if (!trafficLightContextEnabled() ||
-      !document.getElementById('showTrafficLightIntersectionFootprint').checked) return null;
-  const frame = currentTrafficLightFrame();
-  if (!frame) return null;
-  const componentId = ldFrames.topologyComponentId[currentIndex];
-  if (!componentId) return null;
-  const component = (ldTopology.components || []).find(item => item.id === componentId);
-  if (!component || !component.polygon || component.polygon.length < 3) return null;
-  const polygon = component.polygon;
-  const x = polygon.map(point => point[0]);
-  const y = polygon.map(point => point[1]);
-  x.push(polygon[0][0]);
-  y.push(polygon[0][1]);
-  const active = frame.isTrafficLightIntersection ||
-    ['approaching', 'entry', 'inside', 'exit'].includes(frame.intersectionState);
-  return {
-    type: 'scatter', mode: 'lines', fill: 'toself',
-    name: 'TL context intersection footprint',
-    x, y,
-    line: {color: active ? '#ef4444' : '#94a3b8', width: active ? 8 : 3, dash: active ? 'solid' : 'dot'},
-    fillcolor: active ? 'rgba(239,68,68,0.14)' : 'rgba(148,163,184,0.10)',
-    customdata: x.map(() => [
-      component.id, component.class || 'normal', frame.intersectionState,
-      frame.isTrafficLightIntersection, frame.confidence
-    ]),
-    hovertemplate:
-      'TL intersection footprint %{customdata[0]}' +
-      '<br>topology=%{customdata[1]}' +
-      '<br>state=%{customdata[2]}' +
-      '<br>TL controlled=%{customdata[3]}' +
-      '<br>confidence=%{customdata[4]:.2f}<extra></extra>'
-  };
-}
-
-function trafficLightContextTraces() {
-  if (!trafficLightContextEnabled()) return [];
-  const traces = [];
-  const footprint = trafficLightIntersectionFootprintTrace();
-  if (footprint) traces.push(footprint);
-  traces.push(...trafficLightStoplineTraces());
-  traces.push(...trafficLightObjectTraces());
-  traces.push(...trafficLightLeadTraces());
-  return traces;
-}
-
-function updateTrafficLightContext() {
-  const target = document.getElementById('trafficLightContext');
-  const frame = currentTrafficLightFrame();
-  if (!trafficLightContextEnabled()) {
-    target.textContent = 'Traffic-light context overlay hidden.';
-    return;
-  }
-  if (!frame) {
-    target.innerHTML = '<b>Traffic-light context</b><br>No Phase 1 context payload for this frame.';
-    return;
-  }
-  const relevantLights = frame.trafficLights.filter(light => light.relevant);
-  const lightLines = relevantLights.length
-    ? relevantLights.map(light =>
-        `${escapeHtml(light.objectId || 'unknown')}: ` +
-        `${formatDistance(light.distanceM)} · assoc ` +
-        `${Number(light.associationConfidence || 0).toFixed(2)} ` +
-        `(${escapeHtml(light.associationConfidenceLabel || 'none')}) · ` +
-        `${escapeHtml((light.associationReasons || []).join(' · '))}`
-      ).join('<br>')
-    : 'none';
-  const stopline = frame.stopline || {};
-  const motion = frame.egoMotion || {};
-  const lead = frame.lead || {};
-  const behaviorTags = activeTagEvents().filter(event =>
-    TRAFFIC_LIGHT_BEHAVIOR_TAGS.has(event.scenario)
-  );
-  const behaviorLines = behaviorTags.length
-    ? behaviorTags.map(event =>
-        `<span class="tagPill">${escapeHtml(event.scenario.replaceAll('_', ' '))}</span><br>` +
-        `${escapeHtml(tagEvidence(event))}<br>` +
-        `frames ${event.startFrame}-${event.endFrame}`
-      ).join('<br>')
-    : 'none';
-  const vlmEpisodes = activeTrafficLightEpisodes();
-  const vlmLines = vlmEpisodes.length
-    ? vlmEpisodes.map(episode => {
-        const outputTags = (episode.vlmOutputTags || []).length
-          ? episode.vlmOutputTags.map(tag =>
-              `${escapeHtml(tag.scenario || 'unknown')} ` +
-              `${tag.confidence == null ? '' : '(' + Number(tag.confidence).toFixed(2) + ')'} ` +
-              `frames ${tag.startFrame}-${tag.endFrame}<br>` +
-              `<span class="muted">${escapeHtml(tag.reason || '')}</span>`
-            ).join('<br>')
-          : 'no accepted VLM tags yet';
-        return (
-          `<b>${escapeHtml(episode.candidateId || 'traffic_light_episode')}</b><br>` +
-          `candidate frames ${episode.startFrame}-${episode.endFrame}<br>` +
-          `selected BEV frames: ${escapeHtml((episode.selectedFrameIndices || []).join(', ') || 'none')}<br>` +
-          `recall: ${escapeHtml((episode.recallReasons || []).join(' · ') || 'none')}<br>` +
-          `VLM output tags: ${outputTags}`
-        );
-      }).join('<br><br>')
-    : 'none';
-  target.innerHTML =
-    `<b>Frame ${currentIndex} traffic-light context</b><br>` +
-    `active TL behavior tags: ${behaviorLines}<br>` +
-    `active VLM TL episode: ${vlmLines}<br>` +
-    `TL intersection: ${frame.isTrafficLightIntersection ? 'yes' : 'no'} · ` +
-    `confidence ${Number(frame.confidence || 0).toFixed(2)} (${escapeHtml(frame.confidenceLabel || 'none')})<br>` +
-    `progression: <b>${escapeHtml(relationText(frame.intersectionState))}</b><br>` +
-    `topology: ${escapeHtml(frame.topology?.className || 'normal')} · ` +
-    `${frame.topology?.inside ? 'inside' : 'outside'} · distance ${formatDistance(frame.topology?.distanceM)}<br>` +
-    `relevant traffic lights: ${lightLines}<br>` +
-    `stopline: ${escapeHtml(stopline.id || 'none')} · ${formatDistance(stopline.distanceM)} · ` +
-    `${escapeHtml(relationText(stopline.relation))} · assoc ${escapeHtml(stopline.associationConfidence || 'none')}<br>` +
-    `ego motion: speed ${motion.speedMps == null ? 'n/a' : Number(motion.speedMps).toFixed(2) + ' m/s'} · ` +
-    `accel ${motion.accelerationMps2 == null ? 'n/a' : Number(motion.accelerationMps2).toFixed(2) + ' m/s²'} · ` +
-    `stationary ${motion.stationary ? 'yes' : 'no'} · stopping ${motion.stopping ? 'yes' : 'no'} · ` +
-    `accelerating ${motion.accelerating ? 'yes' : 'no'}<br>` +
-    `lead: ${lead.exists ? escapeHtml(lead.objectId || 'unknown') : 'none'} · ` +
-    `long ${formatDistance(lead.longitudinalDistanceM)} · lateral ${formatDistance(lead.lateralDistanceM)} · ` +
-    `confidence ${escapeHtml(lead.confidence || 'none')}`;
-}
-
 function currentTagTrace() {
   const active = activeTagEvents();
   if (!active.length) return null;
@@ -2474,17 +1873,6 @@ function currentTagTrace() {
 
 function tagEvidence(event) {
   const evidence = event.evidence || {};
-  if (TRAFFIC_LIGHT_BEHAVIOR_TAGS.has(event.scenario)) {
-    const parts = [
-      `traffic_light_context=${evidence.traffic_light_context === true}`,
-      `intersection_state=${evidence.intersection_state ?? 'unknown'}`,
-      `stopline_distance=${evidence.stopline_distance_m == null ? 'n/a' : Number(evidence.stopline_distance_m).toFixed(1) + 'm'}`,
-      `ego_state=${evidence.ego_state ?? 'unknown'}`,
-      `lead_id=${evidence.lead_object_id ?? 'none'}`,
-      `lead_distance=${evidence.lead_longitudinal_distance_m == null ? 'n/a' : Number(evidence.lead_longitudinal_distance_m).toFixed(1) + 'm'}`
-    ];
-    return parts.join(' | ');
-  }
   const parts = [];
   for (const [key, value] of Object.entries(evidence)) {
     if (value == null || typeof value === 'object') continue;
@@ -2892,17 +2280,9 @@ function updateLdTimelineCursor() {
 """
 
 
-def scene_html(data: dict, plotly_script_src: str | None = None) -> str:
+def scene_html(data: dict) -> str:
     page = base.scene_html(data)
-    page = make_odld_html_ssh_friendly(page)
     title = data["summary"]["recording"]
-    if plotly_script_src:
-        page = replace_once(
-            page,
-            PLOTLY_CDN_SCRIPT,
-            f'<script src="{html.escape(plotly_script_src, quote=True)}"></script>',
-            "local Plotly script",
-        )
     page = page.replace(
         f"<title>{title} Animated Trajectory/Object Explorer</title>",
         f"<title>{title} Animated OD+LD Explorer</title>",
@@ -3016,13 +2396,11 @@ def scene_html(data: dict, plotly_script_src: str | None = None) -> str:
         "  traces.unshift(...objectRelationTraces());\n"
         "  traces.unshift(...dynamicObjectVelocityTraces());\n"
         "  traces.unshift(...pathCrossingArcTraces());\n"
-        "  traces.unshift(...trafficLightContextTraces());\n"
         "  updateLdContext();\n"
         "  updateTagContext();\n"
         "  updateRoadFeatureContext();\n"
         "  updateObjectRelationContext();\n"
         "  updatePathCrossingContext();\n"
-        "  updateTrafficLightContext();\n"
         "  if (document.getElementById('showEgoMarkers').checked) traces.push(headingTrace());\n"
         "  const tagTrace = currentTagTrace();\n"
         "  if (tagTrace) traces.push(tagTrace);",
@@ -3045,7 +2423,7 @@ def scene_html(data: dict, plotly_script_src: str | None = None) -> str:
     page = replace_once(
         page,
         "for (const id of ['showFootprints','showObjects','showEgoMarkers','persistStatic']) document.getElementById(id).addEventListener('change', render);",
-        "for (const id of ['showFootprints','showObjects','showEgoMarkers','showObjectHeadings','persistStatic','showLaneLines','showIntersectionLines','showBoundaries','showRoadmarks','showTopology','showDetectedTopologyAreas','topologyFilter','showLaneAnchors','showNearbyLd','showTags','showRoadFeatureRelations','showObjectRelations','showDynamicObjectVelocities','showPathCrossingRelations','showConfirmedCrossingsOnly','showTrafficLightContext','showRelevantTrafficLights','showTrafficLightStoplines','showTrafficLightLead','showTrafficLightIntersectionFootprint']) document.getElementById(id).addEventListener('change', render);\n"
+        "for (const id of ['showFootprints','showObjects','showEgoMarkers','showObjectHeadings','persistStatic','showLaneLines','showIntersectionLines','showBoundaries','showRoadmarks','showTopology','showDetectedTopologyAreas','topologyFilter','showLaneAnchors','showNearbyLd','showTags','showRoadFeatureRelations','showObjectRelations','showDynamicObjectVelocities','showPathCrossingRelations','showConfirmedCrossingsOnly']) document.getElementById(id).addEventListener('change', render);\n"
         "document.getElementById('pathCrossingObjectFilter').addEventListener('change', () => {\n"
         "  const event = selectedCrossingEvent();\n"
         "  if (event) setFrame(event.evidence.arc_entry_frame ?? event.startFrame);\n"
@@ -3191,13 +2569,7 @@ def write_explorer_atomically(
     output_path: Path, data: dict, following_lane_result: dict
 ) -> None:
     temp_path = output_path.with_name(f".{output_path.name}.tmp")
-    plotly_script_src = ensure_local_plotly_asset(output_path.parent)
-    page = (
-        scene_html(data, plotly_script_src=plotly_script_src)
-        if plotly_script_src
-        else scene_html(data)
-    )
-    temp_path.write_text(page, encoding="utf-8")
+    temp_path.write_text(scene_html(data), encoding="utf-8")
     inject_lane_tracker(temp_path, following_lane_result)
     temp_path.replace(output_path)
 
@@ -3353,7 +2725,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, default=DEFAULT_SOURCE_ROOT)
     parser.add_argument("--canonical-dir", type=Path, default=DEFAULT_CANONICAL_DIR)
-    parser.add_argument("--window-dir", type=Path, default=DEFAULT_WINDOW_DIR)
+    parser.add_argument("--frame-tag-dir", type=Path, default=DEFAULT_WINDOW_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--index-path", type=Path, default=DEFAULT_INDEX_PATH)
     parser.add_argument(
@@ -3419,13 +2791,8 @@ def main() -> None:
         data["pathCrossingRelations"] = build_object_path_crossing_payload(
             canonical
         )
-        data["trafficLightContext"] = build_traffic_light_context_payload(canonical)
-        data["vlmTrafficLightEpisodes"] = build_vlm_traffic_light_episode_payload(recording)
         following_lane_result = run_following_lane(canonical)
-        data["tags"] = build_tag_payload(
-            recording, args.window_dir, canonical
-        )
-        data["tags"] = add_following_lane_tags(data["tags"], following_lane_result)
+        data["tags"] = build_frame_tag_payload(recording, args.frame_tag_dir)
         debug_counts = write_debug_payloads(scene_dir, canonical, args.output_dir)
         write_explorer_atomically(output_path, data, following_lane_result)
         rows_by_recording[recording] = row_from_generated_data(

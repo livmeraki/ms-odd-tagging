@@ -1,5 +1,5 @@
 {
-  "config_version": "phase3c-forward-arc-crossing-v3",
+  "config_version": "phase2-traffic-light-vlm-episode-candidates-v1",
   "detector_version": "phase1-v1",
   "enabled_scenarios": ["stationary", "low_magnitude_speed", "medium_magnitude_speed", "high_magnitude_speed", "high_lateral_acceleration", "high_magnitude_jerk", "starting_left_turn", "starting_right_turn", "starting_low_speed_turn", "starting_high_speed_turn", "changing_lane", "changing_lane_to_left", "changing_lane_to_right", "traversing_crosswalk", "on_stopline_crosswalk", "stationary_at_crosswalk", "stopping_at_crosswalk", "accelerating_at_crosswalk", "near_high_speed_vehicle", "near_long_vehicle", "near_multiple_bikes", "near_multiple_motorcycle", "near_multiple_pedestrians", "near_multiple_vehicles", "near_pedestrian_on_crosswalk", "near_pedestrian_on_crosswalk_with_ego", "crossed_by_bike", "crossed_by_motorcycle", "crossed_by_vehicle", "following_lane_with_slow_lead", "changing_lane_with_lead", "changing_lane_with_trail", "stopping_with_lead", "stopping_without_lead", "stationary_in_traffic", "behind_bike", "behind_long_vehicle", "behind_pedestrian_on_driveable", "waiting_for_pedestrian_to_cross", "near_barrier_on_driveable"],
   "feature_extraction": {"max_sample_gap_s": 0.5, "heading_change_horizon_s": 1.0, "filter": {"enabled": false, "method": null}, "provenance": "engineering_default"},
@@ -212,5 +212,22 @@
     "barrier_minimum_duration_s": 0.3,
     "detector_version": "phase4-traffic-interactions-poc-v1",
     "provenance": "poc_requires_calibration"
+  },
+  "traffic_light_context": {
+    "intersection_approach_distance_m": 35.0,
+    "minimum_intersection_topology_confidence": 0.5,
+    "traffic_light_lateral_entry_m": 8.0,
+    "traffic_light_lateral_release_m": 12.0,
+    "traffic_light_backward_tolerance_m": 2.0,
+    "maximum_stopline_traffic_light_longitudinal_gap_m": 20.0,
+    "minimum_relevant_traffic_light_confidence": 0.45,
+    "stationary_speed_mps": 0.5,
+    "stopping_acceleration_mps2": -0.5,
+    "accelerating_acceleration_mps2": 0.5,
+    "minimum_event_duration_s": 0.2,
+    "maximum_missing_gap_s": 0.1,
+    "event_merge_gap_s": 0.2,
+    "detector_version": "traffic-light-context-phase2-direct-behaviors-v1",
+    "provenance": "shared_traffic_light_context_for_vlm_episode_candidates"
   }
 }

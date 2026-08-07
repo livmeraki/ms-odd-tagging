@@ -10,6 +10,10 @@ from statistics import median
 
 from ms_odd_tagging.common.config import CANONICAL, WINDOWS
 from ms_odd_tagging.common.progress import ProgressReporter
+from ms_odd_tagging.input_generator.frame_tags import (
+    export_frame_tag_files,
+    scenario_key_set,
+)
 
 from ms_odd_tagging.tagger.rule_based.registry import (
     compact_window_summary,
@@ -478,6 +482,24 @@ def build_recording(source_path, output_dir):
     output_path = output_dir / output_name
     with output_path.open("w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=True, separators=(",", ":"))
+    frame_tag_dir = output_path.with_name(
+        output_path.name.replace("_motional_windows", "_motional_frame_tags")
+        .removesuffix(".json")
+        + "_1fps"
+    )
+    export_frame_tag_files(
+        recording_id=canonical["recording_id"],
+        frames=frames,
+        events=serialized_rule_events,
+        output_dir=frame_tag_dir,
+        scenarios=scenario_key_set(
+            event_payload=result,
+            events=serialized_rule_events,
+            configured_scenarios=rule_config["enabled_scenarios"],
+        ),
+        rule_config_version=rule_config["config_version"],
+        source_event_json=output_path.name,
+    )
     return output_path, result
 
 

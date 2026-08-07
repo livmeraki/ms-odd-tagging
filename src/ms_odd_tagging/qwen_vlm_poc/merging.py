@@ -40,7 +40,7 @@ def merge_decisions(
         accepted,
         key=lambda item: (
             item[1].event_start_frame if item[1].event_start_frame is not None else item[0].start_frame,
-            item[0].scenario,
+            item[1].scenario,
         ),
     )
     merged: list[dict[str, Any]] = []
@@ -49,9 +49,9 @@ def merge_decisions(
         end = decision.event_end_frame if decision.event_end_frame is not None else candidate.end_frame
         start_t = times.get(start, candidate.start_timestamp_s)
         end_t = times.get(end, candidate.end_timestamp_s)
-        ped_key = tuple(sorted(decision.primary_object_ids)) if candidate.scenario == "waiting_for_pedestrian_to_cross" else ()
+        ped_key = tuple(sorted(decision.primary_object_ids)) if decision.scenario == "waiting_for_pedestrian_to_cross" else ()
         current = {
-            "scenario": candidate.scenario,
+            "scenario": decision.scenario,
             "start": start,
             "end": end,
             "start_t": start_t,
@@ -119,4 +119,3 @@ def merge_decisions(
             )
         )
     return events
-

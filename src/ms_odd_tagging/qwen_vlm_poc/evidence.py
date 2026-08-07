@@ -8,7 +8,7 @@ from typing import Any
 
 from ms_odd_tagging.input_generator.revised_bev import render_revised_bev_png
 
-from .config import VlmPocConfig
+from .config import TRAFFIC_LIGHT_LABELS, VlmPocConfig
 from .geometry import ego_acceleration, ego_heading, ego_position, ego_speed, motion_state
 from .models import CandidateWindow
 
@@ -89,6 +89,7 @@ def render_candidate_bevs(
             path,
             config.bev_extent_m,
             config.bev_size_px,
+            proximity_radius_m=0.0 if candidate.scenario == "on_intersection" else 30.0,
         )
         paths.append(str(path))
     return CandidateWindow(
@@ -101,14 +102,24 @@ def render_candidate_bevs(
 
 
 def serialize_candidate_bundle(candidate: CandidateWindow) -> dict[str, Any]:
+    traffic_light_episode = candidate.scenario == "traffic_light_episode"
+    instructions = {
+        "one_scenario_per_request": not traffic_light_episode,
+        "use_only_supplied_evidence": True,
+        "json_only": True,
+    }
+    if traffic_light_episode:
+        instructions.update(
+            {
+                "multi_label": True,
+                "traffic_light_labels": list(TRAFFIC_LIGHT_LABELS),
+                "use_structured_motion_values": True,
+            }
+        )
     return {
         "schema_version": "qwen-vlm-poc-candidate-v1",
         "candidate": candidate.to_dict(),
-        "instructions": {
-            "one_scenario_per_request": True,
-            "use_only_supplied_evidence": True,
-            "json_only": True,
-        },
+        "instructions": instructions,
     }
 
 
@@ -157,4 +168,3 @@ def load_candidate_bundle(path: Path) -> CandidateWindow:
         recall_reasons=[str(v) for v in candidate.get("recall_reasons", [])],
         metadata=candidate.get("metadata") or {},
     )
-

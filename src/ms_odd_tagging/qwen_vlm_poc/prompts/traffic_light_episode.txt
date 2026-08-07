@@ -1,0 +1,51 @@
+Scenario: traffic_light_episode
+
+You receive one merged traffic-light candidate episode. Classify all listed traffic-light-related labels in a single JSON response.
+
+Use the supplied structured evidence for ego speed, acceleration, motion state, traffic-light object association, stopline distance/relation, lead relation, topology, and trajectory progression. Do not visually estimate numeric speed, acceleration, stopline distance, or lead distance when structured values are available.
+
+Topology/intersection evidence is supporting evidence only. Missing topology must not make the result negative when relevant traffic lights, stoplines, ego motion, lead relation, or trajectory progression support a traffic-light-controlled situation.
+
+A positive traffic-light label requires an ego-relevant traffic-light episode, not a merely nearby unrelated signal. Prefer path-corridor traffic lights, associated stoplines, stopline progression, same-path lead evidence, and approach/traversal evidence.
+
+Labels:
+- on_traffic_light_intersection: ego is approaching, entering, inside, or exiting a traffic-light-controlled intersection.
+- on_stopline_traffic_light: ego is on or crossing the relevant traffic-light stopline.
+- accelerating_at_traffic_light: ego is accelerating in the relevant traffic-light context.
+- accelerating_at_traffic_light_with_lead: ego is accelerating in the relevant traffic-light context and a valid same-path lead exists.
+- accelerating_at_traffic_light_without_lead: ego is accelerating in the relevant traffic-light context and no valid same-path lead exists.
+- stationary_at_traffic_light_with_lead: ego is stationary in the relevant traffic-light context and a valid same-path lead exists.
+- stationary_at_traffic_light_without_lead: ego is stationary in the relevant traffic-light context and no valid same-path lead exists.
+- stopping_at_traffic_light_with_lead: ego is stopping/decelerating in the relevant traffic-light context and a valid same-path lead exists.
+- stopping_at_traffic_light_without_lead: ego is stopping/decelerating in the relevant traffic-light context and no valid same-path lead exists.
+- traversing_traffic_light_intersection: ego progresses through the traffic-light-controlled intersection.
+- starting_straight_traffic_light_intersection_traversal: ego starts from stopped/very slow and proceeds straight through the traffic-light-controlled intersection.
+
+With-lead and without-lead variants for the same motion state are mutually exclusive. The generic accelerating_at_traffic_light label may be true together with exactly one accelerating with/without-lead label.
+
+Return JSON only. Return one object with exactly these top-level keys:
+- recording_id: string copied from the candidate.
+- window_start_frame: integer copied from the candidate.
+- window_end_frame: integer copied from the candidate.
+- scenario: exactly "traffic_light_episode".
+- traffic_light_context: boolean. Set true when the episode is ego-relevant to a traffic light or traffic-light stopline, even if topology is missing.
+- labels: object containing every listed label exactly once, each value boolean.
+- confidence_by_label: object containing every listed label exactly once, each value number from 0.0 to 1.0.
+- event_frame_ranges: object. Include entries only for labels whose labels[label] is true. Each entry must be {"start_frame": int, "end_frame": int}.
+- reason_by_label: object. Include entries only for labels whose labels[label] is true. Each entry must be a non-empty string.
+- evidence_ids_by_label: object. Include entries only for labels whose labels[label] is true. Each entry must be a non-empty array of supplied evidence_id strings.
+- ambiguities: array of strings.
+- insufficient_evidence: boolean.
+- review_required: boolean.
+
+Do not copy a default all-false answer. Decide from the evidence.
+
+For every true label:
+- confidence_by_label[label] must be greater than 0.0.
+- event_frame_ranges[label] must be present.
+- reason_by_label[label] must be present and non-empty.
+- evidence_ids_by_label[label] must contain at least one supplied evidence_id.
+
+For every false label:
+- confidence_by_label[label] should be 0.0 unless there is weak evidence below threshold.
+- Do not include that label in event_frame_ranges, reason_by_label, or evidence_ids_by_label.

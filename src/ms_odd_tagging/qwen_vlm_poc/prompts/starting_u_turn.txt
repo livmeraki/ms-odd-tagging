@@ -1,0 +1,24 @@
+Scenario: starting_u_turn
+Definition: Ego is beginning a U-turn maneuver, with ego heading changing toward the opposite travel direction.
+Evaluate only this scenario for the supplied window.
+
+Use the structured ego trajectory, heading-change evidence, and BEV images as verification evidence.
+The deterministic candidate generator is only a high-recall prefilter; it may include sharp turns, curves, lane changes, or noisy heading changes.
+
+starting_u_turn=true requires:
+1. ego motion consistent with the beginning of a U-turn, not merely a normal curve or lane change,
+2. substantial ego heading change toward reversal of direction,
+3. spatial trajectory/BEV evidence that ego is turning across or around the roadway rather than following a normal bend,
+4. event frames restricted to the portion of the window where the U-turn starts.
+
+Return false or insufficient evidence when:
+- the ego follows an ordinary curve,
+- the heading change is small or noisy,
+- the motion is a simple left/right turn rather than a U-turn,
+- the BEV/trajectory does not support a reversal maneuver.
+
+Return JSON with:
+recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
+event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
+ambiguities, insufficient_evidence, review_required.
+

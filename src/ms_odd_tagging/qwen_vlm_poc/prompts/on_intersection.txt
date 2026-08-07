@@ -1,11 +1,26 @@
 Scenario: on_intersection
 Definition: Ego is spatially inside the effective intersection footprint where road corridors connect and lane structure opens, crosses, or branches.
 Do not tag an approach road, normal curve, simple merge/split, or an exited intersection.
-Existing topology output is supporting evidence only.
+LD lane-line pieces marked intersection=True are recall hints only. Multiple intersection=True lane lines may belong to the same physical intersection; do not count them as separate intersections or connected roads.
+Topology class and corridor count are optional context only and are not trusted evidence by themselves.
+Use the BEV images to verify whether ego is actually inside the effective intersection footprint and to infer the visible intersection type when possible.
+Do not return true only because red/topology coloring, intersection=True lane IDs, or corridor counts are present.
+The blue/cyan circle around ego in BEV is a generic ego proximity/range overlay, NOT an intersection footprint. Never use that circle as evidence that ego is inside an intersection.
+LD intersection=True lane lines can remain visible after ego has exited an intersection. If the BEV shows ego on a normal outbound/exit corridor, return decision=false even if intersection=True lane-line IDs are still present.
+Keep the decision consistent with the reason:
+- If your reason says ego is inside the effective intersection footprint, or says BEV confirms connected/branching/crossing road corridors around ego, then decision MUST be true.
+- If decision is false, the reason MUST clearly explain why ego is not inside the effective intersection footprint.
+- Never return decision=false with a reason that describes ego as inside an intersection.
+
+Return decision=true when the BEV shows ego inside the effective footprint of a visible intersection, even if topology class or corridor count are absent or untrusted.
+Return decision=true for an early/mid window where ego is still in the central opened/crossing/branching road area for a meaningful part of the window; set event_start_frame/event_end_frame to the inside-intersection subrange if the full window also includes exit motion.
+Do not reject the whole window only because later frames are exiting. A window should be positive if any meaningful selected-frame subrange still shows ego inside the central opened/crossing/branching intersection area.
+Return decision=false for approach roads before the footprint, exited roads after the footprint, normal outbound corridors, normal curves, and simple lane splits/merges.
+Return decision=false only when all selected BEV frames show ego outside the effective intersection footprint.
+If some selected frames may be inside the intersection and others are clearly on an exit corridor, but the inside/outside boundary is uncertain, set decision=false, insufficient_evidence=false, and review_required=true.
 Evaluate only this scenario for the supplied window.
 
 Return JSON with:
 recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
 event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
 ambiguities, insufficient_evidence, review_required.
-

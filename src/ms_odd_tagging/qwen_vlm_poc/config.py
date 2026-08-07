@@ -9,7 +9,27 @@ from typing import Any
 from ms_odd_tagging.common.config import CANONICAL, OUTPUT_ROOT
 
 
-SCENARIOS = ("waiting_for_pedestrian_to_cross", "on_intersection")
+TRAFFIC_LIGHT_LABELS = (
+    "on_traffic_light_intersection",
+    "on_stopline_traffic_light",
+    "accelerating_at_traffic_light",
+    "accelerating_at_traffic_light_with_lead",
+    "accelerating_at_traffic_light_without_lead",
+    "stationary_at_traffic_light_with_lead",
+    "stationary_at_traffic_light_without_lead",
+    "stopping_at_traffic_light_with_lead",
+    "stopping_at_traffic_light_without_lead",
+    "traversing_traffic_light_intersection",
+    "starting_straight_traffic_light_intersection_traversal",
+)
+
+
+SCENARIOS = (
+    "waiting_for_pedestrian_to_cross",
+    "on_intersection",
+    "starting_u_turn",
+    "traffic_light_episode",
+)
 
 
 @dataclass(frozen=True)
@@ -23,7 +43,7 @@ class VlmPocConfig:
     response_format_json: bool = True
     window_seconds: float = 5.0
     frames_per_second: float = 2.0
-    max_bev_images: int = 10
+    max_bev_images: int = 6
     candidate_stride_seconds: float = 2.5
     acceptance_threshold: float = 0.72
     review_threshold: float = 0.45
@@ -51,6 +71,21 @@ class VlmPocConfig:
         "roundabout",
     )
     minimum_intersection_confidence: float = 0.25
+    u_turn_min_heading_change_rad: float = 1.2
+    u_turn_min_cumulative_heading_change_rad: float = 1.5
+    traffic_light_classes: tuple[str, ...] = (
+        "traffic_light",
+        "traffic_light_car",
+        "traffic_light_pedestrian",
+    )
+    traffic_light_episode_merge_gap_s: float = 1.5
+    traffic_light_episode_min_signal_frames: int = 1
+    traffic_light_stopline_near_m: float = 35.0
+    traffic_light_forward_m: float = 70.0
+    traffic_light_backward_m: float = 8.0
+    traffic_light_path_lateral_m: float = 12.0
+    traffic_light_lead_forward_m: float = 45.0
+    traffic_light_lead_lateral_m: float = 4.0
     prompt_version: str = "qwen-vlm-poc-v1"
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -73,7 +108,7 @@ def load_config(path: Path | None = None, overrides: dict[str, Any] | None = Non
     for key in ("input_dir", "output_root"):
         if key in data and not isinstance(data[key], Path):
             data[key] = Path(data[key])
-    for key in ("bev_extent_m", "bev_size_px", "intersection_classes"):
+    for key in ("bev_extent_m", "bev_size_px", "intersection_classes", "traffic_light_classes"):
         if key in data and isinstance(data[key], list):
             data[key] = tuple(data[key])
     return VlmPocConfig(**data)
