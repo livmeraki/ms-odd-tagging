@@ -85,18 +85,28 @@ def render_plotly_explorer(
 
     html = f'''<!doctype html><html><head><meta charset="utf-8"><title>Lane Debug v2</title><script>{plotly_js}</script><style>
 body{{font:13px system-ui;margin:0;background:#f6f7fb;color:#172033}}header{{padding:10px 14px;background:#fff;border-bottom:1px solid #ddd;position:sticky;top:0;z-index:4}}#controls{{display:flex;flex-wrap:wrap;gap:10px;align-items:center}}#plot{{height:72vh}}#panel{{background:#fff;padding:10px 14px;white-space:pre-wrap;font-family:ui-monospace,monospace;max-height:24vh;overflow:auto;border-top:1px solid #ddd}}input[type=range]{{width:340px}}</style></head><body>
-<header><b id="title"></b><div id="controls"><button id="prev">◀</button><button id="next">▶</button><input id="frame" type="range" min="0" step="1"><span id="frameLabel"></span>
+<header><b id="title"></b><div id="controls"><button id="prev">◀</button><button id="play">▶ Play</button><button id="next">▶</button><input id="frame" type="range" min="0" step="1"><span id="frameLabel"></span>
 <label><input id="followEgo" type="checkbox" checked>follow ego</label><label><input id="raw" type="checkbox" checked>raw LD</label><label><input id="recon" type="checkbox" checked>reconstructed lanes</label><label><input id="ids" type="checkbox" checked>lane IDs</label><label><input id="routes" type="checkbox">logical routes</label><label><input id="egoLane" type="checkbox" checked>ego lane</label><label><input id="adj" type="checkbox" checked>adjacent lanes</label><label><input id="objects" type="checkbox" checked>objects</label><label><input id="objHeading" type="checkbox" checked>object heading</label><label><input id="leadCandidates" type="checkbox" checked>lead candidates</label><label><input id="trajectory" type="checkbox" checked>ego trajectory</label><label><input id="debugText" type="checkbox" checked>debug text</label></div></header><div id="plot"></div><div id="panel"></div>
 <script id="payload" type="application/json">{data}</script><script>
-const D=JSON.parse(document.getElementById('payload').textContent),slider=document.getElementById('frame'),plot=document.getElementById('plot');slider.max=D.frames.length-1;document.getElementById('title').textContent=`${{D.recording_id}} — lane debug v2 — run ${{D.run_id}}`;
+const D=JSON.parse(document.getElementById('payload').textContent),slider=document.getElementById('frame'),plot=document.getElementById('plot'),playButton=document.getElementById('play');slider.max=D.frames.length-1;document.getElementById('title').textContent=`${{D.recording_id}} — lane debug v2 — run ${{D.run_id}}`;
 const roleColor={{ego:'#22c55e',left:'#06b6d4',right:'#f59e0b',other:'#94a3b8',lead:'#ef4444',candidate:'#a855f7'}};
-let viewState=null,viewSize=null,relayoutBound=false;
+let viewState=null,viewSize=null,relayoutBound=false,playTimer=null;
 function traceLine(pts,name,color,width=1,dash='solid',showlegend=false){{return{{x:pts.map(p=>p[0]),y:pts.map(p=>p[1]),mode:'lines',name,line:{{color,width,dash}},hoverinfo:'name',showlegend}}}}
 function polygon(l,name,color,fill='toself'){{const p=l.polygon_lcs_m||[];return{{x:p.map(q=>q[0]),y:p.map(q=>q[1]),mode:'lines',name,line:{{color,width:2}},fill,fillcolor:color+'22',hovertemplate:name+'<extra></extra>',showlegend:false}}}}
 function rememberView(ev){{
  const x0=ev['xaxis.range[0]'],x1=ev['xaxis.range[1]'],y0=ev['yaxis.range[0]'],y1=ev['yaxis.range[1]'];
  if([x0,x1,y0,y1].every(Number.isFinite)){{viewState={{x:[x0,x1],y:[y0,y1]}};viewSize={{x:Math.abs(x1-x0),y:Math.abs(y1-y0)}}}}
  if(ev['xaxis.autorange']===true||ev['yaxis.autorange']===true){{viewState=null;viewSize=null}}
+}}
+function stopPlayback(){{if(playTimer!==null){{clearInterval(playTimer);playTimer=null}}playButton.textContent='▶ Play'}}
+function togglePlayback(){{
+ if(playTimer!==null){{stopPlayback();return}}
+ if(+slider.value>=D.frames.length-1)slider.value=0;
+ playButton.textContent='❚❚ Pause';
+ playTimer=setInterval(()=>{{
+  if(+slider.value>=D.frames.length-1){{stopPlayback();return}}
+  slider.value=+slider.value+1;draw();
+ }},100);
 }}
 function draw(){{
  const f=D.frames[+slider.value],traces=[],ep=f.ego_position||[0,0];
@@ -114,7 +124,7 @@ function draw(){{
  const panel={{run_id:D.run_id,frame_index:f.frame_index,follow_ego:followEgo,state:f.state,reason:f.reason,ego_lane:f.ego_lane,left_lane:f.left_lane,right_lane:f.right_lane,lead:f.lead,lead_candidates:f.lead_candidates_debug}};document.getElementById('panel').style.display=document.getElementById('debugText').checked?'block':'none';document.getElementById('panel').textContent=JSON.stringify(panel,null,2)
 }}
 for(const id of ['followEgo','raw','recon','ids','routes','egoLane','adj','objects','objHeading','leadCandidates','trajectory','debugText'])document.getElementById(id).onchange=draw;
-slider.oninput=draw;document.getElementById('prev').onclick=()=>{{slider.value=Math.max(0,+slider.value-1);draw()}};document.getElementById('next').onclick=()=>{{slider.value=Math.min(D.frames.length-1,+slider.value+1);draw()}};draw();
+slider.oninput=()=>{{stopPlayback();draw()}};document.getElementById('prev').onclick=()=>{{stopPlayback();slider.value=Math.max(0,+slider.value-1);draw()}};document.getElementById('next').onclick=()=>{{stopPlayback();slider.value=Math.min(D.frames.length-1,+slider.value+1);draw()}};playButton.onclick=togglePlayback;draw();
 </script></body></html>'''
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")
