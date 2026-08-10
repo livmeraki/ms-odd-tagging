@@ -3,8 +3,9 @@
 Runs the existing static-order detector, then:
 1. merges fragmented lanes supported by consecutive static-neighbor topology;
 2. builds recording-level static inferred lanes from overlapping ego-corridor boxes;
-3. connects the observed tracks before/after a supported inferred lane;
-4. recomputes ego/left/right roles against the final static network.
+3. connects observed tracks before/after a supported inferred lane;
+4. fills any remaining endpoint gaps with curvature-aware connector polygons;
+5. recomputes ego/left/right roles against the final static network.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from typing import Any
 from .detector import _lane_output, _nearest_member
 from .detector_static_order import run_lane_debug_v2 as run_static_order
 from .neighbor_continuity_stitch import stitch_topology_supported_neighbors
+from .static_inferred_connectors import fill_static_inferred_endpoint_gaps
 from .static_inferred_lane import build_static_inferred_lanes, integrate_static_inferred_lanes
 from .static_lane_order import build_constructed_lane_network, build_static_lane_order, classify_lane_roles
 from .strict_track_assignment import assign_point_to_track_strict
@@ -77,7 +79,11 @@ def _recompute_frames(
                 "source": "final_integrated_static_lane_network",
                 "track_source": None if not track else track.get("source"),
                 "matched_piece_kind": matched_kind,
-                "inferred": matched_kind in {"ego_supported_inferred_route", "static_inferred_corridor"},
+                "inferred": matched_kind in {
+                    "ego_supported_inferred_route",
+                    "static_inferred_corridor",
+                    "static_inferred_connector",
+                },
             }
             roles = classify_lane_roles(point, track_id, tracks, lane_order)
             frame["lane_roles"] = roles
@@ -108,12 +114,16 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
 
     alias = _track_alias_map(topology_tracks)
     static_inferred_lanes = build_static_inferred_lanes(result.get("inferred_ego_routes", []))
-    final_tracks, static_inferred_debug = integrate_static_inferred_lanes(
+    integrated_tracks, static_inferred_debug = integrate_static_inferred_lanes(
         topology_tracks,
         static_inferred_lanes,
         alias,
         maximum_endpoint_distance_m=float(cfg.get("static_inferred_lane_maximum_endpoint_distance_m", 20.0)),
         maximum_heading_difference_deg=float(cfg.get("static_inferred_lane_maximum_heading_difference_deg", 40.0)),
+    )
+    final_tracks, connector_debug = fill_static_inferred_endpoint_gaps(
+        integrated_tracks,
+        maximum_gap_m=float(cfg.get("static_inferred_connector_maximum_gap_m", 20.0)),
     )
 
     lane_order = build_static_lane_order(
@@ -129,6 +139,8 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
     result["topology_supported_stitch_count"] = sum(1 for x in topology_debug if x.get("accepted"))
     result["static_inferred_lanes"] = static_inferred_lanes
     result["static_inferred_lane_debug"] = static_inferred_debug
+    result["static_inferred_connector_debug"] = connector_debug
+    result["static_inferred_connector_count"] = sum(1 for x in connector_debug if x.get("status") == "connector_created")
     result["static_inferred_lane_count"] = len(static_inferred_lanes)
     result["static_inferred_lane_merge_count"] = sum(
         1 for x in static_inferred_debug if x.get("accepted") and x.get("action") == "merge_front_back_tracks"
@@ -136,5 +148,5 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
     result["static_lane_order_topology"] = lane_order
     result["constructed_lane_network"] = build_constructed_lane_network(final_tracks, lane_order)
     _recompute_frames(recording, result, final_tracks, lane_order, {**(result.get("debug_config") or {}), **cfg})
-    result["schema_version"] = "lane-debug-v2-static-inferred-lane-network-v2"
+    result["schema_version"] = "lane-debug-v2-static-inferred-lane-network-v3-connectors"
     return result
