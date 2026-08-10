@@ -1,6 +1,6 @@
 """Additive event-driven candidate generation for the Qwen VLM POC.
 
-The current fixed-window candidate generators remain untouched.  This module is
+The current fixed-window candidate generators remain untouched. This module is
 only used when the CLI explicitly requests the ``event-driven`` strategy.
 """
 
@@ -53,6 +53,11 @@ def generate_event_driven_candidates(
 def _timestamp(frame: dict[str, Any]) -> float | None:
     value = frame.get("time_since_start_s")
     return float(value) if finite(value) else None
+
+
+def _safe_token(value: str) -> str:
+    token = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value)
+    return token.strip("_") or "object"
 
 
 def _conflict_samples_by_pedestrian(
@@ -296,7 +301,7 @@ def generate_waiting_event_candidates(
             end_frame = int(frames[context_end_pos]["frame_index"])
             cid = (
                 f"{recording_id}_waiting_for_pedestrian_to_cross_"
-                f"{start_frame:06d}_{end_frame:06d}"
+                f"{_safe_token(pedestrian_id)}_{start_frame:06d}_{end_frame:06d}"
             )
             response_frame_indices = [int(frames[pos]["frame_index"]) for pos in responses]
             evidence = [
@@ -359,6 +364,7 @@ def generate_waiting_event_candidates(
                     ],
                     metadata={
                         "candidate_strategy": "event-driven",
+                        "pedestrian_id": pedestrian_id,
                         "raw_trigger_start_frame": episode[0].frame_index,
                         "raw_trigger_end_frame": episode[-1].frame_index,
                         "landmark_roles": landmark_roles,
