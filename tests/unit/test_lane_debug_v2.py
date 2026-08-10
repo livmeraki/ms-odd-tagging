@@ -1,9 +1,30 @@
 from ms_odd_tagging.experiments.lane_debug_v2.object_motion import build_object_motion_evidence
 from ms_odd_tagging.experiments.lane_debug_v2.lane_state import deterministic_candidate, direction_relation, transition_kind
+from ms_odd_tagging.experiments.lane_debug_v2.continuous_tracks import build_continuous_tracks, assign_point_to_track, adjacent_tracks
 
 
 def _recording(points):
-    return {"frames":[{"frame_index":i,"time_since_start_s":i*0.1,"objects":[{"object_id":"1","position_lcs_m":p}]} for i,p in enumerate(points)]}
+    return {"frames":[{"frame_index":i,"time_since_start_s":i*0.1,"ego":{"position_lcs_m":[i,0],"heading_lcs_rad":0.0},"objects":[{"object_id":"1","position_lcs_m":p}]} for i,p in enumerate(points)]}
+
+def _lane(lane_id,x0,x1,y,next_id=None):
+    center=[[x0,y],[x1,y]]
+    left=[[x0,y+1.75],[x1,y+1.75]]
+    right=[[x0,y-1.75],[x1,y-1.75]]
+    continuation=[]
+    if next_id is not None:
+        gap=[[x1,y],[x1+1,y],[x1+2,y]]
+        continuation=[{
+            "destination_lane_id":next_id,
+            "projected_centerline_lcs_m":gap,
+            "inferred_gap_polygon_lcs_m":[],
+            "accepted_candidate":{"score":2.0,"gap_m":2.0,"rejection_reasons":[]},
+        }]
+    return {
+        "lane_id":lane_id,"assignment_valid":True,"centerline_lcs_m":center,
+        "left_boundary_lcs_m":left,"right_boundary_lcs_m":right,
+        "polygon_lcs_m":left+list(reversed(right)),"geometry_recovered":False,
+        "recovery_method":None,"curvature_continuations":continuation,
+    }
 
 def test_overlapping_ego_lane_candidates_are_deterministic():
     c=deterministic_candidate([{"lane_id":"20","score":1.0},{"lane_id":"10","score":1.0}])
@@ -36,3 +57,20 @@ def test_actual_left_lane_transition_is_distinguished():
 
 def test_actual_right_lane_transition_is_distinguished():
     assert transition_kind("A","B","r1","r3","r2","r3")=="lane_change_right_candidate"
+
+def test_continuous_track_recursively_chains_multiple_segments():
+    lanes=[_lane("A",0,10,0,"B"),_lane("B",12,22,0,"C"),_lane("C",24,34,0)]
+    tracks,mapping,_=build_continuous_tracks(lanes,_recording([[0,0],[5,0],[15,0],[25,0]]))
+    track=next(t for t in tracks if "A" in t["member_lane_ids"])
+    assert track["member_lane_ids"]==["A","B","C"]
+    assert track["inferred_gap_count"]==2
+    assert mapping["A"]==mapping["B"]==mapping["C"]
+    assignment=assign_point_to_track((23.0,0.0),0.0,tracks)
+    assert assignment["track_id"]==mapping["A"]
+
+def test_continuous_track_adjacent_lane_uses_local_parallel_overlap():
+    lanes=[_lane("E",0,30,0),_lane("L",0,30,3.5)]
+    tracks,mapping,_=build_continuous_tracks(lanes,_recording([[0,0],[5,0],[10,0]]))
+    adjacency=adjacent_tracks(mapping["E"],(10.0,0.0),tracks)
+    assert adjacency["left"]["track_id"]==mapping["L"]
+    assert adjacency["right"]["track_id"] is None
