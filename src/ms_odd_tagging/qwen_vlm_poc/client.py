@@ -33,10 +33,9 @@ def encode_image(path: Path) -> str:
 def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
     """Return the model-facing candidate payload.
 
-    Event-driven waiting-for-pedestrian evaluation is intentionally BEV-first:
-    candidate-generation heuristics are not exposed to the model. The model only
-    receives identity/range fields needed to produce a valid response plus the
-    ordered BEV frame indices and possible pedestrian IDs visible in the scene.
+    Event-driven waiting-for-pedestrian evaluation keeps candidate-generation
+    heuristics hidden. The model receives BEV ordering plus neutral ego speed and
+    timestamp measurements aligned to the same selected frames.
     """
     if (
         candidate.scenario == "waiting_for_pedestrian_to_cross"
@@ -50,9 +49,10 @@ def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
             "candidate_scene_id": candidate.candidate_id,
             "target_pedestrian_ids": list(candidate.primary_object_ids),
             "bev_frame_indices": list(candidate.selected_frame_indices),
+            "ego_measurements": list(candidate.metadata.get("ego_measurements") or []),
             "visual_evidence_id": candidate.metadata.get("visual_evidence_id"),
             "bev_images_follow_in_same_order": True,
-            "evaluation_mode": "bev_only_no_heuristic_labels",
+            "evaluation_mode": "bev_plus_neutral_ego_measurements",
         }
     return candidate.to_dict()
 
