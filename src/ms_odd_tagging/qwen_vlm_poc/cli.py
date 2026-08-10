@@ -14,6 +14,7 @@ from .evidence import load_candidate_bundle, render_candidate_bevs, write_candid
 from .event_driven import generate_event_driven_candidates
 from .loader import canonical_path, load_recording
 from .merging import merge_decisions
+from .review_html import build_review_html
 from .validation import parse_and_validate_response
 
 
@@ -92,6 +93,11 @@ def _generate_candidates(recording: dict, scenario: str, config, strategy: str):
     return generate_candidates(recording, scenario, config)
 
 
+def _write_manifest_and_review(manifest: dict, manifest_path: Path) -> Path:
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    return build_review_html(manifest_path)
+
+
 def main() -> int:
     args = parse_args()
     config = _config_from_args(args)
@@ -124,6 +130,7 @@ def main() -> int:
             if candidate.scenario != args.scenario:
                 raise SystemExit(f"{bundle_path} scenario {candidate.scenario!r} does not match --scenario {args.scenario!r}")
             candidate_rows.append((recording, candidate, bundle_path))
+            manifest["candidate_bundles"].append(str(bundle_path))
     else:
         for recording_id in args.recording or []:
             path = canonical_path(config.input_dir, recording_id)
@@ -144,10 +151,11 @@ def main() -> int:
 
     if args.candidate_only:
         manifest_path = output_root / f"manifest_candidate_only_{args.scenario}.json"
-        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+        review_path = _write_manifest_and_review(manifest, manifest_path)
         print(f"Wrote {len(candidate_rows)} candidate bundle(s)")
         print(f"Candidate strategy: {args.candidate_strategy}")
         print(f"Manifest: {manifest_path}")
+        print(f"Review HTML: {review_path}")
         return 0
 
     client = VlmClient(
@@ -202,11 +210,12 @@ def main() -> int:
         manifest["events"].append(str(event_path))
 
     manifest_path = output_root / f"manifest_{args.scenario}.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    review_path = _write_manifest_and_review(manifest, manifest_path)
     print(f"Processed {len(candidate_rows)} candidate(s)")
     print(f"Candidate strategy: {args.candidate_strategy}")
     print(f"Accepted recordings: {len(accepted_by_recording)}")
     print(f"Manifest: {manifest_path}")
+    print(f"Review HTML: {review_path}")
     return 0
 
 
