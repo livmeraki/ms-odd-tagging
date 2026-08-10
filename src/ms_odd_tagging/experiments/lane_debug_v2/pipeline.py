@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import DEBUG_IMPLEMENTATION_VERSION
-from .detector_static_order import run_lane_debug_v2
+from .detector_static_order_integrated import run_lane_debug_v2
 from .lane_changes import run_lane_change_debug
 from .explorer_visualization import render_plotly_explorer
 
@@ -66,9 +66,6 @@ def run_one(
         "lane_change_config_source": "provided direct_scenarios config",
         "artifact_policy": "fresh_run_no_reuse",
     })
-    # The explorer owns all of its controls. Do not post-process the generated
-    # HTML: the old post-processor injected a second Center ego button and used
-    # stale JavaScript variable names.
     render_plotly_explorer(recording, following, changes, explorer_path, run_id)
     return [metadata_path, lane_path, tag_path, explorer_path]
 
