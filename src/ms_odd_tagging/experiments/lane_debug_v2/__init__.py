@@ -1,7 +1,3 @@
-"""Isolated lane-debug v2 experiment.
+"""Isolated lane-debug v2 experiment."""
 
-Production lane/tagging modules are intentionally duplicated here so this
-experiment can evolve without changing the production implementation.
-"""
-
-DEBUG_IMPLEMENTATION_VERSION = "lane-debug-v2.7-static-order-anchored-bridge-merge"
+DEBUG_IMPLEMENTATION_VERSION = "lane-debug-v2.8-canonical-endpoint-stitch"
