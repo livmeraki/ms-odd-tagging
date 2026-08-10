@@ -14,6 +14,7 @@ from .evidence import load_candidate_bundle, render_candidate_bevs, write_candid
 from .event_driven import generate_event_driven_candidates
 from .loader import canonical_path, load_recording
 from .merging import merge_decisions
+from .profiling import RunProfiler
 from .review_html import build_review_html
 from .validation import parse_and_validate_response
 
@@ -93,14 +94,32 @@ def _generate_candidates(recording: dict, scenario: str, config, strategy: str):
     return generate_candidates(recording, scenario, config)
 
 
-def _write_manifest_and_review(manifest: dict, manifest_path: Path) -> Path:
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    return build_review_html(manifest_path)
+def _finalize_outputs(
+    manifest: dict,
+    manifest_path: Path,
+    profiler: RunProfiler,
+) -> tuple[Path, Path]:
+    timing_path = manifest_path.with_name(manifest_path.stem + "_timing.json")
+    manifest["timing_profile"] = str(timing_path)
+    with profiler.measure("manifest_write", path=str(manifest_path)):
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
+    with profiler.measure("review_html_generation", path=str(manifest_path)):
+        review_path = build_review_html(manifest_path)
+    profiler.write(timing_path)
+    return review_path, timing_path
+
+
+def _print_timing(profiler: RunProfiler, timing_path: Path) -> None:
+    print(f"Timing profile: {timing_path}")
+    for line in profiler.console_lines():
+        print(line)
 
 
 def main() -> int:
+    profiler = RunProfiler()
     args = parse_args()
-    config = _config_from_args(args)
+    with profiler.measure("config_load"):
+        config = _config_from_args(args)
     if not args.candidate_bundle and not args.recording:
         raise SystemExit("--recording is required unless --candidate-bundle is supplied")
 
@@ -125,8 +144,9 @@ def main() -> int:
     candidate_rows = []
     if args.candidate_bundle:
         for bundle_path in args.candidate_bundle:
-            candidate = load_candidate_bundle(bundle_path)
-            recording = _recording_for_bundle(bundle_path, config.input_dir)
+            with profiler.measure("candidate_bundle_load", bundle_path=str(bundle_path)):
+                candidate = load_candidate_bundle(bundle_path)
+                recording = _recording_for_bundle(bundle_path, config.input_dir)
             if candidate.scenario != args.scenario:
                 raise SystemExit(f"{bundle_path} scenario {candidate.scenario!r} does not match --scenario {args.scenario!r}")
             candidate_rows.append((recording, candidate, bundle_path))
@@ -134,28 +154,46 @@ def main() -> int:
     else:
         for recording_id in args.recording or []:
             path = canonical_path(config.input_dir, recording_id)
-            recording = load_recording(path)
-            candidates = _generate_candidates(
-                recording,
-                args.scenario,
-                config,
-                args.candidate_strategy,
-            )
+            with profiler.measure("recording_load", recording_id=recording_id):
+                recording = load_recording(path)
+            with profiler.measure(
+                "candidate_generation",
+                recording_id=recording_id,
+                scenario=args.scenario,
+                strategy=args.candidate_strategy,
+            ):
+                candidates = _generate_candidates(
+                    recording,
+                    args.scenario,
+                    config,
+                    args.candidate_strategy,
+                )
             if args.limit_candidates is not None:
                 candidates = candidates[: args.limit_candidates]
             for candidate in candidates:
-                candidate = render_candidate_bevs(recording, candidate, output_root, config)
-                bundle_path = write_candidate_bundle(candidate, output_root)
+                with profiler.measure(
+                    "bev_render",
+                    recording_id=recording_id,
+                    candidate_id=candidate.candidate_id,
+                ):
+                    candidate = render_candidate_bevs(recording, candidate, output_root, config)
+                with profiler.measure(
+                    "candidate_bundle_write",
+                    recording_id=recording_id,
+                    candidate_id=candidate.candidate_id,
+                ):
+                    bundle_path = write_candidate_bundle(candidate, output_root)
                 candidate_rows.append((recording, candidate, bundle_path))
                 manifest["candidate_bundles"].append(str(bundle_path))
 
     if args.candidate_only:
         manifest_path = output_root / f"manifest_candidate_only_{args.scenario}.json"
-        review_path = _write_manifest_and_review(manifest, manifest_path)
+        review_path, timing_path = _finalize_outputs(manifest, manifest_path, profiler)
         print(f"Wrote {len(candidate_rows)} candidate bundle(s)")
         print(f"Candidate strategy: {args.candidate_strategy}")
         print(f"Manifest: {manifest_path}")
         print(f"Review HTML: {review_path}")
+        _print_timing(profiler, timing_path)
         return 0
 
     client = VlmClient(
@@ -169,19 +207,39 @@ def main() -> int:
     for recording, candidate, bundle_path in candidate_rows:
         recording_by_id[candidate.recording_id] = recording
         try:
-            raw = client.infer(candidate, force_refresh=args.force_cache_refresh)
-            raw_text = extract_message_text(raw)
-            validation = parse_and_validate_response(raw_text, candidate, config)
+            with profiler.measure(
+                "vlm_inference",
+                recording_id=candidate.recording_id,
+                candidate_id=candidate.candidate_id,
+            ):
+                raw = client.infer(candidate, force_refresh=args.force_cache_refresh)
+            with profiler.measure(
+                "response_extract",
+                recording_id=candidate.recording_id,
+                candidate_id=candidate.candidate_id,
+            ):
+                raw_text = extract_message_text(raw)
+            with profiler.measure(
+                "validation",
+                recording_id=candidate.recording_id,
+                candidate_id=candidate.candidate_id,
+            ):
+                validation = parse_and_validate_response(raw_text, candidate, config)
         except Exception as exc:
             raw = {"ok": False, "candidate_id": candidate.candidate_id, "error": str(exc)}
-            validation = parse_and_validate_response("{}", candidate, config)
-            validation = type(validation)(
-                accepted=False,
-                review_required=True,
-                reasons=["inference_failure_or_timeout:" + str(exc)],
-                decision=validation.decision,
-                raw_text=validation.raw_text,
-            )
+            with profiler.measure(
+                "validation_error_fallback",
+                recording_id=candidate.recording_id,
+                candidate_id=candidate.candidate_id,
+            ):
+                validation = parse_and_validate_response("{}", candidate, config)
+                validation = type(validation)(
+                    accepted=False,
+                    review_required=True,
+                    reasons=["inference_failure_or_timeout:" + str(exc)],
+                    decision=validation.decision,
+                    raw_text=validation.raw_text,
+                )
         manifest["raw_results"].append(raw)
         validation_row = {
             "candidate_id": candidate.candidate_id,
@@ -196,26 +254,38 @@ def main() -> int:
             for decision in validation.decisions:
                 accepted_by_recording.setdefault(candidate.recording_id, []).append((candidate, decision))
         elif args.export_review_bundles and validation.review_required:
-            review_path = _copy_review_bundle(bundle_path, output_root, validation.reasons[0] if validation.reasons else "review_required")
+            with profiler.measure(
+                "review_bundle_copy",
+                recording_id=candidate.recording_id,
+                candidate_id=candidate.candidate_id,
+            ):
+                review_path = _copy_review_bundle(
+                    bundle_path,
+                    output_root,
+                    validation.reasons[0] if validation.reasons else "review_required",
+                )
             manifest["review_bundles"].append(str(review_path))
 
     for recording_id, accepted in accepted_by_recording.items():
-        events = merge_decisions(recording_by_id[recording_id], accepted, config)
+        with profiler.measure("event_merge", recording_id=recording_id):
+            events = merge_decisions(recording_by_id[recording_id], accepted, config)
         event_path = output_root / "events" / args.scenario / f"{recording_id}_events.json"
-        event_path.parent.mkdir(parents=True, exist_ok=True)
-        event_path.write_text(
-            json.dumps([event.to_dict() for event in events], indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        with profiler.measure("event_write", recording_id=recording_id, path=str(event_path)):
+            event_path.parent.mkdir(parents=True, exist_ok=True)
+            event_path.write_text(
+                json.dumps([event.to_dict() for event in events], indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
         manifest["events"].append(str(event_path))
 
     manifest_path = output_root / f"manifest_{args.scenario}.json"
-    review_path = _write_manifest_and_review(manifest, manifest_path)
+    review_path, timing_path = _finalize_outputs(manifest, manifest_path, profiler)
     print(f"Processed {len(candidate_rows)} candidate(s)")
     print(f"Candidate strategy: {args.candidate_strategy}")
     print(f"Accepted recordings: {len(accepted_by_recording)}")
     print(f"Manifest: {manifest_path}")
     print(f"Review HTML: {review_path}")
+    _print_timing(profiler, timing_path)
     return 0
 
 
