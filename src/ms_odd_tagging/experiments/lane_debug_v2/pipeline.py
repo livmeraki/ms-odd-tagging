@@ -1,9 +1,13 @@
 """Fresh-run CLI for isolated lane-debug-v2 experiments."""
 from __future__ import annotations
-import argparse, json, subprocess
+
+import argparse
+import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
 from . import DEBUG_IMPLEMENTATION_VERSION
 from .detector_static_order import run_lane_debug_v2
 from .lane_changes import run_lane_change_debug
@@ -26,34 +30,13 @@ def _git_sha() -> str | None:
         return None
 
 
-def _add_center_ego_control(path: Path) -> None:
-    """Add a center-on-current-ego control without changing Plotly zoom scale."""
-    html = path.read_text(encoding="utf-8")
-    button_anchor = '<button id="next">▶</button>'
-    if 'id="centerEgo"' not in html:
-        html = html.replace(button_anchor, button_anchor + '<button id="centerEgo" type="button">Center ego</button>', 1)
-    script = r'''<script>
-(function(){
-  const button=document.getElementById('centerEgo');
-  if(!button)return;
-  button.addEventListener('click',()=>{
-    const frame=D.frames[+slider.value];
-    const ep=frame?.ego_position;
-    if(!ep||ep.length<2)return;
-    const defaultSpan=110;
-    const xSpan=viewState ? Math.abs(viewState.x[1]-viewState.x[0]) : defaultSpan;
-    const ySpan=viewState ? Math.abs(viewState.y[1]-viewState.y[0]) : defaultSpan;
-    viewState={x:[ep[0]-xSpan/2,ep[0]+xSpan/2],y:[ep[1]-ySpan/2,ep[1]+ySpan/2]};
-    draw();
-  });
-})();
-</script>'''
-    if 'const defaultSpan=110;' not in html:
-        html = html.replace('</body>', script + '</body>', 1)
-    path.write_text(html, encoding="utf-8")
-
-
-def run_one(canonical_path: Path, output_root: Path, config: dict[str, Any], lane_change_config: dict[str, Any], run_id: str | None = None) -> list[Path]:
+def run_one(
+    canonical_path: Path,
+    output_root: Path,
+    config: dict[str, Any],
+    lane_change_config: dict[str, Any],
+    run_id: str | None = None,
+) -> list[Path]:
     recording = _load(canonical_path)
     rid = recording.get("recording_id") or canonical_path.stem.replace("_canonical_odld_frames", "")
     run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -61,15 +44,18 @@ def run_one(canonical_path: Path, output_root: Path, config: dict[str, Any], lan
     if root.exists():
         raise FileExistsError(f"refusing to reuse existing debug run directory: {root}")
     root.mkdir(parents=True)
+
     following = run_lane_debug_v2(recording, config)
     changes = run_lane_change_debug(recording, following, lane_change_config)
+
     lane_path = root / "lane_results" / f"{rid}_lane_debug_v2.json"
     tag_path = root / "tagging_results" / f"{rid}_lane_change_debug_v2.json"
     explorer_path = root / "explorers" / f"{rid}_lane_debug_v2_plotly.html"
     metadata_path = root / "metadata.json"
+
     _write(lane_path, following)
     _write(tag_path, changes)
-    metadata = {
+    _write(metadata_path, {
         "run_id": run_id,
         "run_timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit_sha": _git_sha(),
@@ -79,10 +65,11 @@ def run_one(canonical_path: Path, output_root: Path, config: dict[str, Any], lan
         "lane_debug_config": config,
         "lane_change_config_source": "provided direct_scenarios config",
         "artifact_policy": "fresh_run_no_reuse",
-    }
-    _write(metadata_path, metadata)
+    })
+    # The explorer owns all of its controls. Do not post-process the generated
+    # HTML: the old post-processor injected a second Center ego button and used
+    # stale JavaScript variable names.
     render_plotly_explorer(recording, following, changes, explorer_path, run_id)
-    _add_center_ego_control(explorer_path)
     return [metadata_path, lane_path, tag_path, explorer_path]
 
 
@@ -95,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--lane-change-config", type=Path, default=Path("configs/direct_scenarios.yaml"))
     p.add_argument("--run-id", default=None)
     a = p.parse_args(argv)
+
     canonical = a.canonical_dir / f"{a.recording}_canonical_odld_frames.json"
     if not canonical.is_file():
         p.error(f"missing canonical recording: {canonical}")
