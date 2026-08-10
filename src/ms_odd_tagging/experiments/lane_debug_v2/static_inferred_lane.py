@@ -74,14 +74,26 @@ def _build_boundaries(center: list[list[float]], width_m: float) -> tuple[list[l
 
 
 def build_static_inferred_lanes(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert completed overlapping-box routes into static smooth corridors."""
+    """Convert overlapping-box routes into static smooth full-length corridors."""
     out: list[dict[str, Any]] = []
     for route in routes:
         pieces = sorted(route.get("pieces") or [], key=lambda p: int(p.get("frame_index", 0)))
         centers = [c for c in (_piece_center(p) for p in pieces) if c is not None]
         if len(centers) < 2:
             continue
-        smooth = _smooth_centers(centers)
+        first_line = pieces[0].get("centerline_lcs_m") or []
+        last_line = pieces[-1].get("centerline_lcs_m") or []
+        anchors: list[list[float]] = []
+        if first_line:
+            anchors.append([float(first_line[0][0]), float(first_line[0][1])])
+        anchors.extend(centers)
+        if last_line:
+            anchors.append([float(last_line[-1][0]), float(last_line[-1][1])])
+        compact: list[list[float]] = []
+        _append_points(compact, anchors)
+        if len(compact) < 2:
+            continue
+        smooth = _smooth_centers(compact)
         widths = [float(p.get("width_m")) for p in pieces if p.get("width_m") is not None]
         width = median(widths) if widths else 3.5
         left, right, polygon = _build_boundaries(smooth, width)
@@ -103,6 +115,7 @@ def build_static_inferred_lanes(routes: list[dict[str, Any]]) -> list[dict[str, 
             "right_boundary_lcs_m": right,
             "polygon_lcs_m": polygon,
             "median_width_m": round(width, 3),
+            "longitudinal_extent_method": "first_box_back_edge_through_box_centers_to_last_box_front_edge",
         })
     return out
 
