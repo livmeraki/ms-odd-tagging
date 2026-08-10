@@ -1,33 +1,34 @@
-"""Second-pass integration for lane-debug-v2.
+"""Final integrated lane-debug-v2 detector.
 
-Runs the existing static-order detector, then:
-1. merges fragmented lanes supported by consecutive static-neighbor topology;
-2. builds recording-level static inferred lanes from overlapping ego-corridor boxes;
-3. connects observed tracks before/after a supported inferred lane;
-4. fills any remaining endpoint gaps with curvature-aware connector polygons;
-5. recomputes ego/left/right roles against the final static network.
+Order is intentional:
+1. run the existing static-order experiment;
+2. reject lanes that are both intersection-marked and curved, then rebuild tracks;
+3. build recording-level static inferred lanes from overlapping ego-corridor boxes;
+4. affiliate each inferred lane to longitudinal BACK/FRONT continuations only;
+5. integrate/fill inferred corridors;
+6. only after affiliation, run topology-supported neighbor stitching;
+7. recompute static lane order and per-frame roles.
 """
 from __future__ import annotations
 
 from typing import Any
 
 from .detector import _lane_output, _nearest_member
-from .detector_static_order import run_lane_debug_v2 as run_static_order
+from .detector_static_order import (
+    _apply_static_order,
+    run_lane_debug_v2 as run_static_order,
+)
+from .lane_eligibility import exclude_curved_intersection_lanes
 from .neighbor_continuity_stitch import stitch_topology_supported_neighbors
+from .static_inferred_affiliation import assign_static_inferred_affiliations
 from .static_inferred_connectors import fill_static_inferred_endpoint_gaps
 from .static_inferred_lane import build_static_inferred_lanes, integrate_static_inferred_lanes
 from .static_lane_order import build_constructed_lane_network, build_static_lane_order, classify_lane_roles
 from .strict_track_assignment import assign_point_to_track_strict
 
 
-def _track_alias_map(tracks: list[dict[str, Any]]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for track in tracks:
-        final_id = str(track.get("track_id"))
-        out[final_id] = final_id
-        for old in track.get("merged_from_track_ids") or []:
-            out[str(old)] = final_id
-    return out
+def _identity_alias(tracks: list[dict[str, Any]]) -> dict[str, str]:
+    return {str(t.get("track_id")): str(t.get("track_id")) for t in tracks}
 
 
 def _recompute_frames(
@@ -89,64 +90,141 @@ def _recompute_frames(
             frame["lane_roles"] = roles
             frame["left_lane"] = _lane_output(roles.get("left") or {}, point, track_by_id, lane_by_id)
             frame["right_lane"] = _lane_output(roles.get("right") or {}, point, track_by_id, lane_by_id)
+        else:
+            frame["ego_lane"] = {
+                "lane_id": None,
+                "logical_lane_id": None,
+                "continuous_track_id": None,
+                "method": assignment.get("method", "no_final_track_contains_ego"),
+                "confidence": "unknown",
+                "source": "final_integrated_static_lane_network",
+            }
+            frame["lane_roles"] = {
+                "ego_track_id": None,
+                "left": {"track_id": None},
+                "right": {"track_id": None},
+                "roles": [
+                    {"track_id": str(t.get("track_id")), "role": "irrelevant"}
+                    for t in tracks
+                ],
+                "method": "no_final_ego_track",
+            }
+            frame["left_lane"] = {"lane_id": None, "method": "ego_track_unknown"}
+            frame["right_lane"] = {"lane_id": None, "method": "ego_track_unknown"}
 
         for obj in frame.get("objects", []):
             lane_id = obj.get("lane_id")
             if lane_id is not None and str(lane_id) in member_to_track:
                 obj["logical_lane_id"] = member_to_track[str(lane_id)]
                 obj["continuous_track_id"] = member_to_track[str(lane_id)]
+            elif lane_id is not None:
+                obj["logical_lane_id"] = None
+                obj["continuous_track_id"] = None
 
     result["continuous_track_member_map"] = member_to_track
 
 
 def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = dict(config or {})
+
+    # First pass gives canonical lane geometry and all normal debug evidence.
     result = run_static_order(recording, cfg)
-    tracks = result.get("continuous_lane_tracks", [])
-    provisional_order = result.get("static_lane_order_topology", {})
+    settings = {**(result.get("debug_config") or {}), **cfg}
 
-    topology_tracks, topology_debug = stitch_topology_supported_neighbors(
-        tracks,
-        provisional_order,
-        maximum_gap_m=float(cfg.get("topology_supported_stitch_maximum_gap_m", 15.0)),
-        maximum_reference_station_gap_m=float(cfg.get("topology_supported_stitch_maximum_reference_station_gap_m", 16.0)),
+    # Hard experimental eligibility rule: intersection=true AND curved => unusable.
+    filtered_geometry, eligibility_debug = exclude_curved_intersection_lanes(
+        result.get("lane_geometry", []),
+        enabled=bool(cfg.get("exclude_curved_intersection_lanes", True)),
+        maximum_heading_change_deg=float(cfg.get("intersection_curved_maximum_heading_change_deg", 10.0)),
+        maximum_abs_curvature_per_m=float(cfg.get("intersection_curved_maximum_abs_curvature_per_m", 0.02)),
     )
+    result["lane_geometry"] = filtered_geometry
+    result["lane_eligibility_debug"] = eligibility_debug
+    result["excluded_curved_intersection_lane_ids"] = [
+        x["lane_id"] for x in eligibility_debug if x.get("rejected")
+    ]
 
-    alias = _track_alias_map(topology_tracks)
+    # Rebuild all physical tracks and inferred-route episodes from the filtered
+    # geometry so banned lanes cannot influence final ego/adjacent tracking.
+    _apply_static_order(recording, result, settings)
+    base_tracks = result.get("continuous_lane_tracks", [])
+
+    # Static inferred geometry comes from the complete overlap-box episode.
     static_inferred_lanes = build_static_inferred_lanes(result.get("inferred_ego_routes", []))
-    integrated_tracks, static_inferred_debug = integrate_static_inferred_lanes(
-        topology_tracks,
+
+    # IMPORTANT: affiliation happens against base physical tracks before any
+    # topology-supported neighbor stitching. No lane-order/adjacency evidence is
+    # passed to this function.
+    affiliated_lanes, affiliation_debug = assign_static_inferred_affiliations(
         static_inferred_lanes,
-        alias,
+        base_tracks,
         maximum_endpoint_distance_m=float(cfg.get("static_inferred_lane_maximum_endpoint_distance_m", 20.0)),
-        maximum_heading_difference_deg=float(cfg.get("static_inferred_lane_maximum_heading_difference_deg", 40.0)),
+        maximum_lateral_error_m=float(cfg.get("static_inferred_affiliation_maximum_lateral_error_m", 2.0)),
+        maximum_heading_difference_deg=float(cfg.get("static_inferred_lane_maximum_heading_difference_deg", 30.0)),
+        maximum_curvature_difference_per_m=float(cfg.get("static_inferred_affiliation_maximum_curvature_difference_per_m", 0.08)),
+        maximum_width_difference_m=float(cfg.get("static_inferred_affiliation_maximum_width_difference_m", 1.0)),
     )
-    final_tracks, connector_debug = fill_static_inferred_endpoint_gaps(
+
+    integrated_tracks, static_inferred_debug = integrate_static_inferred_lanes(
+        base_tracks,
+        affiliated_lanes,
+        _identity_alias(base_tracks),
+        maximum_endpoint_distance_m=float(cfg.get("static_inferred_lane_maximum_endpoint_distance_m", 20.0)),
+        maximum_heading_difference_deg=float(cfg.get("static_inferred_lane_maximum_heading_difference_deg", 30.0)),
+    )
+    connected_tracks, connector_debug = fill_static_inferred_endpoint_gaps(
         integrated_tracks,
         maximum_gap_m=float(cfg.get("static_inferred_connector_maximum_gap_m", 20.0)),
     )
 
+    # Adjacency/topology is deliberately downstream of inferred-lane affiliation.
+    post_inferred_order = build_static_lane_order(
+        connected_tracks,
+        sample_spacing_m=float(settings.get("lane_order_sample_spacing_m", 2.0)),
+        maximum_heading_difference_deg=float(settings.get("lane_order_maximum_heading_difference_deg", 20.0)),
+        minimum_lateral_m=float(settings.get("lane_order_minimum_lateral_m", 1.5)),
+        maximum_lateral_m=float(settings.get("lane_order_maximum_lateral_m", 8.0)),
+        maximum_longitudinal_m=float(settings.get("lane_order_maximum_longitudinal_m", 8.0)),
+    )
+    topology_tracks, topology_debug = stitch_topology_supported_neighbors(
+        connected_tracks,
+        post_inferred_order,
+        maximum_gap_m=float(cfg.get("topology_supported_stitch_maximum_gap_m", 15.0)),
+        maximum_reference_station_gap_m=float(cfg.get("topology_supported_stitch_maximum_reference_station_gap_m", 16.0)),
+    )
+
+    final_tracks = topology_tracks
     lane_order = build_static_lane_order(
         final_tracks,
-        sample_spacing_m=float(cfg.get("lane_order_sample_spacing_m", 2.0)),
-        maximum_heading_difference_deg=float(cfg.get("lane_order_maximum_heading_difference_deg", 20.0)),
-        minimum_lateral_m=float(cfg.get("lane_order_minimum_lateral_m", 1.5)),
-        maximum_lateral_m=float(cfg.get("lane_order_maximum_lateral_m", 8.0)),
-        maximum_longitudinal_m=float(cfg.get("lane_order_maximum_longitudinal_m", 8.0)),
+        sample_spacing_m=float(settings.get("lane_order_sample_spacing_m", 2.0)),
+        maximum_heading_difference_deg=float(settings.get("lane_order_maximum_heading_difference_deg", 20.0)),
+        minimum_lateral_m=float(settings.get("lane_order_minimum_lateral_m", 1.5)),
+        maximum_lateral_m=float(settings.get("lane_order_maximum_lateral_m", 8.0)),
+        maximum_longitudinal_m=float(settings.get("lane_order_maximum_longitudinal_m", 8.0)),
     )
+
     result["continuous_lane_tracks"] = final_tracks
-    result["topology_supported_stitch_debug"] = topology_debug
-    result["topology_supported_stitch_count"] = sum(1 for x in topology_debug if x.get("accepted"))
-    result["static_inferred_lanes"] = static_inferred_lanes
+    result["static_inferred_lanes"] = affiliated_lanes
+    result["static_inferred_affiliation_debug"] = affiliation_debug
     result["static_inferred_lane_debug"] = static_inferred_debug
     result["static_inferred_connector_debug"] = connector_debug
-    result["static_inferred_connector_count"] = sum(1 for x in connector_debug if x.get("status") == "connector_created")
-    result["static_inferred_lane_count"] = len(static_inferred_lanes)
+    result["topology_supported_stitch_debug"] = topology_debug
+    result["static_inferred_lane_count"] = len(affiliated_lanes)
     result["static_inferred_lane_merge_count"] = sum(
         1 for x in static_inferred_debug if x.get("accepted") and x.get("action") == "merge_front_back_tracks"
     )
+    result["static_inferred_connector_count"] = sum(
+        1 for x in connector_debug if x.get("status") == "connector_created"
+    )
+    result["topology_supported_stitch_count"] = sum(1 for x in topology_debug if x.get("accepted"))
     result["static_lane_order_topology"] = lane_order
     result["constructed_lane_network"] = build_constructed_lane_network(final_tracks, lane_order)
-    _recompute_frames(recording, result, final_tracks, lane_order, {**(result.get("debug_config") or {}), **cfg})
-    result["schema_version"] = "lane-debug-v2-static-inferred-lane-network-v3-connectors"
+
+    _recompute_frames(recording, result, final_tracks, lane_order, settings)
+    result["schema_version"] = "lane-debug-v2-longitudinal-inferred-affiliation-v1"
+    result["inferred_affiliation_policy"] = {
+        "method": "longitudinal_endpoint_continuation_no_adjacency",
+        "adjacency_used_for_affiliation": False,
+        "affiliation_before_neighbor_topology": True,
+    }
     return result
