@@ -44,10 +44,10 @@ def merge_waiting_scene_candidates(
     """Merge overlapping pedestrian-specific candidates into scene-level requests.
 
     Clustering uses raw trigger intervals rather than expanded context windows so
-    pre/post context does not create artificial overlap. A short temporal gap is
-    allowed so multiple pedestrians participating in one physical scene share one
-    VLM request. The VLM-facing candidate deliberately drops heuristic evidence;
-    only neutral scene metadata and BEV frames remain.
+    pre/post context does not create artificial overlap. A short dedicated merge
+    gap allows multiple pedestrians in one physical scene to share one VLM request
+    without chaining separate events into a large scene. The VLM-facing candidate
+    drops heuristic evidence; only neutral scene metadata and BEV frames remain.
     """
     if not candidates:
         return []
@@ -68,7 +68,7 @@ def merge_waiting_scene_candidates(
             times.get(_raw_bounds(item)[1], item.end_timestamp_s)
             for item in previous
         )
-        if start_t <= previous_end_t + config.maximum_inactive_gap_s + 1e-9:
+        if start_t <= previous_end_t + config.event_scene_merge_gap_s + 1e-9:
             previous.append(candidate)
         else:
             clusters.append([candidate])
@@ -129,6 +129,7 @@ def merge_waiting_scene_candidates(
                     "pedestrian_ids": pedestrian_ids,
                     "source_candidate_ids": source_ids,
                     "source_candidate_count": len(cluster),
+                    "scene_merge_gap_s": config.event_scene_merge_gap_s,
                 },
             )
         )
