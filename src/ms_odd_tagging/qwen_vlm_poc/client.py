@@ -29,6 +29,32 @@ def encode_image(path: Path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
+    """Return the model-facing candidate payload.
+
+    Event-driven waiting-for-pedestrian evaluation is intentionally BEV-first:
+    candidate-generation heuristics are not exposed to the model. The model only
+    receives identity/range fields needed to produce a valid response plus the
+    ordered BEV frame indices and possible pedestrian IDs visible in the scene.
+    """
+    if (
+        candidate.scenario == "waiting_for_pedestrian_to_cross"
+        and candidate.metadata.get("candidate_strategy") == "event-driven"
+    ):
+        return {
+            "recording_id": candidate.recording_id,
+            "scenario": candidate.scenario,
+            "window_start_frame": candidate.start_frame,
+            "window_end_frame": candidate.end_frame,
+            "candidate_scene_id": candidate.candidate_id,
+            "target_pedestrian_ids": list(candidate.primary_object_ids),
+            "bev_frame_indices": list(candidate.selected_frame_indices),
+            "bev_images_follow_in_same_order": True,
+            "evaluation_mode": "bev_only_no_heuristic_labels",
+        }
+    return candidate.to_dict()
+
+
 def cache_key(candidate: CandidateWindow, config: VlmPocConfig) -> str:
     image_digests = []
     for raw_path in candidate.bev_paths:
@@ -43,7 +69,7 @@ def cache_key(candidate: CandidateWindow, config: VlmPocConfig) -> str:
         "model": config.model,
         "prompt_version": config.prompt_version,
         "scenario": candidate.scenario,
-        "candidate": candidate.to_dict(),
+        "model_input": _vlm_candidate_input(candidate),
         "images": image_digests,
         "settings": {
             "temperature": config.temperature,
@@ -73,10 +99,11 @@ class VlmClient:
 
     def _payload(self, candidate: CandidateWindow) -> dict[str, Any]:
         system_prompt, scenario_prompt = read_prompt(candidate.scenario)
+        model_input = _vlm_candidate_input(candidate)
         text = (
             f"{scenario_prompt}\n\n"
             f"Prompt version: {self.config.prompt_version}\n"
-            f"Candidate bundle JSON:\n{stable_json(candidate.to_dict())}"
+            f"Model input JSON:\n{stable_json(model_input)}"
         )
         content: list[dict[str, Any]] = [{"type": "text", "text": text}]
         for path in candidate.bev_paths[: self.config.max_bev_images]:
