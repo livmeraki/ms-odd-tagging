@@ -1,18 +1,23 @@
-"""Experimental following-lane detector with continuous-track lane state.
+"""Experimental following-lane detector with continuous tracks, topology adjacency,
+and boundary-aware ego-corridor inference.
 
-The duplicated segment detector is retained as a baseline/evidence source. A
-continuous lane-track layer then promotes accepted segment continuations into
-persistent tracks and becomes the primary ego logical-lane/adjacency context.
-Production files are not imported or modified.
+Production files are not modified. Segment-level assignments and the old local
+adjacency method remain as debug evidence only.
 """
 from __future__ import annotations
-import copy, math
+
+import copy
+import math
 from typing import Any
+
+from .boundary_corridor import infer_ego_corridor_from_boundaries
+from .continuous_tracks import adjacent_tracks, build_continuous_tracks
 from .detector_baseline import run_following_lane as run_baseline
 from .lane_geometry import nearest_heading, polyline_distance, wrap_angle
 from .object_motion import build_object_motion_evidence
-from .continuous_tracks import build_continuous_tracks, adjacent_tracks
 from .strict_track_assignment import assign_point_to_track_strict
+from .track_topology import build_track_adjacency_graph, select_topology_adjacency
+
 
 DEFAULT_DEBUG = {
     "object_motion_history_frames": 3,
@@ -27,201 +32,359 @@ DEFAULT_DEBUG = {
     "continuous_track_adjacent_minimum_lateral_m": 1.5,
     "continuous_track_adjacent_maximum_lateral_m": 8.0,
     "continuous_track_adjacent_local_window_m": 20.0,
+    "track_topology_adjacency_enabled": True,
+    "track_topology_sample_spacing_m": 2.0,
+    "track_topology_minimum_overlap_m": 8.0,
+    "track_topology_minimum_side_consistency": 0.8,
+    "track_topology_maximum_lateral_std_m": 1.5,
+    "track_topology_station_margin_m": 4.0,
+    "track_topology_hysteresis_enabled": True,
+    "track_topology_switch_score_margin": 0.75,
+    "track_topology_switch_confirmation_frames": 3,
+    "boundary_ego_corridor_enabled": True,
+    "boundary_ego_corridor_maximum_heading_difference_deg": 25.0,
+    "boundary_ego_corridor_minimum_width_m": 2.2,
+    "boundary_ego_corridor_maximum_width_m": 6.5,
+    "boundary_ego_corridor_maximum_boundary_distance_m": 7.0,
+    "boundary_ego_corridor_half_length_m": 15.0,
 }
 
-def _finite(v: Any) -> bool:
-    return isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v)
 
-def _lead_base_candidate(obj: dict[str,Any], frame: dict[str,Any], settings: dict[str,Any]) -> bool:
+def _finite(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _lead_base_candidate(obj: dict[str, Any], frame: dict[str, Any], settings: dict[str, Any]) -> bool:
     ego_route = (frame.get("ego_lane") or {}).get("logical_lane_id")
     return bool(
-        ego_route and obj.get("logical_lane_id") == ego_route
+        ego_route
+        and not str(ego_route).startswith("inferred_ego_corridor")
+        and obj.get("logical_lane_id") == ego_route
         and obj.get("annotation_type") in settings.get("lead_annotation_types", ["dynamic"])
-        and obj.get("class") in {"car","truck","truck_head","bus","trailer","special_vehicle"}
+        and obj.get("class") in {"car", "truck", "truck_head", "bus", "trailer", "special_vehicle"}
         and _finite(obj.get("longitudinal_m"))
-        and 0.0 < float(obj["longitudinal_m"]) <= float(settings.get("maximum_lead_distance_m",80.0))
+        and 0.0 < float(obj["longitudinal_m"]) <= float(settings.get("maximum_lead_distance_m", 80.0))
     )
 
-def _nearest_member(track: dict[str,Any] | None, point: tuple[float,float], lane_by_id: dict[str,dict[str,Any]]) -> str | None:
+
+def _nearest_member(track: dict[str, Any] | None, point: tuple[float, float], lane_by_id: dict[str, dict[str, Any]]) -> str | None:
     if not track:
         return None
-    candidates=[]
-    for lane_id in track.get("member_lane_ids",[]):
-        lane=lane_by_id.get(str(lane_id))
-        center=(lane or {}).get("centerline_lcs_m") or []
-        if len(center)>=2:
-            candidates.append((polyline_distance(point,center),str(lane_id)))
+    candidates = []
+    for lane_id in track.get("member_lane_ids", []):
+        lane = lane_by_id.get(str(lane_id))
+        center = (lane or {}).get("centerline_lcs_m") or []
+        if len(center) >= 2:
+            candidates.append((polyline_distance(point, center), str(lane_id)))
     return min(candidates)[1] if candidates else None
 
-def _apply_continuous_track_state(recording: dict[str,Any], result: dict[str,Any], settings: dict[str,Any]) -> None:
-    tracks, member_to_track, connection_debug = build_continuous_tracks(result.get("lane_geometry",[]), recording)
-    result["continuous_lane_tracks"]=tracks
-    result["continuous_track_member_map"]=member_to_track
-    result["continuous_track_connection_debug"]=connection_debug
-    if not settings.get("continuous_track_assignment_enabled",True):
+
+def _lane_output(selected: dict[str, Any], point: tuple[float, float], track_by_id: dict[str, dict[str, Any]], lane_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    track_id = selected.get("track_id")
+    track = track_by_id.get(str(track_id)) if track_id else None
+    physical = _nearest_member(track, point, lane_by_id) if track else None
+    return {
+        "lane_id": physical,
+        "logical_lane_id": track_id,
+        "continuous_track_id": track_id,
+        "method": selected.get("method", "not_found"),
+        "confidence": selected.get("confidence", "unknown"),
+        "lateral_offset_m": selected.get("median_lateral_m", selected.get("lateral_offset_m")),
+        "heading_difference_deg": selected.get("heading_difference_deg_p90", selected.get("heading_difference_deg")),
+        "held_from_previous_frame": selected.get("held_from_previous_frame", False),
+        "topology_overlap_m": selected.get("overlap_m"),
+        "topology_score": selected.get("score"),
+    }
+
+
+def _apply_continuous_track_state(recording: dict[str, Any], result: dict[str, Any], settings: dict[str, Any]) -> None:
+    lane_geometry = result.get("lane_geometry", [])
+    tracks, member_to_track, connection_debug = build_continuous_tracks(lane_geometry, recording)
+    result["continuous_lane_tracks"] = tracks
+    result["continuous_track_member_map"] = member_to_track
+    result["continuous_track_connection_debug"] = connection_debug
+    if not settings.get("continuous_track_assignment_enabled", True):
         return
-    track_by_id={str(t["track_id"]):t for t in tracks}
-    lane_by_id={str(l["lane_id"]):l for l in result.get("lane_geometry",[])}
-    source_by_frame={f.get("frame_index"):f for f in recording.get("frames",[])}
-    previous_track_id=None
-    for frame in result.get("frames",[]):
-        source=source_by_frame.get(frame.get("frame_index"),{})
-        ego=(source.get("ego") or {})
-        p=ego.get("position_lcs_m") or []
-        heading=ego.get("heading_lcs_rad")
-        frame["segment_ego_lane"]=copy.deepcopy(frame.get("ego_lane"))
-        frame["segment_left_lane"]=copy.deepcopy(frame.get("left_lane"))
-        frame["segment_right_lane"]=copy.deepcopy(frame.get("right_lane"))
-        if len(p)<2 or not all(_finite(x) for x in p[:2]) or not _finite(heading):
-            frame["continuous_ego_track"]={"track_id":None,"method":"invalid_ego_pose","confidence":"unknown"}
-            frame["continuous_adjacency"]={"left":{"track_id":None},"right":{"track_id":None},"candidates":[]}
-            frame["ego_lane"]={"lane_id":None,"logical_lane_id":None,"method":"invalid_ego_pose","confidence":"unknown"}
+
+    topology_graph = build_track_adjacency_graph(
+        tracks,
+        lane_geometry,
+        sample_spacing_m=float(settings["track_topology_sample_spacing_m"]),
+        maximum_heading_difference_deg=float(settings["continuous_track_adjacent_heading_difference_deg"]),
+        minimum_lateral_m=float(settings["continuous_track_adjacent_minimum_lateral_m"]),
+        maximum_lateral_m=float(settings["continuous_track_adjacent_maximum_lateral_m"]),
+        minimum_overlap_m=float(settings["track_topology_minimum_overlap_m"]),
+        minimum_side_consistency=float(settings["track_topology_minimum_side_consistency"]),
+        maximum_lateral_std_m=float(settings["track_topology_maximum_lateral_std_m"]),
+    )
+    result["track_adjacency_graph"] = topology_graph
+
+    track_by_id = {str(t["track_id"]): t for t in tracks}
+    lane_by_id = {str(l["lane_id"]): l for l in lane_geometry}
+    source_by_frame = {f.get("frame_index"): f for f in recording.get("frames", [])}
+    previous_track_id = None
+    previous_adjacency = {"left": None, "right": None}
+    pending_adjacency = {"left": None, "right": None}
+    previous_boundary_ids: tuple[str | None, str | None] = (None, None)
+
+    for frame in result.get("frames", []):
+        source = source_by_frame.get(frame.get("frame_index"), {})
+        ego = source.get("ego") or {}
+        p = ego.get("position_lcs_m") or []
+        heading = ego.get("heading_lcs_rad")
+        frame["segment_ego_lane"] = copy.deepcopy(frame.get("ego_lane"))
+        frame["segment_left_lane"] = copy.deepcopy(frame.get("left_lane"))
+        frame["segment_right_lane"] = copy.deepcopy(frame.get("right_lane"))
+
+        if len(p) < 2 or not all(_finite(x) for x in p[:2]) or not _finite(heading):
+            frame["continuous_ego_track"] = {"track_id": None, "method": "invalid_ego_pose", "confidence": "unknown"}
+            frame["inferred_ego_corridor"] = {"valid": False, "method": "invalid_ego_pose"}
+            frame["continuous_adjacency"] = {"left": {"track_id": None}, "right": {"track_id": None}, "candidates": []}
+            frame["ego_lane"] = {"lane_id": None, "logical_lane_id": None, "method": "invalid_ego_pose", "confidence": "unknown"}
             continue
-        point=(float(p[0]),float(p[1]))
-        assignment=assign_point_to_track_strict(
-            point,float(heading),tracks,previous_track_id=previous_track_id,
+
+        point = (float(p[0]), float(p[1]))
+        assignment = assign_point_to_track_strict(
+            point,
+            float(heading),
+            tracks,
+            previous_track_id=previous_track_id,
             maximum_heading_difference_deg=float(settings["continuous_track_maximum_heading_difference_deg"]),
             outside_tolerance_m=float(settings["continuous_track_outside_tolerance_m"]),
         )
-        frame["continuous_ego_track"]=assignment
-        track_id=assignment.get("track_id")
+        frame["continuous_ego_track"] = assignment
+        track_id = assignment.get("track_id")
+
         if track_id:
-            previous_track_id=str(track_id)
-            track=track_by_id.get(str(track_id))
-            physical=assignment.get("matched_lane_id") or _nearest_member(track,point,lane_by_id)
-            frame["ego_lane"]={
-                "lane_id":physical,
-                "logical_lane_id":track_id,
-                "continuous_track_id":track_id,
-                "continuous_track_member_lane_ids":assignment.get("member_lane_ids",[]),
-                "method":assignment.get("method"),
-                "confidence":assignment.get("confidence"),
-                "inside_polygon":assignment.get("inside_polygon"),
-                "polygon_distance_m":assignment.get("polygon_distance_m"),
-                "outside_tolerance_m":assignment.get("outside_tolerance_m"),
-                "matched_piece_kind":assignment.get("matched_piece_kind"),
-                "center_distance_m":assignment.get("center_distance_m"),
-                "heading_difference_deg":assignment.get("heading_difference_deg"),
+            previous_track_id = str(track_id)
+            track = track_by_id.get(str(track_id))
+            physical = assignment.get("matched_lane_id") or _nearest_member(track, point, lane_by_id)
+            frame["ego_lane"] = {
+                "lane_id": physical,
+                "logical_lane_id": track_id,
+                "continuous_track_id": track_id,
+                "continuous_track_member_lane_ids": assignment.get("member_lane_ids", []),
+                "method": assignment.get("method"),
+                "confidence": assignment.get("confidence"),
+                "inside_polygon": assignment.get("inside_polygon"),
+                "polygon_distance_m": assignment.get("polygon_distance_m"),
+                "outside_tolerance_m": assignment.get("outside_tolerance_m"),
+                "matched_piece_kind": assignment.get("matched_piece_kind"),
+                "center_distance_m": assignment.get("center_distance_m"),
+                "heading_difference_deg": assignment.get("heading_difference_deg"),
+                "source": "reconstructed_continuous_track",
             }
+            frame["inferred_ego_corridor"] = {"valid": False, "method": "not_needed_actual_ego_track_valid"}
         else:
-            # Do not retain or promote a segment-level left/right candidate as ego
-            # merely because it is near the merged track centerline. The primary
-            # ego lane is unknown until the ego center is inside an actual lane
-            # polygon (or within the explicit 1 m tolerance).
-            frame["ego_lane"]={
-                "lane_id":None,
-                "logical_lane_id":None,
-                "continuous_track_id":None,
-                "method":assignment.get("method","no_track_contains_ego_center_within_tolerance"),
-                "confidence":"unknown",
-                "outside_tolerance_m":assignment.get("outside_tolerance_m"),
-                "candidates":assignment.get("candidates",[]),
-                "rejected_candidates":assignment.get("rejected_candidates",[]),
-            }
-        adjacency=adjacent_tracks(
-            track_id,point,tracks,
+            corridor = (
+                infer_ego_corridor_from_boundaries(
+                    recording,
+                    lane_geometry,
+                    member_to_track,
+                    point,
+                    float(heading),
+                    maximum_heading_difference_deg=float(settings["boundary_ego_corridor_maximum_heading_difference_deg"]),
+                    minimum_corridor_width_m=float(settings["boundary_ego_corridor_minimum_width_m"]),
+                    maximum_corridor_width_m=float(settings["boundary_ego_corridor_maximum_width_m"]),
+                    maximum_boundary_distance_m=float(settings["boundary_ego_corridor_maximum_boundary_distance_m"]),
+                    half_length_m=float(settings["boundary_ego_corridor_half_length_m"]),
+                    previous_boundary_ids=previous_boundary_ids,
+                )
+                if settings.get("boundary_ego_corridor_enabled", True)
+                else {"valid": False, "method": "boundary_ego_corridor_disabled"}
+            )
+            frame["inferred_ego_corridor"] = corridor
+            if corridor.get("valid"):
+                previous_boundary_ids = (corridor.get("left_boundary_id"), corridor.get("right_boundary_id"))
+                frame["ego_lane"] = {
+                    "lane_id": None,
+                    "logical_lane_id": f"inferred_ego_corridor_{corridor.get('left_boundary_id')}_{corridor.get('right_boundary_id')}",
+                    "continuous_track_id": None,
+                    "method": corridor.get("method"),
+                    "confidence": corridor.get("confidence", "medium"),
+                    "source": "inferred_from_physical_boundaries",
+                    "inferred": True,
+                    "width_m": corridor.get("width_at_ego_m"),
+                    "left_boundary_id": corridor.get("left_boundary_id"),
+                    "right_boundary_id": corridor.get("right_boundary_id"),
+                    "centerline_lcs_m": corridor.get("centerline_lcs_m"),
+                    "polygon_lcs_m": corridor.get("polygon_lcs_m"),
+                    "strict_assignment_rejected_candidates": assignment.get("rejected_candidates", []),
+                }
+            else:
+                frame["ego_lane"] = {
+                    "lane_id": None,
+                    "logical_lane_id": None,
+                    "continuous_track_id": None,
+                    "method": assignment.get("method", "no_track_contains_ego_center"),
+                    "confidence": "unknown",
+                    "outside_tolerance_m": assignment.get("outside_tolerance_m"),
+                    "candidates": assignment.get("candidates", []),
+                    "rejected_candidates": assignment.get("rejected_candidates", []),
+                }
+
+        # Keep old frame-local adjacency as evidence only.
+        frame["frame_local_adjacency_debug"] = adjacent_tracks(
+            track_id,
+            point,
+            tracks,
             maximum_heading_difference_deg=float(settings["continuous_track_adjacent_heading_difference_deg"]),
             minimum_lateral_m=float(settings["continuous_track_adjacent_minimum_lateral_m"]),
             maximum_lateral_m=float(settings["continuous_track_adjacent_maximum_lateral_m"]),
             local_window_m=float(settings["continuous_track_adjacent_local_window_m"]),
         )
-        frame["continuous_adjacency"]=adjacency
-        for side,key in (("left","left_lane"),("right","right_lane")):
-            selected=adjacency.get(side) or {}
-            adjacent_track_id=selected.get("track_id")
-            adjacent_track=track_by_id.get(str(adjacent_track_id)) if adjacent_track_id else None
-            physical=_nearest_member(adjacent_track,point,lane_by_id) if adjacent_track else None
-            frame[key]={
-                "lane_id":physical,
-                "logical_lane_id":adjacent_track_id,
-                "continuous_track_id":adjacent_track_id,
-                "method":selected.get("method","not_found"),
-                "confidence":selected.get("confidence","unknown"),
-                "lateral_offset_m":selected.get("lateral_offset_m"),
-                "heading_difference_deg":selected.get("heading_difference_deg"),
+
+        if track_id and settings.get("track_topology_adjacency_enabled", True):
+            adjacency, previous_adjacency, pending_adjacency = select_topology_adjacency(
+                str(track_id),
+                point,
+                tracks,
+                topology_graph,
+                previous=previous_adjacency,
+                pending=pending_adjacency,
+                hysteresis_enabled=bool(settings["track_topology_hysteresis_enabled"]),
+                switch_score_margin=float(settings["track_topology_switch_score_margin"]),
+                switch_confirmation_frames=int(settings["track_topology_switch_confirmation_frames"]),
+                station_margin_m=float(settings["track_topology_station_margin_m"]),
+            )
+        elif frame.get("inferred_ego_corridor", {}).get("valid"):
+            corridor = frame["inferred_ego_corridor"]
+            left_track = corridor.get("left_track_id")
+            right_track = corridor.get("right_track_id")
+            adjacency = {
+                "left": {
+                    "track_id": left_track,
+                    "method": "boundary_inferred_adjacent_track" if left_track else "boundary_only_no_track",
+                    "confidence": "medium" if left_track else "unknown",
+                    "boundary_id": corridor.get("left_boundary_id"),
+                },
+                "right": {
+                    "track_id": right_track,
+                    "method": "boundary_inferred_adjacent_track" if right_track else "boundary_only_no_track",
+                    "confidence": "medium" if right_track else "unknown",
+                    "boundary_id": corridor.get("right_boundary_id"),
+                },
+                "candidates": [],
+                "reference": "inferred_ego_corridor",
             }
-        for obj in frame.get("objects",[]):
-            lane_id=obj.get("lane_id")
+            if left_track:
+                previous_adjacency["left"] = str(left_track)
+            if right_track:
+                previous_adjacency["right"] = str(right_track)
+        else:
+            adjacency = {"left": {"track_id": None, "method": "not_found"}, "right": {"track_id": None, "method": "not_found"}, "candidates": []}
+
+        frame["continuous_adjacency"] = adjacency
+        frame["left_lane"] = _lane_output(adjacency.get("left") or {}, point, track_by_id, lane_by_id)
+        frame["right_lane"] = _lane_output(adjacency.get("right") or {}, point, track_by_id, lane_by_id)
+
+        for obj in frame.get("objects", []):
+            lane_id = obj.get("lane_id")
             if lane_id is not None and str(lane_id) in member_to_track:
-                obj["segment_logical_lane_id"]=obj.get("logical_lane_id")
-                obj["logical_lane_id"]=member_to_track[str(lane_id)]
-                obj["continuous_track_id"]=member_to_track[str(lane_id)]
+                obj["segment_logical_lane_id"] = obj.get("logical_lane_id")
+                obj["logical_lane_id"] = member_to_track[str(lane_id)]
+                obj["continuous_track_id"] = member_to_track[str(lane_id)]
 
 
-def run_lane_debug_v2(recording: dict[str,Any], config: dict[str,Any] | None=None) -> dict[str,Any]:
-    settings={**DEFAULT_DEBUG, **(config or {})}
-    result=copy.deepcopy(run_baseline(recording, config))
-    _apply_continuous_track_state(recording,result,settings)
-    lane_by_id={str(l["lane_id"]):l for l in result.get("lane_geometry",[])}
-    motion=build_object_motion_evidence(
+def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+    settings = {**DEFAULT_DEBUG, **(config or {})}
+    result = copy.deepcopy(run_baseline(recording, config))
+    _apply_continuous_track_state(recording, result, settings)
+    lane_by_id = {str(l["lane_id"]): l for l in result.get("lane_geometry", [])}
+    motion = build_object_motion_evidence(
         recording,
         history_frames=int(settings["object_motion_history_frames"]),
         minimum_displacement_m=float(settings["object_motion_minimum_displacement_m"]),
     )
-    angle_samples=[]
-    for frame in result.get("frames",[]):
-        fi=frame["frame_index"]
-        ego_lane_id=(frame.get("ego_lane") or {}).get("lane_id")
-        ego_lane=lane_by_id.get(str(ego_lane_id)) if ego_lane_id is not None else None
-        candidates=[]
-        for obj in frame.get("objects",[]):
-            obj.update(motion.get((fi,str(obj.get("object_id"))), {
-                "object_motion_heading_rad":None,"object_motion_heading_deg":None,
-                "object_motion_speed_mps":None,"object_motion_source":"unavailable",
-                "object_motion_status":"unavailable"}))
-            lane_heading=None
+    angle_samples = []
+    for frame in result.get("frames", []):
+        fi = frame["frame_index"]
+        ego_lane_id = (frame.get("ego_lane") or {}).get("lane_id")
+        ego_lane = lane_by_id.get(str(ego_lane_id)) if ego_lane_id is not None else None
+        candidates = []
+        for obj in frame.get("objects", []):
+            obj.update(
+                motion.get(
+                    (fi, str(obj.get("object_id"))),
+                    {
+                        "object_motion_heading_rad": None,
+                        "object_motion_heading_deg": None,
+                        "object_motion_speed_mps": None,
+                        "object_motion_source": "unavailable",
+                        "object_motion_status": "unavailable",
+                    },
+                )
+            )
+            lane_heading = None
             if ego_lane and obj.get("position_lcs_m"):
-                lane_heading=nearest_heading(tuple(obj["position_lcs_m"][:2]), ego_lane.get("centerline_lcs_m",[]))
-            motion_heading=obj.get("object_motion_heading_rad")
-            diff=None
+                lane_heading = nearest_heading(tuple(obj["position_lcs_m"][:2]), ego_lane.get("centerline_lcs_m", []))
+            motion_heading = obj.get("object_motion_heading_rad")
+            diff = None
             if lane_heading is not None and motion_heading is not None:
-                diff=abs(math.degrees(wrap_angle(float(motion_heading)-float(lane_heading))))
+                diff = abs(math.degrees(wrap_angle(float(motion_heading) - float(lane_heading))))
                 angle_samples.append(diff)
-            obj["ego_lane_heading_at_object_rad"]=lane_heading
-            obj["ego_lane_heading_at_object_deg"]=None if lane_heading is None else round(math.degrees(lane_heading),2)
-            obj["lead_direction_difference_deg"]=None if diff is None else round(diff,2)
-            threshold=settings.get("maximum_lead_direction_difference_deg")
-            if diff is None: compatibility="ambiguous"
-            elif threshold is None: compatibility="unthresholded_observation"
-            elif diff <= float(threshold): compatibility="same_direction"
-            elif diff >= 180.0-float(threshold): compatibility="opposite_direction"
-            else: compatibility="crossing_or_diverging"
-            obj["lead_direction_compatibility"]=compatibility
-            obj["lead_base_candidate"]=_lead_base_candidate(obj,frame,result.get("config",{}))
-            eligible=obj["lead_base_candidate"]
-            rejection=None
-            mode=settings.get("lead_direction_filter_mode","diagnostic")
-            if eligible and mode=="enforce":
+            obj["ego_lane_heading_at_object_rad"] = lane_heading
+            obj["ego_lane_heading_at_object_deg"] = None if lane_heading is None else round(math.degrees(lane_heading), 2)
+            obj["lead_direction_difference_deg"] = None if diff is None else round(diff, 2)
+            threshold = settings.get("maximum_lead_direction_difference_deg")
+            if diff is None:
+                compatibility = "ambiguous"
+            elif threshold is None:
+                compatibility = "unthresholded_observation"
+            elif diff <= float(threshold):
+                compatibility = "same_direction"
+            elif diff >= 180.0 - float(threshold):
+                compatibility = "opposite_direction"
+            else:
+                compatibility = "crossing_or_diverging"
+            obj["lead_direction_compatibility"] = compatibility
+            obj["lead_base_candidate"] = _lead_base_candidate(obj, frame, result.get("config", {}))
+            eligible = obj["lead_base_candidate"]
+            rejection = None
+            mode = settings.get("lead_direction_filter_mode", "diagnostic")
+            if eligible and mode == "enforce":
                 if threshold is None:
-                    eligible=False; rejection="direction_threshold_not_configured"
-                elif compatibility!="same_direction":
-                    if not (compatibility=="ambiguous" and not settings.get("reject_ambiguous_stationary_lead",False)):
-                        eligible=False; rejection="direction_mismatch_or_ambiguous"
-            obj["lead_direction_eligible"]=eligible
-            obj["lead_rejection_reason"]=rejection
-            if eligible: candidates.append(obj)
+                    eligible = False
+                    rejection = "direction_threshold_not_configured"
+                elif compatibility != "same_direction":
+                    if not (compatibility == "ambiguous" and not settings.get("reject_ambiguous_stationary_lead", False)):
+                        eligible = False
+                        rejection = "direction_mismatch_or_ambiguous"
+            obj["lead_direction_eligible"] = eligible
+            obj["lead_rejection_reason"] = rejection
+            if eligible:
+                candidates.append(obj)
         candidates.sort(key=lambda x: float(x["longitudinal_m"]))
-        frame["lead_candidates_debug"]=[{
-            "object_id":o.get("object_id"),"longitudinal_m":o.get("longitudinal_m"),
-            "direction_difference_deg":o.get("lead_direction_difference_deg"),
-            "direction_compatibility":o.get("lead_direction_compatibility"),
-            "eligible":o.get("lead_direction_eligible"),"rejection_reason":o.get("lead_rejection_reason")}
-            for o in frame.get("objects",[]) if o.get("lead_base_candidate")]
-        if settings.get("lead_direction_filter_mode")=="enforce":
-            frame["lead"]=candidates[0] if candidates else None
-            frame["lead_candidate_count"]=len(candidates)
-            if frame.get("state") not in {"unknown","not_applicable"}:
+        frame["lead_candidates_debug"] = [
+            {
+                "object_id": o.get("object_id"),
+                "longitudinal_m": o.get("longitudinal_m"),
+                "direction_difference_deg": o.get("lead_direction_difference_deg"),
+                "direction_compatibility": o.get("lead_direction_compatibility"),
+                "eligible": o.get("lead_direction_eligible"),
+                "rejection_reason": o.get("lead_rejection_reason"),
+            }
+            for o in frame.get("objects", [])
+            if o.get("lead_base_candidate")
+        ]
+        if settings.get("lead_direction_filter_mode") == "enforce":
+            frame["lead"] = candidates[0] if candidates else None
+            frame["lead_candidate_count"] = len(candidates)
+            if frame.get("state") not in {"unknown", "not_applicable"}:
                 if frame["lead"]:
-                    frame["state"]="following_lane_with_lead"; frame["reason"]="direction_compatible_lead_in_ego_track"
+                    frame["state"] = "following_lane_with_lead"
+                    frame["reason"] = "direction_compatible_lead_in_ego_track"
                 else:
-                    frame["state"]="following_lane_without_lead"; frame["reason"]="no_direction_compatible_lead_in_ego_track"
-    result["schema_version"]="lane-debug-v2-continuous-track-frame-tags-v1"
-    result["debug_config"]=settings
-    result["lead_direction_angle_samples_deg"]=[round(v,2) for v in angle_samples]
-    result["lead_direction_distribution"]={
-        "sample_count":len(angle_samples),
-        "minimum_deg":None if not angle_samples else round(min(angle_samples),2),
-        "maximum_deg":None if not angle_samples else round(max(angle_samples),2),
-        "note":"Inspect this distribution before setting maximum_lead_direction_difference_deg; diagnostic mode does not alter lead selection."
+                    frame["state"] = "following_lane_without_lead"
+                    frame["reason"] = "no_direction_compatible_lead_in_ego_track"
+
+    result["schema_version"] = "lane-debug-v2-track-topology-boundary-corridor-v1"
+    result["debug_config"] = settings
+    result["lead_direction_angle_samples_deg"] = [round(v, 2) for v in angle_samples]
+    result["lead_direction_distribution"] = {
+        "sample_count": len(angle_samples),
+        "minimum_deg": None if not angle_samples else round(min(angle_samples), 2),
+        "maximum_deg": None if not angle_samples else round(max(angle_samples), 2),
+        "note": "Inspect this distribution before setting maximum_lead_direction_difference_deg; diagnostic mode does not alter lead selection.",
     }
     return result
