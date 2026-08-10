@@ -17,6 +17,8 @@ _ALLOWED_PIECE_KINDS = {
     "inferred_gap",
     "anchored_ld_bridge",
     "canonical_track_stitch",
+    "topology_supported_curvature_stitch",
+    "ego_supported_inferred_route",
 }
 
 
@@ -65,7 +67,7 @@ def assign_point_to_track_strict(
         center_distance=polyline_distance(point,centerline); score=center_distance+heading_difference*0.04
         if not best_match["inside_polygon"]: score+=best_match["polygon_distance_m"]*10.0
         if track_id==str(previous_track_id): score-=0.9
-        if best_match["piece_kind"] in {"anchored_ld_bridge","canonical_track_stitch"}: score+=0.15
+        if best_match["piece_kind"] in {"anchored_ld_bridge","canonical_track_stitch","topology_supported_curvature_stitch","ego_supported_inferred_route"}: score+=0.15
         candidates.append((score,track,best_match,center_distance,heading_difference,method))
     candidates.sort(key=lambda item:(item[0],str(item[1].get("track_id"))))
     if not candidates:
