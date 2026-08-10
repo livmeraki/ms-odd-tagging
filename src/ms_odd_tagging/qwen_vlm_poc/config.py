@@ -54,6 +54,7 @@ class VlmPocConfig:
     event_candidate_pre_context_s: float = 1.5
     event_candidate_post_context_s: float = 1.5
     event_response_link_s: float = 1.5
+    event_scene_merge_gap_s: float = 0.5
     max_request_bytes: int = 8_000_000
     cache_enabled: bool = True
     input_dir: Path = CANONICAL
