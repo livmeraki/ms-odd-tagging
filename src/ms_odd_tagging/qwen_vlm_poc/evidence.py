@@ -65,28 +65,13 @@ def _keep_event_driven_waiting_bev(
     candidate: CandidateWindow,
     config: VlmPocConfig,
 ) -> bool:
-    """Drop ordinary medium-speed BEVs from the event-driven waiting experiment.
+    """Keep all selected BEVs for the BEV-first pedestrian experiment.
 
-    Medium speed follows the motional taxonomy: 5 <= speed < 15 m/s. A medium-speed
-    frame is retained only when it carries meaningful braking/deceleration evidence,
-    because that transition can explain the ego response to a pedestrian.
+    Earlier versions dropped medium-speed images using ego-motion heuristics. That
+    biased the visual evidence toward braking/stopping frames. The BEV-first mode
+    now keeps the neutral temporal sample chosen by scene-level candidate merging.
     """
-    if not (
-        candidate.scenario == "waiting_for_pedestrian_to_cross"
-        and candidate.metadata.get("candidate_strategy") == "event-driven"
-    ):
-        return True
-
-    speed = ego_speed(frame)
-    if speed is None or not (5.0 <= float(speed) < 15.0):
-        return True
-
-    accel = ego_acceleration(frame)
-    state = motion_state(frame)
-    return (
-        state in {"decelerating", "stopping"}
-        or (accel is not None and float(accel) <= config.pedestrian_decel_mps2)
-    )
+    return True
 
 
 def render_candidate_bevs(
