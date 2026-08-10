@@ -31,6 +31,16 @@ def _curvature_metrics(centerline: list[list[float]]) -> tuple[float, float]:
     return total_heading_change_deg, max(local_curvatures, default=0.0)
 
 
+def _raw_intersection_true(lane: dict[str, Any]) -> bool:
+    evidence = set(str(x) for x in lane.get("intersection_evidence") or [])
+    if "left_boundary_attribute" in evidence or "right_boundary_attribute" in evidence:
+        return True
+    return bool(
+        (lane.get("left_boundary_attributes") or {}).get("intersection") is True
+        or (lane.get("right_boundary_attributes") or {}).get("intersection") is True
+    )
+
+
 def exclude_curved_intersection_lanes(
     lane_geometry: list[dict[str, Any]],
     *,
@@ -38,25 +48,27 @@ def exclude_curved_intersection_lanes(
     maximum_heading_change_deg: float = 10.0,
     maximum_abs_curvature_per_m: float = 0.02,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Reject only lanes that have intersection evidence AND are geometrically curved.
+    """Reject only lanes with raw ``intersection=true`` evidence AND curvature.
 
-    Geometry is preserved for visualization/debugging, but assignment_valid is
-    forced false so rejected lanes cannot enter physical tracks or downstream
-    ego/adjacent/object/lead assignment.
+    A topology-only intersection connector is not rejected by this policy.
+    Geometry remains available for debug/visualization, but assignment_valid is
+    forced false for rejected lanes so they cannot enter final physical tracks.
     """
     lanes = copy.deepcopy(lane_geometry)
     debug: list[dict[str, Any]] = []
     for lane in lanes:
         heading_change_deg, max_curvature = _curvature_metrics(lane.get("centerline_lcs_m") or [])
-        intersection = bool(lane.get("intersection_connector"))
+        raw_intersection_true = _raw_intersection_true(lane)
+        topology_intersection_connector = bool(lane.get("intersection_connector"))
         curved = (
             heading_change_deg > maximum_heading_change_deg
             or max_curvature > maximum_abs_curvature_per_m
         )
-        rejected = bool(enabled and intersection and curved and lane.get("assignment_valid"))
+        rejected = bool(enabled and raw_intersection_true and curved and lane.get("assignment_valid"))
         record = {
             "lane_id": str(lane.get("lane_id")),
-            "intersection": intersection,
+            "raw_intersection_true": raw_intersection_true,
+            "topology_or_attribute_intersection_connector": topology_intersection_connector,
             "heading_change_deg": round(heading_change_deg, 3),
             "maximum_abs_curvature_per_m": round(max_curvature, 5),
             "curved": curved,
@@ -68,7 +80,7 @@ def exclude_curved_intersection_lanes(
             lane["invalid_reason"] = "excluded_curved_intersection_lane"
             lane["lane_detection_eligibility"] = {
                 "eligible": False,
-                "reason": "intersection_true_and_curved",
+                "reason": "raw_intersection_true_and_curved",
                 "heading_change_deg": record["heading_change_deg"],
                 "maximum_abs_curvature_per_m": record["maximum_abs_curvature_per_m"],
             }
