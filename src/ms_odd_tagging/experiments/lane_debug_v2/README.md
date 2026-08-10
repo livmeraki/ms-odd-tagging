@@ -1,40 +1,34 @@
 # Lane Debug v2
 
-Isolated duplicate of the LD-based lane/following-lane/lane-change path. Production modules are not modified.
+Isolated LD lane experiment. Production lane/tagging modules are not modified.
 
-The experiment uses continuous lane tracks built from observed/recovered LD lane segments and accepted inferred gaps:
+## Current architecture
 
-`observed/recovered segment -> inferred gap -> observed/recovered segment -> ...`
+1. Reconstruct every trustworthy canonical LD lane segment.
+2. Connect accepted canonical continuations into persistent continuous tracks.
+3. Raw LD **cannot create standalone lanes**. It may only bridge two canonical track endpoints when both terminal lane fragments reference the same physical left/right raw LD boundaries and endpoint heading/width checks pass.
+4. Accepted bridges are merged into the canonical tracks they connect, so a bridge does not introduce a temporary logical lane ID.
+5. Build a static left-to-right lane ordering by sampling each constructed track and selecting the immediate compatible track on each side at every cross-section.
+6. Per frame, assign ego by strict polygon containment and classify all static tracks as `ego`, `left_adjacent`, `right_adjacent`, or `irrelevant` from the precomputed cross-section ordering.
 
-Each track preserves piece provenance as `observed_ld`, `recovered_full_edge`, or `inferred_gap`.
+Hysteresis is intentionally disabled while validating this topology. Normal lane adjacency should be stable without temporal smoothing.
 
-## Track-topology-first adjacency
+Strict ego assignment still uses the 1 m tolerance only to preserve the previous track; the tolerance cannot acquire a new adjacent track.
 
-Adjacent lanes are no longer chosen primarily by re-running a nearest-lane search at every frame. A static adjacency graph is built between continuous tracks using sustained overlap, same-direction heading compatibility, stable lateral separation, side consistency, and shared physical boundary edge IDs when available. Each relation stores an ego-track station interval where it is valid.
+When no constructed track contains ego, boundary-aware inferred ego corridors remain available as explicitly inferred fallback evidence and consecutive inferred corridors are connected into ego-specific inferred routes.
 
-Per frame, the detector activates the precomputed left/right relation at the ego station. The previous frame-local method is retained only as `frame_local_adjacency_debug` for comparison.
+## Explorer
 
-Optional hysteresis is enabled by default and can be disabled independently:
+The duplicated Plotly explorer exposes independent layers:
 
-```json
-"track_topology_hysteresis_enabled": true,
-"track_topology_switch_score_margin": 0.75,
-"track_topology_switch_confirmation_frames": 3
-```
+- `canonical tracks`
+- `anchored LD bridges`
+- `ego/adjacent roles`
+- `lane-order neighbors`
+- `raw LD lines`
+- inferred ego corridor / connected inferred route
 
-A physical member lane ID may change while the stable `continuous_track_id` stays the same. That is a fragment transition, not an adjacency switch.
-
-## Boundary-aware inferred ego corridor
-
-Strict ego assignment first requires the ego center to be inside an actual reconstructed track polygon. The 1 m outside tolerance is continuity-only: it may preserve the previous track, but cannot acquire a new nearby track.
-
-If no real ego track is valid, the detector directly inspects physical LD `lane_lines` / `road_boundaries` plus reconstructed lane boundaries. If a compatible left/right boundary pair encloses ego with plausible width and heading, it creates an explicit inferred corridor:
-
-```text
-left physical boundary | inferred ego corridor | right physical boundary
-```
-
-The output is marked `source = inferred_from_physical_boundaries` and stored in `inferred_ego_corridor`; it is never represented as observed LD. When the selected boundaries belong to reconstructed continuous tracks, those tracks become the inferred left/right adjacent tracks.
+This separates construction failures from role-classification failures.
 
 ## Run
 
@@ -42,26 +36,7 @@ The output is marked `source = inferred_from_physical_boundaries` and stored in 
 python -m ms_odd_tagging.experiments.lane_debug_v2.pipeline \
   <RECORDING_ID> \
   --canonical-dir <CANONICAL_ODLD_DIR> \
-  --run-id topology_boundary_01
+  --run-id static_order_01
 ```
 
 Outputs are always fresh under `outputs/debug_lane_v2/<run_id>/`.
-
-Serve the explorer:
-
-```bash
-python -m http.server 8002 --directory outputs/debug_lane_v2/<run_id>/explorers
-```
-
-Then open `http://localhost:8002/<RECORDING_ID>_lane_debug_v2_plotly.html`.
-
-Important frame evidence now includes:
-
-- `continuous_ego_track`
-- `inferred_ego_corridor`
-- `continuous_adjacency` (primary track-topology result)
-- `frame_local_adjacency_debug` (old frame-local comparison)
-- `segment_ego_lane`, `segment_left_lane`, `segment_right_lane`
-- `track_adjacency_graph` at recording level
-
-Optional enforced lead-direction filtering still requires an explicit threshold chosen after inspecting the diagnostic distribution.
