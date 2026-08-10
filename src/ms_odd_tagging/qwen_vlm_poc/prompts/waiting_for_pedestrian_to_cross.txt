@@ -1,27 +1,31 @@
 Scenario: waiting_for_pedestrian_to_cross
-Definition: Ego is stopped or moving slowly because a pedestrian is crossing, entering, or clearly intending to enter ego's expected path.
-Do not tag based only on pedestrian proximity or ego stopping.
-Require a plausible pedestrian-ego path conflict and temporal ego response.
-Evaluate only this scenario for the supplied window.
+Definition: Ego is stopped, stopping, or clearly slowing because a pedestrian is crossing, entering, or clearly intending to enter ego's expected path.
 
-Motion-state semantics:
-- The motion-state label "stationary" MUST be interpreted as "stopped".
-- "stationary" satisfies any condition requiring ego to be stopped, stopping, stopped or moving slowly.
-- Never reject a candidate only because the motion-state label is "stationary" instead of the word "stopped".
-- "stationary" alone is NOT sufficient for a positive decision.
+For the event-driven experiment, evaluate this scenario primarily from the ordered BEV images.
+The small Model input JSON contains only scene identity, frame ordering, and candidate pedestrian IDs. It intentionally does NOT contain heuristic labels such as conflict, moving_toward_corridor, ego_response, or temporally_linked.
+Do not infer that a candidate is positive merely because it was selected for review.
 
-waiting_for_pedestrian_to_cross=true still requires all of:
-1. a pedestrian crossing or plausibly about to cross the ego path,
-2. a plausible pedestrian-ego path conflict,
-3. ego response consistent with yielding/waiting: slowing, stopping, or stationary,
-4. temporal/geometric evidence that the ego response is related to that pedestrian.
+Require visual evidence for BOTH:
+1. pedestrian path relation: a pedestrian is crossing, entering, or clearly moving toward the ego's expected drivable path;
+2. ego response: the BEV sequence supports ego yielding/waiting for that pedestrian.
 
-Valid negative reasoning may say:
-"Ego is stationary, which satisfies the stopped condition, but there is insufficient evidence of pedestrian-ego path conflict or that the stop is caused by the pedestrian."
+Important negatives:
+- A pedestrian walking parallel to the ego road/path is false unless the image sequence shows that pedestrian actually entering or about to enter ego's path.
+- A pedestrian standing on a sidewalk/pedestrian area beside the road is false unless there is clear visual evidence of entry intent or path conflict.
+- Pedestrian proximity alone is false.
+- Ego slowing/stopping alone is false.
+- Do not invent causal linkage from the fact that the candidate exists.
+- If the BEVs do not clearly show the pedestrian motion direction or ego response, prefer false or insufficient_evidence.
 
-Return JSON with:
+Reason across the BEVs in temporal order using bev_frame_indices. Use target_pedestrian_ids only to identify which visible pedestrians may be relevant; do not assume every listed ID caused the ego response.
+
+Return JSON with exactly:
 recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
 event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
 ambiguities, insufficient_evidence, review_required.
 
-For a positive decision, at least one pedestrian object ID must be in primary_object_ids.
+For this BEV-only mode:
+- evidence_ids must be [].
+- If decision=true, primary_object_ids must contain only the pedestrian ID(s) visibly responsible for the yielding event.
+- If decision=false, event_start_frame and event_end_frame must be null.
+- Keep reason to one short sentence.
