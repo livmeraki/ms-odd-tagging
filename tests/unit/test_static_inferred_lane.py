@@ -47,16 +47,19 @@ def _route():
     }
 
 
-def test_overlapping_box_chain_becomes_one_static_corridor():
+def test_overlapping_box_chain_becomes_one_smoothed_union_corridor():
     lanes = build_static_inferred_lanes([_route()])
     assert len(lanes) == 1
     lane = lanes[0]
     assert lane["evidence_box_count"] == 4
     assert lane["bridge_complete"] is True
-    assert len(lane["centerline_lcs_m"]) == 6
-    assert lane["centerline_lcs_m"][0][0] == 8.0
-    assert lane["centerline_lcs_m"][-1][0] == 18.0
-    assert len(lane["polygon_lcs_m"]) >= 4
+    assert lane["geometry_method"] == "smoothed_cross_sectional_union_of_overlapping_boxes"
+    assert len(lane["centerline_lcs_m"]) > 6
+    assert abs(lane["centerline_lcs_m"][0][0] - 8.0) < 0.25
+    assert abs(lane["centerline_lcs_m"][-1][0] - 18.0) < 0.25
+    assert abs(lane["median_width_m"] - 3.5) < 0.2
+    assert len(lane["polygon_lcs_m"]) == 2 * len(lane["centerline_lcs_m"])
+    assert lane["union_debug"]["evidence_polygon_count"] == 4
 
 
 def test_static_corridor_merges_supported_front_and_back_tracks():
