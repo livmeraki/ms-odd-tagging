@@ -1,4 +1,4 @@
-"""Lane-debug detector using canonical tracks, anchored LD bridges, and static lane ordering."""
+"""Lane-debug detector using stitched canonical tracks, anchored LD bridges, and static lane ordering."""
 from __future__ import annotations
 
 import copy
@@ -7,6 +7,7 @@ from typing import Any
 
 from .anchored_track_merge import merge_tracks_with_anchored_bridges
 from .boundary_corridor import infer_ego_corridor_from_boundaries
+from .canonical_track_stitch import stitch_canonical_tracks
 from .continuous_tracks import adjacent_tracks, build_continuous_tracks
 from .detector import _corridor_role_table, _finite, _lane_output, _lead_base_candidate, _nearest_member
 from .detector_baseline import run_following_lane as run_baseline
@@ -31,6 +32,13 @@ DEFAULT_DEBUG = {
     "continuous_track_adjacent_minimum_lateral_m": 1.5,
     "continuous_track_adjacent_maximum_lateral_m": 8.0,
     "continuous_track_adjacent_local_window_m": 20.0,
+    "canonical_track_stitch_enabled": True,
+    "canonical_track_stitch_maximum_endpoint_gap_m": 8.0,
+    "canonical_track_stitch_maximum_heading_difference_deg": 12.0,
+    "canonical_track_stitch_maximum_lateral_error_m": 1.0,
+    "canonical_track_stitch_maximum_width_difference_m": 0.8,
+    "canonical_track_stitch_maximum_boundary_endpoint_gap_m": 3.0,
+    "canonical_track_stitch_maximum_curvature_difference_per_m": 0.08,
     "lane_order_sample_spacing_m": 2.0,
     "lane_order_maximum_heading_difference_deg": 20.0,
     "lane_order_minimum_lateral_m": 1.5,
@@ -55,7 +63,23 @@ DEFAULT_DEBUG = {
 
 def _apply_static_order(recording: dict[str, Any], result: dict[str, Any], settings: dict[str, Any]) -> None:
     lane_geometry = result.get("lane_geometry", [])
-    canonical_tracks, _, connection_debug = build_continuous_tracks(lane_geometry, recording)
+    preliminary_tracks, _, connection_debug = build_continuous_tracks(lane_geometry, recording)
+    if settings.get("canonical_track_stitch_enabled", True):
+        canonical_tracks, stitch_old_to_new, stitch_debug = stitch_canonical_tracks(
+            preliminary_tracks,
+            lane_geometry,
+            maximum_endpoint_gap_m=float(settings["canonical_track_stitch_maximum_endpoint_gap_m"]),
+            maximum_heading_difference_deg=float(settings["canonical_track_stitch_maximum_heading_difference_deg"]),
+            maximum_lateral_error_m=float(settings["canonical_track_stitch_maximum_lateral_error_m"]),
+            maximum_width_difference_m=float(settings["canonical_track_stitch_maximum_width_difference_m"]),
+            maximum_boundary_endpoint_gap_m=float(settings["canonical_track_stitch_maximum_boundary_endpoint_gap_m"]),
+            maximum_curvature_difference_per_m=float(settings["canonical_track_stitch_maximum_curvature_difference_per_m"]),
+        )
+    else:
+        canonical_tracks = preliminary_tracks
+        stitch_old_to_new = {str(t.get("track_id")): str(t.get("track_id")) for t in preliminary_tracks}
+        stitch_debug = []
+
     bridges, bridge_debug = build_raw_ld_gap_tracks(
         recording,
         lane_geometry,
@@ -82,6 +106,10 @@ def _apply_static_order(recording: dict[str, Any], result: dict[str, Any], setti
         maximum_longitudinal_m=float(settings["lane_order_maximum_longitudinal_m"]),
     )
     result["continuous_lane_tracks"] = tracks
+    result["canonical_preliminary_track_count"] = len(preliminary_tracks)
+    result["canonical_track_count_after_endpoint_stitch"] = len(canonical_tracks)
+    result["canonical_track_stitch_debug"] = stitch_debug
+    result["canonical_track_stitch_old_track_to_merged_track"] = stitch_old_to_new
     result["canonical_continuous_lane_track_count_before_bridge_merge"] = len(canonical_tracks)
     result["continuous_lane_track_count_after_bridge_merge"] = len(tracks)
     result["anchored_ld_bridge_count"] = len(bridges)
@@ -236,7 +264,7 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         if settings.get("lead_direction_filter_mode") == "enforce":
             frame["lead"] = candidates[0] if candidates else None
             frame["lead_candidate_count"] = len(candidates)
-    result["schema_version"] = "lane-debug-v2-static-lane-order-anchored-bridges-v2"
+    result["schema_version"] = "lane-debug-v2-static-lane-order-canonical-stitch-v3"
     result["debug_config"] = settings
     result["lead_direction_angle_samples_deg"] = [round(v, 2) for v in angle_samples]
     result["lead_direction_distribution"] = {"sample_count": len(angle_samples), "minimum_deg": None if not angle_samples else round(min(angle_samples), 2), "maximum_deg": None if not angle_samples else round(max(angle_samples), 2), "note": "Inspect before configuring an enforced lead-direction threshold."}
