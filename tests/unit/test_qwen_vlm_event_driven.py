@@ -195,11 +195,15 @@ def test_scene_merge_combines_overlapping_pedestrian_candidates_and_drops_heuris
     scene = merged[0]
     assert scene.primary_object_ids == ["ped-1", "ped-2"]
     assert scene.metadata["source_candidate_count"] == 2
-    assert scene.metadata["vlm_input_mode"] == "bev_only"
+    assert scene.metadata["vlm_input_mode"] == "bev_plus_neutral_ego_measurements"
+    assert scene.metadata["frame_selection_strategy"] == "pre_start_inner_thirds_end_post"
+    assert scene.selected_frame_indices == [19, 20, 25, 31, 36, 37]
+    assert [item["frame"] for item in scene.metadata["ego_measurements"]] == scene.selected_frame_indices
+    assert all(item["speed_mps"] == 8.0 for item in scene.metadata["ego_measurements"])
     assert "landmark_roles" not in scene.metadata
+    assert "ego_response_frames" not in scene.metadata
     assert len(scene.evidence) == 1
     assert scene.evidence[0].kind == "bev_sequence"
-    assert len(scene.selected_frame_indices) <= 6
 
 
 def test_event_driven_strategy_falls_back_for_other_scenarios():
