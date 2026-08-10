@@ -7,7 +7,7 @@ For the event-driven experiment, evaluate this scenario from two neutral inputs:
 The model input intentionally does NOT contain heuristic labels such as conflict, moving_toward_corridor, ego_response, yielding, or temporally_linked.
 Do not infer that a candidate is positive merely because it was selected for review.
 
-Candidate pedestrians are visually highlighted in the BEVs. Highlighting means only "inspect this pedestrian"; it does NOT mean the pedestrian is conflicting or caused ego to yield.
+Candidate pedestrians are visually highlighted in orange in the BEVs. Highlighting means only "inspect this pedestrian"; it does NOT mean the pedestrian is conflicting or caused ego to yield.
 
 Require evidence for BOTH:
 1. pedestrian path relation: from the BEV sequence, a highlighted pedestrian is crossing, entering, or clearly moving toward the ego's expected drivable path;
