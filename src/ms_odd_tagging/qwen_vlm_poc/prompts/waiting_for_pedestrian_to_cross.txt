@@ -2,7 +2,7 @@ Scenario: waiting_for_pedestrian_to_cross
 Definition: Ego is stopped, stopping, or clearly slowing because a pedestrian is crossing, entering, or clearly intending to enter ego's expected path.
 
 For the event-driven experiment, evaluate this scenario primarily from the ordered BEV images.
-The small Model input JSON contains only scene identity, frame ordering, and candidate pedestrian IDs. It intentionally does NOT contain heuristic labels such as conflict, moving_toward_corridor, ego_response, or temporally_linked.
+The small Model input JSON contains only scene identity, frame ordering, candidate pedestrian IDs, and one neutral visual_evidence_id. It intentionally does NOT contain heuristic labels such as conflict, moving_toward_corridor, ego_response, or temporally_linked.
 Do not infer that a candidate is positive merely because it was selected for review.
 
 Require visual evidence for BOTH:
@@ -25,7 +25,8 @@ event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
 ambiguities, insufficient_evidence, review_required.
 
 For this BEV-only mode:
-- evidence_ids must be [].
+- If decision=true, evidence_ids must contain exactly the supplied visual_evidence_id.
+- If decision=false, evidence_ids may be [] or contain the visual_evidence_id.
 - If decision=true, primary_object_ids must contain only the pedestrian ID(s) visibly responsible for the yielding event.
 - If decision=false, event_start_frame and event_end_frame must be null.
 - Keep reason to one short sentence.
