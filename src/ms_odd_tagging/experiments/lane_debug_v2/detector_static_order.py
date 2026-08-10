@@ -5,6 +5,7 @@ import copy
 import math
 from typing import Any
 
+from .anchored_track_merge import merge_tracks_with_anchored_bridges
 from .boundary_corridor import infer_ego_corridor_from_boundaries
 from .continuous_tracks import adjacent_tracks, build_continuous_tracks
 from .detector import _corridor_role_table, _finite, _lane_output, _lead_base_candidate, _nearest_member
@@ -54,7 +55,7 @@ DEFAULT_DEBUG = {
 
 def _apply_static_order(recording: dict[str, Any], result: dict[str, Any], settings: dict[str, Any]) -> None:
     lane_geometry = result.get("lane_geometry", [])
-    canonical_tracks, member_to_track, connection_debug = build_continuous_tracks(lane_geometry, recording)
+    canonical_tracks, _, connection_debug = build_continuous_tracks(lane_geometry, recording)
     bridges, bridge_debug = build_raw_ld_gap_tracks(
         recording,
         lane_geometry,
@@ -66,7 +67,12 @@ def _apply_static_order(recording: dict[str, Any], result: dict[str, Any], setti
         minimum_width_m=float(settings["boundary_ego_corridor_minimum_width_m"]),
         maximum_width_m=float(settings["boundary_ego_corridor_maximum_width_m"]),
     ) if settings.get("raw_ld_gap_recovery_enabled", True) else ([], [])
-    tracks = canonical_tracks + bridges
+    tracks, old_track_to_merged, bridge_merge_debug = merge_tracks_with_anchored_bridges(canonical_tracks, bridges)
+    member_to_track = {
+        str(lane_id): str(track.get("track_id"))
+        for track in tracks
+        for lane_id in track.get("member_lane_ids", [])
+    }
     lane_order = build_static_lane_order(
         tracks,
         sample_spacing_m=float(settings["lane_order_sample_spacing_m"]),
@@ -76,11 +82,12 @@ def _apply_static_order(recording: dict[str, Any], result: dict[str, Any], setti
         maximum_longitudinal_m=float(settings["lane_order_maximum_longitudinal_m"]),
     )
     result["continuous_lane_tracks"] = tracks
-    result["canonical_continuous_lane_track_count"] = len(canonical_tracks)
-    result["anchored_ld_bridge_track_count"] = len(bridges)
+    result["canonical_continuous_lane_track_count_before_bridge_merge"] = len(canonical_tracks)
+    result["continuous_lane_track_count_after_bridge_merge"] = len(tracks)
+    result["anchored_ld_bridge_count"] = len(bridges)
     result["anchored_ld_bridge_debug"] = bridge_debug
-    result["raw_ld_gap_recovery_track_count"] = len(bridges)
-    result["raw_ld_gap_recovery_debug"] = bridge_debug
+    result["anchored_ld_bridge_merge_debug"] = bridge_merge_debug
+    result["anchored_ld_bridge_old_track_to_merged_track"] = old_track_to_merged
     result["raw_ld_global_pair_constructor_enabled"] = False
     result["continuous_track_member_map"] = member_to_track
     result["continuous_track_connection_debug"] = connection_debug
@@ -185,8 +192,6 @@ def _apply_static_order(recording: dict[str, Any], result: dict[str, Any], setti
 
 def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
     settings = {**DEFAULT_DEBUG, **(config or {})}
-    # Hysteresis intentionally remains disabled in this implementation; topology
-    # must be correct without temporal smoothing first.
     settings["track_topology_hysteresis_enabled"] = False
     result = copy.deepcopy(run_baseline(recording, config))
     _apply_static_order(recording, result, settings)
@@ -217,9 +222,11 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
             rejection = None
             if eligible and settings.get("lead_direction_filter_mode", "diagnostic") == "enforce":
                 if threshold is None:
-                    eligible = False; rejection = "direction_threshold_not_configured"
+                    eligible = False
+                    rejection = "direction_threshold_not_configured"
                 elif compatibility != "same_direction" and not (compatibility == "ambiguous" and not settings.get("reject_ambiguous_stationary_lead", False)):
-                    eligible = False; rejection = "direction_mismatch_or_ambiguous"
+                    eligible = False
+                    rejection = "direction_mismatch_or_ambiguous"
             obj["lead_direction_eligible"] = eligible
             obj["lead_rejection_reason"] = rejection
             if eligible:
@@ -229,7 +236,7 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         if settings.get("lead_direction_filter_mode") == "enforce":
             frame["lead"] = candidates[0] if candidates else None
             frame["lead_candidate_count"] = len(candidates)
-    result["schema_version"] = "lane-debug-v2-static-lane-order-anchored-bridges-v1"
+    result["schema_version"] = "lane-debug-v2-static-lane-order-anchored-bridges-v2"
     result["debug_config"] = settings
     result["lead_direction_angle_samples_deg"] = [round(v, 2) for v in angle_samples]
     result["lead_direction_distribution"] = {"sample_count": len(angle_samples), "minimum_deg": None if not angle_samples else round(min(angle_samples), 2), "maximum_deg": None if not angle_samples else round(max(angle_samples), 2), "note": "Inspect before configuring an enforced lead-direction threshold."}
