@@ -60,6 +60,35 @@ def selected_window_frames(
     return selected[: config.max_bev_images]
 
 
+def _keep_event_driven_waiting_bev(
+    frame: dict[str, Any],
+    candidate: CandidateWindow,
+    config: VlmPocConfig,
+) -> bool:
+    """Drop ordinary medium-speed BEVs from the event-driven waiting experiment.
+
+    Medium speed follows the motional taxonomy: 5 <= speed < 15 m/s. A medium-speed
+    frame is retained only when it carries meaningful braking/deceleration evidence,
+    because that transition can explain the ego response to a pedestrian.
+    """
+    if not (
+        candidate.scenario == "waiting_for_pedestrian_to_cross"
+        and candidate.metadata.get("candidate_strategy") == "event-driven"
+    ):
+        return True
+
+    speed = ego_speed(frame)
+    if speed is None or not (5.0 <= float(speed) < 15.0):
+        return True
+
+    accel = ego_acceleration(frame)
+    state = motion_state(frame)
+    return (
+        state in {"decelerating", "stopping"}
+        or (accel is not None and float(accel) <= config.pedestrian_decel_mps2)
+    )
+
+
 def render_candidate_bevs(
     recording: dict[str, Any],
     candidate: CandidateWindow,
@@ -72,9 +101,12 @@ def render_candidate_bevs(
         if isinstance(frame.get("frame_index"), int)
     }
     paths = []
+    rendered_frame_indices = []
     for frame_index in candidate.selected_frame_indices[: config.max_bev_images]:
         frame = frames_by_index.get(frame_index)
         if frame is None:
+            continue
+        if not _keep_event_driven_waiting_bev(frame, candidate, config):
             continue
         path = (
             output_root
@@ -92,10 +124,12 @@ def render_candidate_bevs(
             proximity_radius_m=0.0 if candidate.scenario == "on_intersection" else 30.0,
         )
         paths.append(str(path))
+        rendered_frame_indices.append(frame_index)
     return CandidateWindow(
         **{
             **candidate.to_dict(),
             "evidence": candidate.evidence,
+            "selected_frame_indices": rendered_frame_indices,
             "bev_paths": paths,
         }
     )
