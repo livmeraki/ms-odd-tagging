@@ -1,19 +1,18 @@
 """Build recording-level static inferred lane components from ego corridor boxes.
 
-The overlapping per-frame corridor boxes remain the evidence source.  Completed
+The overlapping per-frame corridor boxes remain the evidence source. Completed
 routes are converted into one static corridor available for the whole recording.
-When the static corridor has strong support to observed tracks before and after
-it, those tracks are connected through the inferred corridor before final role
-classification.
+The corridor geometry is reconstructed from the union area of all overlapping
+box polygons, then smoothed before front/back affiliation and track integration.
 """
 from __future__ import annotations
 
 import copy
 import math
-from statistics import median
 from typing import Any
 
 from .lane_geometry import nearest_heading, wrap_angle
+from .static_inferred_union import build_smoothed_box_union_corridor
 
 
 def _dist(a: list[float], b: list[float]) -> float:
@@ -29,75 +28,18 @@ def _append_points(target: list[list[float]], points: list[list[float]]) -> None
             target.append(q)
 
 
-def _piece_center(piece: dict[str, Any]) -> list[float] | None:
-    line = piece.get("centerline_lcs_m") or []
-    if not line:
-        return None
-    p = line[len(line) // 2]
-    return [float(p[0]), float(p[1])]
-
-
-def _smooth_centers(points: list[list[float]], passes: int = 2) -> list[list[float]]:
-    if len(points) <= 2:
-        return points
-    out = [p[:] for p in points]
-    for _ in range(max(0, passes)):
-        nxt = [out[0][:]]
-        for i in range(1, len(out) - 1):
-            nxt.append([
-                0.25 * out[i - 1][0] + 0.50 * out[i][0] + 0.25 * out[i + 1][0],
-                0.25 * out[i - 1][1] + 0.50 * out[i][1] + 0.25 * out[i + 1][1],
-            ])
-        nxt.append(out[-1][:])
-        out = nxt
-    return out
-
-
-def _build_boundaries(center: list[list[float]], width_m: float) -> tuple[list[list[float]], list[list[float]], list[list[float]]]:
-    if len(center) < 2:
-        return [], [], []
-    left: list[list[float]] = []
-    right: list[list[float]] = []
-    half = max(1.0, float(width_m) / 2.0)
-    for i, p in enumerate(center):
-        a = center[max(0, i - 1)]
-        b = center[min(len(center) - 1, i + 1)]
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        norm = math.hypot(dx, dy)
-        if norm <= 1e-6:
-            continue
-        nx, ny = -dy / norm, dx / norm
-        left.append([p[0] + nx * half, p[1] + ny * half])
-        right.append([p[0] - nx * half, p[1] - ny * half])
-    polygon = left + list(reversed(right)) if len(left) >= 2 and len(right) >= 2 else []
-    return left, right, polygon
-
-
 def build_static_inferred_lanes(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert overlapping-box routes into static smooth full-length corridors."""
+    """Convert overlapping-box routes into static smoothed union corridors.
+
+    The final lane width/polygon is not a fixed-width fit through ego centers.
+    Instead, every local cross-section is derived from the area union of the
+    green evidence boxes and the resulting left/right envelopes are smoothed.
+    """
     out: list[dict[str, Any]] = []
     for route in routes:
         pieces = sorted(route.get("pieces") or [], key=lambda p: int(p.get("frame_index", 0)))
-        centers = [c for c in (_piece_center(p) for p in pieces) if c is not None]
-        if len(centers) < 2:
-            continue
-        first_line = pieces[0].get("centerline_lcs_m") or []
-        last_line = pieces[-1].get("centerline_lcs_m") or []
-        anchors: list[list[float]] = []
-        if first_line:
-            anchors.append([float(first_line[0][0]), float(first_line[0][1])])
-        anchors.extend(centers)
-        if last_line:
-            anchors.append([float(last_line[-1][0]), float(last_line[-1][1])])
-        compact: list[list[float]] = []
-        _append_points(compact, anchors)
-        if len(compact) < 2:
-            continue
-        smooth = _smooth_centers(compact)
-        widths = [float(p.get("width_m")) for p in pieces if p.get("width_m") is not None]
-        width = median(widths) if widths else 3.5
-        left, right, polygon = _build_boundaries(smooth, width)
-        if len(polygon) < 4:
+        union = build_smoothed_box_union_corridor(pieces)
+        if union is None or len(union.get("polygon_lcs_m") or []) < 4:
             continue
         out.append({
             "static_inferred_lane_id": f"static_{route.get('route_id')}",
@@ -107,15 +49,24 @@ def build_static_inferred_lanes(routes: list[dict[str, Any]]) -> list[dict[str, 
             "bridge_complete": bool(route.get("bridge_complete")),
             "start_frame_index": route.get("start_frame_index"),
             "end_frame_index": route.get("end_frame_index"),
-            "source": "overlapping_ego_corridor_boxes",
+            "source": "smoothed_union_of_overlapping_ego_corridor_boxes",
             "evidence_box_count": len(pieces),
             "evidence_boxes": pieces,
-            "centerline_lcs_m": smooth,
-            "left_boundary_lcs_m": left,
-            "right_boundary_lcs_m": right,
-            "polygon_lcs_m": polygon,
-            "median_width_m": round(width, 3),
-            "longitudinal_extent_method": "first_box_back_edge_through_box_centers_to_last_box_front_edge",
+            "centerline_lcs_m": union["centerline_lcs_m"],
+            "left_boundary_lcs_m": union["left_boundary_lcs_m"],
+            "right_boundary_lcs_m": union["right_boundary_lcs_m"],
+            "polygon_lcs_m": union["polygon_lcs_m"],
+            "median_width_m": round(float(union.get("median_width_m", 3.5)), 3),
+            "geometry_method": union.get("method"),
+            "union_debug": {
+                "sample_spacing_m": union.get("sample_spacing_m"),
+                "sample_count": union.get("sample_count"),
+                "evidence_polygon_count": union.get("evidence_polygon_count"),
+                "maximum_union_component_count_at_station": union.get("maximum_union_component_count_at_station"),
+                "smoothing_passes": union.get("smoothing_passes"),
+                "maximum_smoothing_deviation_m": union.get("maximum_smoothing_deviation_m"),
+            },
+            "longitudinal_extent_method": "smoothed_cross_sectional_area_union_of_all_overlapping_boxes",
         })
     return out
 
@@ -210,7 +161,8 @@ def integrate_static_inferred_lanes(
             "right_boundary_lcs_m": inferred.get("right_boundary_lcs_m"),
             "polygon_lcs_m": inferred.get("polygon_lcs_m"),
             "evidence_box_count": inferred.get("evidence_box_count"),
-            "source": "static_lane_from_overlapping_ego_corridor_boxes",
+            "geometry_method": inferred.get("geometry_method"),
+            "source": "static_lane_from_smoothed_box_area_union",
         }
 
         if start_id == end_id:
