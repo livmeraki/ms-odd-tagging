@@ -11,6 +11,7 @@ from .candidates import generate_candidates
 from .client import VlmClient, extract_message_text
 from .config import SCENARIOS, load_config
 from .evidence import load_candidate_bundle, render_candidate_bevs, write_candidate_bundle
+from .event_driven import generate_event_driven_candidates
 from .loader import canonical_path, load_recording
 from .merging import merge_decisions
 from .validation import parse_and_validate_response
@@ -20,6 +21,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a small Qwen VLM POC for selected scenarios.")
     parser.add_argument("--recording", action="append", help="Recording ID to process. Repeat for multiple recordings.")
     parser.add_argument("--scenario", choices=SCENARIOS, required=True)
+    parser.add_argument(
+        "--candidate-strategy",
+        choices=("current", "event-driven"),
+        default="current",
+        help=(
+            "Candidate generation strategy. 'current' preserves the existing POC. "
+            "'event-driven' is an additive experiment; it currently changes only "
+            "waiting_for_pedestrian_to_cross and falls back to current for other scenarios."
+        ),
+    )
     parser.add_argument("--input-dir", type=Path, default=None)
     parser.add_argument("--output-root", type=Path, default=None)
     parser.add_argument("--config", type=Path, default=None)
@@ -75,16 +86,28 @@ def _recording_for_bundle(bundle_path: Path, input_dir: Path) -> dict:
     return load_recording(canonical_path(input_dir, candidate.recording_id))
 
 
+def _generate_candidates(recording: dict, scenario: str, config, strategy: str):
+    if strategy == "event-driven":
+        return generate_event_driven_candidates(recording, scenario, config)
+    return generate_candidates(recording, scenario, config)
+
+
 def main() -> int:
     args = parse_args()
     config = _config_from_args(args)
     if not args.candidate_bundle and not args.recording:
         raise SystemExit("--recording is required unless --candidate-bundle is supplied")
 
-    output_root = config.output_root
+    output_root = (
+        config.output_root / "event_driven"
+        if args.candidate_strategy == "event-driven"
+        else config.output_root
+    )
     output_root.mkdir(parents=True, exist_ok=True)
     manifest = {
         "schema_version": "qwen-vlm-poc-run-manifest-v1",
+        "candidate_strategy": args.candidate_strategy,
+        "effective_output_root": str(output_root),
         "config": config.to_dict(),
         "candidate_bundles": [],
         "raw_results": [],
@@ -105,7 +128,12 @@ def main() -> int:
         for recording_id in args.recording or []:
             path = canonical_path(config.input_dir, recording_id)
             recording = load_recording(path)
-            candidates = generate_candidates(recording, args.scenario, config)
+            candidates = _generate_candidates(
+                recording,
+                args.scenario,
+                config,
+                args.candidate_strategy,
+            )
             if args.limit_candidates is not None:
                 candidates = candidates[: args.limit_candidates]
             for candidate in candidates:
@@ -118,6 +146,7 @@ def main() -> int:
         manifest_path = output_root / f"manifest_candidate_only_{args.scenario}.json"
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
         print(f"Wrote {len(candidate_rows)} candidate bundle(s)")
+        print(f"Candidate strategy: {args.candidate_strategy}")
         print(f"Manifest: {manifest_path}")
         return 0
 
@@ -175,6 +204,7 @@ def main() -> int:
     manifest_path = output_root / f"manifest_{args.scenario}.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     print(f"Processed {len(candidate_rows)} candidate(s)")
+    print(f"Candidate strategy: {args.candidate_strategy}")
     print(f"Accepted recordings: {len(accepted_by_recording)}")
     print(f"Manifest: {manifest_path}")
     return 0
