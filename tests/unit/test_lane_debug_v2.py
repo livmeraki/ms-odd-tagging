@@ -1,4 +1,5 @@
 from ms_odd_tagging.experiments.lane_debug_v2.boundary_corridor import infer_ego_corridor_from_boundaries
+from ms_odd_tagging.experiments.lane_debug_v2.canonical_track_stitch import stitch_canonical_tracks
 from ms_odd_tagging.experiments.lane_debug_v2.continuous_tracks import build_continuous_tracks, assign_point_to_track, adjacent_tracks
 from ms_odd_tagging.experiments.lane_debug_v2.lane_state import deterministic_candidate, direction_relation, transition_kind
 from ms_odd_tagging.experiments.lane_debug_v2.object_motion import build_object_motion_evidence
@@ -84,6 +85,18 @@ def test_continuous_track_recursively_chains_multiple_segments():
     assert assignment["track_id"]==mapping["A"]
 
 
+def test_canonical_endpoint_stitch_merges_same_lane_fragments_without_matching_boundary_ids():
+    lanes=[_lane("A",0,10,0),_lane("B",11,21,0)]
+    preliminary,_,_=build_continuous_tracks(lanes,_recording([[0,0],[5,0],[15,0]]))
+    assert len(preliminary)==2
+    stitched,mapping,debug=stitch_canonical_tracks(preliminary,lanes)
+    assert len(stitched)==1
+    assert stitched[0]["member_lane_ids"]==["A","B"]
+    assert stitched[0]["canonical_stitch_count"]==1
+    assert mapping["physical_track_0001"]==mapping["physical_track_0002"]=="physical_track_0001"
+    assert any(item["accepted"] for item in debug)
+
+
 def test_continuous_track_adjacent_lane_uses_local_parallel_overlap():
     lanes=[_lane("E",0,30,0),_lane("L",0,30,3.5)]
     tracks,mapping,_=build_continuous_tracks(lanes,_recording([[0,0],[5,0],[10,0]]))
@@ -122,7 +135,6 @@ def test_topology_hysteresis_holds_previous_neighbor_when_improvement_is_small()
 def test_outside_tolerance_cannot_acquire_new_track():
     lane=_lane("E",0,30,0)
     tracks,mapping,_=build_continuous_tracks([lane],_recording([[0,0],[5,0]]))
-    # 0.25 m outside the upper boundary: without previous identity this must not acquire E.
     assignment=assign_point_to_track_strict((10.0,2.0),0.0,tracks,previous_track_id=None,outside_tolerance_m=1.0)
     assert assignment["track_id"] is None
     held=assign_point_to_track_strict((10.0,2.0),0.0,tracks,previous_track_id=mapping["E"],outside_tolerance_m=1.0)
