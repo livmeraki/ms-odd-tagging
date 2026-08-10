@@ -11,6 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from .bev_legend import bev_legend_text
 from .config import VlmPocConfig
 from .evidence import stable_json
 from .models import CandidateWindow
@@ -71,6 +72,7 @@ def cache_key(candidate: CandidateWindow, config: VlmPocConfig) -> str:
         "prompt_version": config.prompt_version,
         "scenario": candidate.scenario,
         "model_input": _vlm_candidate_input(candidate),
+        "bev_legend": bev_legend_text(),
         "images": image_digests,
         "settings": {
             "temperature": config.temperature,
@@ -103,6 +105,7 @@ class VlmClient:
         model_input = _vlm_candidate_input(candidate)
         text = (
             f"{scenario_prompt}\n\n"
+            f"{bev_legend_text()}\n\n"
             f"Prompt version: {self.config.prompt_version}\n"
             f"Model input JSON:\n{stable_json(model_input)}"
         )
