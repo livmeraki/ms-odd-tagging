@@ -28,6 +28,14 @@ def test_event_driven_waiting_vlm_input_excludes_candidate_heuristics():
         metadata={
             "candidate_strategy": "event-driven",
             "visual_evidence_id": "rec_waiting_scene_000010_000040:bev_sequence",
+            "ego_measurements": [
+                {"frame": 10, "time_s": 1.0, "speed_mps": 7.5},
+                {"frame": 16, "time_s": 1.6, "speed_mps": 5.0},
+                {"frame": 22, "time_s": 2.2, "speed_mps": 2.0},
+                {"frame": 28, "time_s": 2.8, "speed_mps": 0.5},
+                {"frame": 34, "time_s": 3.4, "speed_mps": 0.4},
+                {"frame": 40, "time_s": 4.0, "speed_mps": 1.2},
+            ],
             "ego_response_frames": [20, 21],
             "temporally_linked": True,
             "landmark_roles": {"strongest_conflict": 22},
@@ -37,9 +45,14 @@ def test_event_driven_waiting_vlm_input_excludes_candidate_heuristics():
     payload = _vlm_candidate_input(candidate)
     text = json.dumps(payload, sort_keys=True)
 
-    assert payload["evaluation_mode"] == "bev_only_no_heuristic_labels"
+    assert payload["evaluation_mode"] == "bev_plus_neutral_ego_measurements"
     assert payload["bev_frame_indices"] == [10, 16, 22, 28, 34, 40]
     assert payload["target_pedestrian_ids"] == ["ped-1", "ped-2"]
+    assert payload["ego_measurements"][0] == {
+        "frame": 10,
+        "time_s": 1.0,
+        "speed_mps": 7.5,
+    }
     assert payload["visual_evidence_id"].endswith(":bev_sequence")
     for forbidden in (
         "conflict",
@@ -48,5 +61,6 @@ def test_event_driven_waiting_vlm_input_excludes_candidate_heuristics():
         "temporally_linked",
         "strongest_conflict",
         "pedestrian_corridor_conflict",
+        '"yielding"',
     ):
         assert forbidden not in text
