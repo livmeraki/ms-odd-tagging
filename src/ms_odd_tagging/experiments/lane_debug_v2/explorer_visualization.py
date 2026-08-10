@@ -26,13 +26,16 @@ def render_plotly_explorer(
         for p in store.get("points", [])
         if len(p.get("position_lcs_m") or []) >= 2
     }
+
     raw = []
     for collection, key, kind in (
         ("lane_lines", "line_id", "lane_line"),
         ("road_boundaries", "road_boundary_id", "road_boundary"),
     ):
         for feature in store.get(collection, []):
-            ids = list(feature.get("point_ids") or []) or [e.get("point_id") for e in feature.get("elements") or []]
+            ids = list(feature.get("point_ids") or []) or [
+                e.get("point_id") for e in feature.get("elements") or []
+            ]
             pts = [points[str(pid)] for pid in ids if str(pid) in points]
             if len(pts) >= 2:
                 raw.append({"id": str(feature.get(key)), "kind": kind, "pts": pts})
@@ -41,11 +44,13 @@ def render_plotly_explorer(
     for frame in following.get("frames", []):
         src = source.get(frame.get("frame_index"), {})
         ego = src.get("ego") or {}
-        frames.append({
-            **frame,
-            "ego_position": ego.get("position_lcs_m"),
-            "ego_heading": ego.get("heading_lcs_rad"),
-        })
+        frames.append(
+            {
+                **frame,
+                "ego_position": ego.get("position_lcs_m"),
+                "ego_heading": ego.get("heading_lcs_rad"),
+            }
+        )
 
     payload = {
         "run_id": run_id,
@@ -54,7 +59,9 @@ def render_plotly_explorer(
         "tracks": following.get("continuous_lane_tracks", []),
         "network": following.get("constructed_lane_network", {}),
         "lane_order": following.get("static_lane_order_topology", {}),
-        "canonical_track_count": following.get("canonical_continuous_lane_track_count_before_bridge_merge", 0),
+        "canonical_track_count": following.get(
+            "canonical_continuous_lane_track_count_before_bridge_merge", 0
+        ),
         "bridge_count": following.get("anchored_ld_bridge_count", 0),
         "bridge_debug": following.get("anchored_ld_bridge_debug", []),
         "bridge_merge_debug": following.get("anchored_ld_bridge_merge_debug", []),
@@ -62,11 +69,10 @@ def render_plotly_explorer(
         "raw": raw,
         "frames": frames,
     }
-    data = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).replace("</", "<\\/")
+    data = json.dumps(payload, ensure_ascii=True, separators=(",", ":")).replace(
+        "</", "<\\/"
+    )
 
-    # Keep the browser code as a literal template instead of a Python f-string.
-    # This avoids fragile doubled-brace escaping and makes JavaScript syntax
-    # directly readable/testable.
     html = r'''<!doctype html>
 <html>
 <head>
@@ -95,11 +101,9 @@ input[type=range]{width:300px}
     <label><input id="follow" type="checkbox" checked>follow ego</label>
     <label><input id="canonical" type="checkbox" checked>canonical tracks</label>
     <label><input id="bridges" type="checkbox" checked>anchored LD bridges</label>
-    <label><input id="selected" type="checkbox" checked>ego/adjacent roles</label>
+    <label><input id="selected" type="checkbox" checked>ego/adjacent + inferred route</label>
     <label><input id="order" type="checkbox" checked>lane-order neighbors</label>
     <label><input id="raw" type="checkbox">raw LD lines</label>
-    <label><input id="corridor" type="checkbox" checked>inferred ego corridor</label>
-    <label><input id="route" type="checkbox" checked>connected inferred route</label>
     <label><input id="ids" type="checkbox">track IDs</label>
     <label><input id="traj" type="checkbox" checked>ego trajectory</label>
   </div>
@@ -118,7 +122,6 @@ const colors = {
   left_adjacent: '#06b6d4',
   right_adjacent: '#f59e0b',
   irrelevant: '#94a3b8',
-  corridor: '#16a34a',
   bridge: '#7c3aed'
 };
 let timer = null;
@@ -127,7 +130,8 @@ let span = null;
 let relayoutBound = false;
 
 slider.max = Math.max(0, D.frames.length - 1);
-document.getElementById('title').textContent = `${D.recording_id} — static lane order — ${D.run_id}`;
+document.getElementById('title').textContent =
+  `${D.recording_id} — static lane order — ${D.run_id}`;
 
 function lineTrace(points, name, color, width=1, dash='solid') {
   return {
@@ -178,7 +182,10 @@ function drawBridgePieces(out, track, color=colors.bridge, strong=false) {
 }
 
 function drawTrack(out, track, role, strong, constructionOnly=false) {
-  const color = constructionOnly ? colors.irrelevant : (colors[role] || colors.irrelevant);
+  const color = constructionOnly
+    ? colors.irrelevant
+    : (colors[role] || colors.irrelevant);
+
   for (const laneId of track.member_lane_ids || []) {
     const lane = laneMap.get(String(laneId));
     if (!lane) continue;
@@ -189,18 +196,69 @@ function drawTrack(out, track, role, strong, constructionOnly=false) {
       strong ? 2 : 0.7,
       strong ? '22' : '07'
     ));
-    out.push(lineTrace(lane.left_boundary_lcs_m, `${laneId} left`, color, strong ? 1.6 : 0.6));
-    out.push(lineTrace(lane.right_boundary_lcs_m, `${laneId} right`, color, strong ? 1.6 : 0.6));
+    out.push(lineTrace(
+      lane.left_boundary_lcs_m,
+      `${laneId} left`,
+      color,
+      strong ? 1.6 : 0.6
+    ));
+    out.push(lineTrace(
+      lane.right_boundary_lcs_m,
+      `${laneId} right`,
+      color,
+      strong ? 1.6 : 0.6
+    ));
   }
+
   if (strong) drawBridgePieces(out, track, color, true);
-  if (document.getElementById('ids').checked && (track.centerline_lcs_m || []).length) {
-    const q = track.centerline_lcs_m[Math.floor(track.centerline_lcs_m.length / 2)];
-    out.push({x:[q[0]], y:[q[1]], mode:'text', text:[track.track_id], showlegend:false});
+
+  if (
+    document.getElementById('ids').checked &&
+    (track.centerline_lcs_m || []).length
+  ) {
+    const q = track.centerline_lcs_m[
+      Math.floor(track.centerline_lcs_m.length / 2)
+    ];
+    out.push({
+      x: [q[0]],
+      y: [q[1]],
+      mode: 'text',
+      text: [track.track_id],
+      showlegend: false
+    });
   }
 }
 
 function roleMap(frame) {
-  return new Map(((frame.lane_roles || {}).roles || []).map(x => [String(x.track_id), x.role]));
+  return new Map(
+    (((frame.lane_roles || {}).roles) || []).map(
+      x => [String(x.track_id), x.role]
+    )
+  );
+}
+
+function drawInferredEgoRoute(out, frame) {
+  const corridor = frame.inferred_ego_corridor || {};
+  const routeId =
+    corridor.inferred_ego_route && corridor.inferred_ego_route.route_id;
+  if (!routeId) return;
+
+  const route = (D.routes || []).find(x => x.route_id === routeId);
+  if (!route) return;
+
+  for (const piece of route.pieces || []) {
+    if (piece.frame_index > frame.frame_index) continue;
+    if (!(piece.polygon_lcs_m || []).length) continue;
+
+    out.push(polygonTrace(
+      piece.polygon_lcs_m,
+      `ego inferred route ${routeId} @${piece.frame_index}`,
+      colors.ego,
+      1.5,
+      '18',
+      'solid'
+    ));
+  }
 }
 
 function closestPoint(line, origin) {
@@ -234,10 +292,15 @@ function drawLaneOrder(out, frame) {
   for (const side of ['left', 'right']) {
     const candidate = cs[side];
     if (!candidate || !candidate.track_id) continue;
-    const track = D.tracks.find(x => String(x.track_id) === String(candidate.track_id));
+
+    const track = D.tracks.find(
+      x => String(x.track_id) === String(candidate.track_id)
+    );
     if (!track || !(track.centerline_lcs_m || []).length) continue;
+
     const q = closestPoint(track.centerline_lcs_m, cs.point);
     if (!q) continue;
+
     out.push(lineTrace(
       [cs.point, q],
       `${side} immediate neighbor`,
@@ -259,6 +322,7 @@ function play() {
     stop();
     return;
   }
+
   playButton.textContent = '❚❚ Pause';
   timer = setInterval(() => {
     if (+slider.value >= D.frames.length - 1) {
@@ -278,80 +342,102 @@ function draw() {
 
   if (document.getElementById('raw').checked) {
     for (const raw of D.raw) {
-      out.push(lineTrace(raw.pts, `${raw.kind} ${raw.id}`, '#cbd5e1', 0.7));
+      out.push(lineTrace(
+        raw.pts,
+        `${raw.kind} ${raw.id}`,
+        '#cbd5e1',
+        0.7
+      ));
     }
   }
+
   if (document.getElementById('canonical').checked) {
-    for (const track of D.tracks) drawTrack(out, track, 'irrelevant', false, true);
+    for (const track of D.tracks) {
+      drawTrack(out, track, 'irrelevant', false, true);
+    }
   }
+
   if (document.getElementById('bridges').checked) {
-    for (const track of D.tracks) drawBridgePieces(out, track, colors.bridge, false);
+    for (const track of D.tracks) {
+      drawBridgePieces(out, track, colors.bridge, false);
+    }
   }
+
   if (document.getElementById('selected').checked) {
     for (const track of D.tracks) {
       const role = roles.get(String(track.track_id));
-      if (role && role !== 'irrelevant') drawTrack(out, track, role, true, false);
+      if (role && role !== 'irrelevant') {
+        drawTrack(out, track, role, true, false);
+      }
     }
+    drawInferredEgoRoute(out, frame);
   }
 
   drawLaneOrder(out, frame);
 
-  const corridor = frame.inferred_ego_corridor || {};
-  if (document.getElementById('corridor').checked && corridor.valid) {
-    out.push(polygonTrace(corridor.polygon_lcs_m, 'current inferred ego corridor', colors.corridor, 2, '18', 'dash'));
-    out.push(lineTrace(corridor.left_boundary_lcs_m, `left boundary ${corridor.left_boundary_id}`, colors.corridor, 3));
-    out.push(lineTrace(corridor.right_boundary_lcs_m, `right boundary ${corridor.right_boundary_id}`, colors.corridor, 3));
-  }
-
-  if (document.getElementById('route').checked) {
-    const routeId = corridor.inferred_ego_route && corridor.inferred_ego_route.route_id;
-    const route = (D.routes || []).find(x => x.route_id === routeId);
-    if (route) {
-      for (const piece of route.pieces || []) {
-        if (piece.frame_index <= frame.frame_index) {
-          out.push(polygonTrace(piece.polygon_lcs_m, `${routeId} @${piece.frame_index}`, colors.corridor, 0.8, '08', 'dash'));
-        }
-      }
-    }
-  }
-
   if (document.getElementById('traj').checked) {
-    out.push(lineTrace(D.frames.filter(x => x.ego_position).map(x => x.ego_position), 'ego trajectory', '#111827', 1.2));
+    out.push(lineTrace(
+      D.frames.filter(x => x.ego_position).map(x => x.ego_position),
+      'ego trajectory',
+      '#111827',
+      1.2
+    ));
   }
+
   out.push({
-    x: [ego[0]], y: [ego[1]], mode: 'markers+text', text: ['EGO'], textposition: 'top center',
-    marker: {size: 13, color: colors.ego, symbol: 'triangle-up'}, showlegend: false
+    x: [ego[0]],
+    y: [ego[1]],
+    mode: 'markers+text',
+    text: ['EGO'],
+    textposition: 'top center',
+    marker: {size: 13, color: colors.ego, symbol: 'triangle-up'},
+    showlegend: false
   });
 
   const follow = document.getElementById('follow').checked;
   const xSpan = span ? span.x : 110;
   const ySpan = span ? span.y : 110;
-  const xRange = follow ? [ego[0]-xSpan/2, ego[0]+xSpan/2] : (view ? view.x : [ego[0]-55, ego[0]+55]);
-  const yRange = follow ? [ego[1]-ySpan/2, ego[1]+ySpan/2] : (view ? view.y : [ego[1]-55, ego[1]+55]);
+  const xRange = follow
+    ? [ego[0] - xSpan / 2, ego[0] + xSpan / 2]
+    : (view ? view.x : [ego[0] - 55, ego[0] + 55]);
+  const yRange = follow
+    ? [ego[1] - ySpan / 2, ego[1] + ySpan / 2]
+    : (view ? view.y : [ego[1] - 55, ego[1] + 55]);
 
-  Plotly.react(plot, out, {
-    margin: {l:35, r:10, t:10, b:35},
-    xaxis: {scaleanchor:'y', scaleratio:1, range:xRange},
-    yaxis: {range:yRange},
-    uirevision: 'static-lane-order'
-  }, {responsive:true, displaylogo:false}).then(() => {
+  Plotly.react(
+    plot,
+    out,
+    {
+      margin: {l:35, r:10, t:10, b:35},
+      xaxis: {scaleanchor:'y', scaleratio:1, range:xRange},
+      yaxis: {range:yRange},
+      uirevision: 'static-lane-order'
+    },
+    {responsive:true, displaylogo:false}
+  ).then(() => {
     if (!relayoutBound) {
       plot.on('plotly_relayout', event => {
-        const x0=event['xaxis.range[0]'], x1=event['xaxis.range[1]'];
-        const y0=event['yaxis.range[0]'], y1=event['yaxis.range[1]'];
-        if ([x0,x1,y0,y1].every(Number.isFinite)) {
-          view = {x:[x0,x1], y:[y0,y1]};
-          span = {x:Math.abs(x1-x0), y:Math.abs(y1-y0)};
+        const x0 = event['xaxis.range[0]'];
+        const x1 = event['xaxis.range[1]'];
+        const y0 = event['yaxis.range[0]'];
+        const y1 = event['yaxis.range[1]'];
+
+        if ([x0, x1, y0, y1].every(Number.isFinite)) {
+          view = {x:[x0, x1], y:[y0, y1]};
+          span = {x:Math.abs(x1 - x0), y:Math.abs(y1 - y0)};
         }
       });
       relayoutBound = true;
     }
   }).catch(error => {
     console.error('Plotly render failed', error);
-    document.getElementById('panel').textContent = `Plotly render failed: ${error && error.stack ? error.stack : error}`;
+    document.getElementById('panel').textContent =
+      `Plotly render failed: ${error && error.stack ? error.stack : error}`;
   });
 
-  document.getElementById('label').textContent = `frame ${frame.frame_index} · ${Number(frame.time_since_start_s || 0).toFixed(2)}s`;
+  document.getElementById('label').textContent =
+    `frame ${frame.frame_index} · ${Number(frame.time_since_start_s || 0).toFixed(2)}s`;
+
   document.getElementById('panel').textContent = JSON.stringify({
     ego_lane: frame.ego_lane,
     lane_roles: frame.lane_roles,
@@ -365,19 +451,48 @@ function draw() {
   }, null, 2);
 }
 
-for (const id of ['follow','canonical','bridges','selected','order','raw','corridor','route','ids','traj']) {
+for (const id of [
+  'follow',
+  'canonical',
+  'bridges',
+  'selected',
+  'order',
+  'raw',
+  'ids',
+  'traj'
+]) {
   document.getElementById(id).onchange = draw;
 }
-slider.oninput = () => { stop(); draw(); };
-document.getElementById('prev').onclick = () => { stop(); slider.value=Math.max(0,+slider.value-1); draw(); };
-document.getElementById('next').onclick = () => { stop(); slider.value=Math.min(D.frames.length-1,+slider.value+1); draw(); };
-document.getElementById('center').onclick = () => { view=null; span=null; draw(); };
-playButton.onclick = play;
 
+slider.oninput = () => {
+  stop();
+  draw();
+};
+
+document.getElementById('prev').onclick = () => {
+  stop();
+  slider.value = Math.max(0, +slider.value - 1);
+  draw();
+};
+
+document.getElementById('next').onclick = () => {
+  stop();
+  slider.value = Math.min(D.frames.length - 1, +slider.value + 1);
+  draw();
+};
+
+document.getElementById('center').onclick = () => {
+  view = null;
+  span = null;
+  draw();
+};
+
+playButton.onclick = play;
 draw();
 </script>
 </body>
 </html>'''
+
     html = html.replace("__PLOTLY_JS__", plotly_js).replace("__DATA__", data)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")
