@@ -68,6 +68,7 @@ INDEX_ROW_KEYS = (
     "tagScenarios",
     "tagEvents",
     "tagScenarioList",
+    "objectTagList",
     "topClasses",
     "thumbnail",
 )
@@ -2475,6 +2476,13 @@ def index_html(rows: list[dict]) -> str:
         f'<label class="scenarioChoice"><input type="checkbox" value="{html.escape(scenario)}"><span>{html.escape(scenario)}</span></label>'
         for scenario in scenario_options
     )
+    object_options = sorted(
+        {object_tag for row in rows for object_tag in row.get("objectTagList", [])}
+    )
+    object_items = "".join(
+        f'<label class="scenarioChoice"><input type="checkbox" value="{html.escape(object_tag)}"><span>{html.escape(object_tag)}</span></label>'
+        for object_tag in object_options
+    )
     row_json = json.dumps(rows, ensure_ascii=True, separators=(",", ":")).replace(
         "</", "<\\/"
     )
@@ -2498,13 +2506,17 @@ body{{margin:0;font-family:Arial,sans-serif;background:#eef2f6;color:#17202a}}he
     <div class="scenarioHeader"><strong>Scenario tags</strong><span>matches all selected</span></div>
     <div id="scenarioFilter" class="scenarioChoices">{scenario_items}</div>
   </div>
+  <div class="scenarioPanel">
+    <div class="scenarioHeader"><strong>Object Tag</strong><span>matches all selected object classes</span></div>
+    <div id="objectFilter" class="scenarioChoices">{object_items}</div>
+  </div>
 </section>
 <main id="recordingGrid">{cards}</main>
 <script>
 const INDEX_ROWS = {row_json};
 const grid = document.getElementById('recordingGrid');
 const count = document.getElementById('resultCount');
-const controls = ['recordingSearch','scenarioFilter','minObjectsFilter','minTagEventsFilter','sortField','sortDirection'].map(id => document.getElementById(id));
+const controls = ['recordingSearch','scenarioFilter','objectFilter','minObjectsFilter','minTagEventsFilter','sortField','sortDirection'].map(id => document.getElementById(id));
 function escapeHtml(value) {{
   return String(value ?? '').replace(/[&<>"']/g, ch => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[ch]));
 }}
@@ -2525,6 +2537,7 @@ function cardHtml(row) {{
 function applyIndexFilters() {{
   const query = document.getElementById('recordingSearch').value.trim().toLowerCase();
   const selectedScenarios = [...document.querySelectorAll('#scenarioFilter input:checked')].map(input => input.value);
+  const selectedObjects = [...document.querySelectorAll('#objectFilter input:checked')].map(input => input.value);
   const minObjects = numericValue('minObjectsFilter');
   const minTagEvents = numericValue('minTagEventsFilter');
   const sortField = document.getElementById('sortField').value;
@@ -2532,6 +2545,7 @@ function applyIndexFilters() {{
   const filtered = INDEX_ROWS.filter(row => {{
     if (query && !String(row.recording).toLowerCase().includes(query)) return false;
     if (selectedScenarios.length && !selectedScenarios.every(scenario => (row.tagScenarioList || []).includes(scenario))) return false;
+    if (selectedObjects.length && !selectedObjects.every(objectTag => (row.objectTagList || []).includes(objectTag))) return false;
     if (Number(row.objects) < minObjects) return false;
     if (Number(row.tagEvents) < minTagEvents) return false;
     return true;
@@ -2553,6 +2567,7 @@ document.getElementById('clearFilters').addEventListener('click', () => {{
   document.getElementById('sortField').value = 'recording';
   document.getElementById('sortDirection').value = 'asc';
   for (const input of document.querySelectorAll('#scenarioFilter input')) input.checked = false;
+  for (const input of document.querySelectorAll('#objectFilter input')) input.checked = false;
   applyIndexFilters();
 }});
 applyIndexFilters();
@@ -2592,6 +2607,7 @@ def row_from_explorer(output_path: Path) -> dict:
             "tagScenarios": len(data["tags"]["scenarios"]),
             "tagEvents": len(data["tags"]["events"]),
             "tagScenarioList": data["tags"]["scenarios"],
+            "objectTagList": sorted(data["summary"]["classCounts"]),
             "topClasses": ", ".join(
                 f"{key}:{value}"
                 for key, value in list(data["summary"]["classCounts"].items())[:6]
@@ -2713,6 +2729,7 @@ def row_from_generated_data(recording: str, output_name: str, data: dict) -> dic
         "tagScenarios": len(data["tags"]["scenarios"]),
         "tagEvents": len(data["tags"]["events"]),
         "tagScenarioList": data["tags"]["scenarios"],
+        "objectTagList": sorted(data["summary"]["classCounts"]),
         "topClasses": ", ".join(
             f"{key}:{value}"
             for key, value in list(data["summary"]["classCounts"].items())[:6]
