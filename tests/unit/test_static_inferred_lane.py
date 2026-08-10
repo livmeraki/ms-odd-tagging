@@ -47,7 +47,9 @@ def test_overlapping_box_chain_becomes_one_static_corridor():
     lane = lanes[0]
     assert lane["evidence_box_count"] == 4
     assert lane["bridge_complete"] is True
-    assert len(lane["centerline_lcs_m"]) == 4
+    assert len(lane["centerline_lcs_m"]) == 6
+    assert lane["centerline_lcs_m"][0][0] == 8.0
+    assert lane["centerline_lcs_m"][-1][0] == 18.0
     assert len(lane["polygon_lcs_m"]) >= 4
 
 
