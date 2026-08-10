@@ -1,16 +1,18 @@
-"""Orientation-aware stitching for fragmented canonical lane tracks.
+"""Orientation-aware, curvature-aware stitching for fragmented canonical tracks.
 
-Canonical LD fragments are not guaranteed to use a consistent point order.  This
-module therefore treats each preliminary track as an undirected physical corridor
-while deciding continuity.  Every start/end endpoint combination is evaluated;
-accepted endpoint links are then traversed to produce consistently oriented final
-tracks.  Raw LD is not used here and no standalone lane is invented.
+Every physical endpoint combination is considered.  A continuation is evaluated
+by constructing a smooth quintic Hermite lane completion using endpoint position,
+tangent and curvature.  The straight chord across a gap is diagnostic only; it is
+not treated as the road shape.  Accepted fills remain local pieces of an existing
+canonical track and never create standalone lanes.
 """
 from __future__ import annotations
 
 import math
 from collections import defaultdict
 from typing import Any
+
+from .curvature_gap_fill import build_curvature_gap, endpoint_state
 
 
 def _dist(a, b) -> float:
@@ -33,42 +35,9 @@ def _endpoint_point(line: list[list[float]], side: str) -> list[float]:
     return line[0] if side == "start" else line[-1]
 
 
-def _outward_heading(line: list[list[float]], side: str) -> float | None:
-    """Heading pointing out of the track through the selected endpoint."""
-    if len(line) < 2:
-        return None
-    if side == "end":
-        for i in range(len(line) - 1, 0, -1):
-            if _dist(line[i - 1], line[i]) > 1e-4:
-                return _heading(line[i - 1], line[i])
-    else:
-        for i in range(1, len(line)):
-            if _dist(line[i - 1], line[i]) > 1e-4:
-                return _heading(line[i], line[i - 1])
-    return None
-
-
 def _oriented_line(line: list[list[float]], entry_side: str) -> list[list[float]]:
-    """Orient a track so entry_side becomes the first endpoint."""
     pts = [[float(p[0]), float(p[1])] for p in line if len(p) >= 2]
     return pts if entry_side == "start" else list(reversed(pts))
-
-
-def _curvature_proxy_oriented(line: list[list[float]], entry_side: str, at_exit: bool) -> float:
-    pts = _oriented_line(line, entry_side)
-    if len(pts) < 3:
-        return 0.0
-    sample = pts[-4:] if at_exit else pts[:4]
-    headings, lengths = [], []
-    for a, b in zip(sample, sample[1:]):
-        d = _dist(a, b)
-        if d <= 1e-4:
-            continue
-        headings.append(_heading(a, b))
-        lengths.append(d)
-    if len(headings) < 2 or not lengths:
-        return 0.0
-    return sum(_wrap(b - a) for a, b in zip(headings, headings[1:])) / max(sum(lengths), 1e-6)
 
 
 def _terminal_lane(track: dict[str, Any], lane_by_id: dict[str, dict[str, Any]], endpoint: list[float]):
@@ -94,31 +63,36 @@ def _boundary_endpoint(boundary: list[list[float]], endpoint: list[float]):
     return min((boundary[0], boundary[-1]), key=lambda p: _dist(p, endpoint))
 
 
-def _boundary_pair(
-    track_a: dict[str, Any],
-    side_a: str,
-    track_b: dict[str, Any],
-    side_b: str,
+def _endpoint_width(track: dict[str, Any], lane_by_id: dict[str, dict[str, Any]], endpoint: list[float]) -> float:
+    lane = _terminal_lane(track, lane_by_id, endpoint)
+    if lane:
+        left = _boundary_endpoint(lane.get("left_boundary_lcs_m") or [], endpoint)
+        right = _boundary_endpoint(lane.get("right_boundary_lcs_m") or [], endpoint)
+        if left is not None and right is not None:
+            return _dist(left, right)
+    return float(track.get("median_width_m", 3.5))
+
+
+def _boundary_pair_debug(
+    track_a: dict[str, Any], side_a: str,
+    track_b: dict[str, Any], side_b: str,
     lane_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     line_a = track_a.get("centerline_lcs_m") or []
     line_b = track_b.get("centerline_lcs_m") or []
     if not line_a or not line_b:
         return {}
-    pa = _endpoint_point(line_a, side_a)
-    pb = _endpoint_point(line_b, side_b)
+    pa, pb = _endpoint_point(line_a, side_a), _endpoint_point(line_b, side_b)
     lane_a = _terminal_lane(track_a, lane_by_id, pa)
     lane_b = _terminal_lane(track_b, lane_by_id, pb)
     if not lane_a or not lane_b:
         return {}
-
     a_left = _boundary_endpoint(lane_a.get("left_boundary_lcs_m") or [], pa)
     a_right = _boundary_endpoint(lane_a.get("right_boundary_lcs_m") or [], pa)
     b_left = _boundary_endpoint(lane_b.get("left_boundary_lcs_m") or [], pb)
     b_right = _boundary_endpoint(lane_b.get("right_boundary_lcs_m") or [], pb)
     if any(x is None for x in (a_left, a_right, b_left, b_right)):
         return {}
-
     same = _dist(a_left, b_left) + _dist(a_right, b_right)
     swapped = _dist(a_left, b_right) + _dist(a_right, b_left)
     if swapped < same:
@@ -144,10 +118,8 @@ def _append_points(target: list[list[float]], points: list[list[float]]) -> None
 
 
 def _evaluate_endpoint_pair(
-    a: dict[str, Any],
-    side_a: str,
-    b: dict[str, Any],
-    side_b: str,
+    a: dict[str, Any], side_a: str,
+    b: dict[str, Any], side_b: str,
     lane_by_id: dict[str, dict[str, Any]],
     *,
     maximum_endpoint_gap_m: float,
@@ -161,92 +133,73 @@ def _evaluate_endpoint_pair(
     line_b = b.get("centerline_lcs_m") or []
     if len(line_a) < 2 or len(line_b) < 2:
         return None
-    pa = _endpoint_point(line_a, side_a)
-    pb = _endpoint_point(line_b, side_b)
+    pa, pb = _endpoint_point(line_a, side_a), _endpoint_point(line_b, side_b)
     gap = _dist(pa, pb)
     if gap <= 1e-4 or gap > maximum_endpoint_gap_m:
         return None
 
-    out_a = _outward_heading(line_a, side_a)
-    out_b = _outward_heading(line_b, side_b)
-    if out_a is None or out_b is None:
+    sa = endpoint_state(line_a, side_a)
+    sb = endpoint_state(line_b, side_b)
+    if sa is None or sb is None:
         return None
     gap_heading = _heading(pa, pb)
-    a_to_gap = _angle_diff_deg(out_a, gap_heading)
-    b_to_gap = _angle_diff_deg(out_b, _wrap(gap_heading + math.pi))
-    tangent_opposition = abs(180.0 - _angle_diff_deg(out_a, out_b))
+    source_to_chord = _angle_diff_deg(sa["heading"], gap_heading)
+    destination_to_chord = _angle_diff_deg(sb["heading"], _wrap(gap_heading + math.pi))
+    tangent_opposition = abs(180.0 - _angle_diff_deg(sa["heading"], sb["heading"]))
 
-    dx, dy = float(pb[0]) - float(pa[0]), float(pb[1]) - float(pa[1])
-    forward = math.cos(out_a) * dx + math.sin(out_a) * dy
-    lateral = abs(-math.sin(out_a) * dx + math.cos(out_a) * dy)
-    width_diff = abs(float(a.get("median_width_m", 3.5)) - float(b.get("median_width_m", 3.5)))
+    width_a = _endpoint_width(a, lane_by_id, pa)
+    width_b = _endpoint_width(b, lane_by_id, pb)
+    width_diff = abs(width_a - width_b)
+    endpoint_curvature_diff = abs(abs(sa["curvature"]) - abs(sb["curvature"]))
 
-    # Orient A so side_a is its exit, B so side_b is its entry.
-    entry_a = "start" if side_a == "end" else "end"
-    entry_b = side_b
-    curvature_diff = abs(
-        _curvature_proxy_oriented(line_a, entry_a, True)
-        - _curvature_proxy_oriented(line_b, entry_b, False)
+    fill = build_curvature_gap(
+        line_a, side_a, line_b, side_b,
+        width_a_m=width_a,
+        width_b_m=width_b,
     )
+    if fill is None:
+        return None
 
-    boundary = _boundary_pair(a, side_a, b, side_b, lane_by_id)
-    boundary_lateral_limit = min(float(maximum_lateral_error_m), float(maximum_boundary_endpoint_gap_m))
-    boundary_forward_diff_limit = max(2.0, float(maximum_boundary_endpoint_gap_m))
-    boundary_records = []
-    if boundary:
-        for p, q in ((boundary["a1"], boundary["b1"]), (boundary["a2"], boundary["b2"])):
-            bdx, bdy = q[0] - p[0], q[1] - p[1]
-            bf = math.cos(out_a) * bdx + math.sin(out_a) * bdy
-            bl = abs(-math.sin(out_a) * bdx + math.cos(out_a) * bdy)
-            boundary_records.append({
-                "endpoint_gap_m": _dist(p, q),
-                "forward_m": bf,
-                "lateral_error_m": bl,
-                "forward_gap_difference_m": abs(bf - forward),
-            })
+    # Curved roads need not point at the straight chord.  These wider gates only
+    # reject geometrically implausible back-facing/cross-road endpoint matches.
+    chord_heading_limit = max(45.0, maximum_heading_difference_deg * 3.0)
+    tangent_turn_limit = max(55.0, maximum_heading_difference_deg * 4.0)
+    endpoint_k = max(abs(float(sa["curvature"])), abs(float(sb["curvature"])))
+    max_bridge_curvature = float(fill["maximum_abs_bridge_curvature_per_m"])
+    curvature_limit = max(0.16, endpoint_k + max(0.08, maximum_curvature_difference_per_m))
+    arc_ratio = float(fill["arc_to_chord_ratio"])
 
-    reasons = []
-    if forward <= 0.0:
-        reasons.append("destination_not_forward_from_endpoint")
-    if a_to_gap > maximum_heading_difference_deg:
-        reasons.append("source_endpoint_heading_difference")
-    if b_to_gap > maximum_heading_difference_deg:
-        reasons.append("destination_endpoint_heading_difference")
-    if tangent_opposition > maximum_heading_difference_deg:
-        reasons.append("endpoint_tangents_not_opposed")
-    if lateral > maximum_lateral_error_m:
-        reasons.append("centerline_lateral_error")
+    boundary = _boundary_pair_debug(a, side_a, b, side_b, lane_by_id)
+    reasons: list[str] = []
+    if source_to_chord > chord_heading_limit:
+        reasons.append("source_endpoint_faces_away_from_gap")
+    if destination_to_chord > chord_heading_limit:
+        reasons.append("destination_endpoint_faces_away_from_gap")
+    if tangent_opposition > tangent_turn_limit:
+        reasons.append("endpoint_tangent_turn_too_large")
     if width_diff > maximum_width_difference_m:
         reasons.append("width_difference")
-    if curvature_diff > maximum_curvature_difference_per_m:
-        reasons.append("curvature_difference")
-    if len(boundary_records) != 2:
+    if endpoint_curvature_diff > max(0.12, maximum_curvature_difference_per_m * 2.0):
+        reasons.append("endpoint_curvature_mismatch")
+    if arc_ratio > 1.40:
+        reasons.append("bridge_arc_excessive_for_gap")
+    if max_bridge_curvature > curvature_limit:
+        reasons.append("bridge_curvature_excessive")
+    if not boundary:
         reasons.append("missing_boundary_endpoint_evidence")
-    else:
-        if any(x["forward_m"] <= 0.0 for x in boundary_records):
-            reasons.append("boundary_not_forward")
-        if any(x["lateral_error_m"] > boundary_lateral_limit for x in boundary_records):
-            reasons.append("boundary_lateral_error")
-        if any(x["forward_gap_difference_m"] > boundary_forward_diff_limit for x in boundary_records):
-            reasons.append("boundary_forward_gap_inconsistent")
 
-    boundary_lateral_mean = (
-        sum(x["lateral_error_m"] for x in boundary_records) / len(boundary_records)
-        if boundary_records else boundary_lateral_limit
-    )
-    boundary_forward_mean = (
-        sum(x["forward_gap_difference_m"] for x in boundary_records) / len(boundary_records)
-        if boundary_records else boundary_forward_diff_limit
-    )
+    # Lower score is better.  Chord/tangent differences influence selection but
+    # do not force a straight bridge.
     score = (
-        gap + lateral * 4.0 + (a_to_gap + b_to_gap + tangent_opposition) * 0.05
-        + width_diff + curvature_diff * 15.0
-        + boundary_lateral_mean * 3.0 + boundary_forward_mean * 0.5
+        gap
+        + width_diff * 2.0
+        + source_to_chord * 0.025
+        + destination_to_chord * 0.025
+        + tangent_opposition * 0.03
+        + endpoint_curvature_diff * 12.0
+        + max(0.0, arc_ratio - 1.0) * 12.0
+        + max_bridge_curvature * 8.0
     )
-
-    polygon = []
-    if boundary:
-        polygon = [boundary["a1"], boundary["b1"], boundary["b2"], boundary["a2"]]
 
     return {
         "track_a_id": str(a.get("track_id")),
@@ -254,18 +207,26 @@ def _evaluate_endpoint_pair(
         "endpoint_a": side_a,
         "endpoint_b": side_b,
         "endpoint_gap_m": round(gap, 3),
-        "forward_projection_m": round(forward, 3),
-        "centerline_lateral_error_m": round(lateral, 3),
-        "source_to_gap_heading_difference_deg": round(a_to_gap, 3),
-        "destination_to_gap_heading_difference_deg": round(b_to_gap, 3),
+        "source_to_chord_heading_difference_deg": round(source_to_chord, 3),
+        "destination_to_chord_heading_difference_deg": round(destination_to_chord, 3),
         "endpoint_tangent_opposition_error_deg": round(tangent_opposition, 3),
+        "endpoint_a_curvature_per_m": round(float(sa["curvature"]), 5),
+        "endpoint_b_curvature_per_m": round(float(sb["curvature"]), 5),
+        "endpoint_curvature_difference_per_m": round(endpoint_curvature_diff, 5),
+        "width_a_m": round(width_a, 3),
+        "width_b_m": round(width_b, 3),
         "width_difference_m": round(width_diff, 3),
-        "curvature_difference_per_m": round(curvature_diff, 5),
+        "bridge_method": fill["method"],
+        "bridge_arc_length_m": round(float(fill["arc_length_m"]), 3),
+        "bridge_chord_length_m": round(float(fill["chord_length_m"]), 3),
+        "bridge_arc_to_chord_ratio": round(arc_ratio, 4),
+        "bridge_max_abs_curvature_per_m": round(max_bridge_curvature, 5),
+        "bridge_curvature_limit_per_m": round(curvature_limit, 5),
         "boundary_side_mapping_swapped": None if not boundary else boundary["side_mapping_swapped"],
-        "boundary_1": None if len(boundary_records) < 1 else {k: round(v, 3) for k, v in boundary_records[0].items()},
-        "boundary_2": None if len(boundary_records) < 2 else {k: round(v, 3) for k, v in boundary_records[1].items()},
-        "stitch_centerline_lcs_m": [[float(pa[0]), float(pa[1])], [float(pb[0]), float(pb[1])]],
-        "stitch_polygon_lcs_m": polygon,
+        "stitch_centerline_lcs_m": fill["centerline_lcs_m"],
+        "stitch_left_boundary_lcs_m": fill["left_boundary_lcs_m"],
+        "stitch_right_boundary_lcs_m": fill["right_boundary_lcs_m"],
+        "stitch_polygon_lcs_m": fill["polygon_lcs_m"],
         "score": round(score, 4),
         "rejection_reasons": reasons,
     }
@@ -289,7 +250,6 @@ def stitch_canonical_tracks(
     lane_by_id = {str(l.get("lane_id")): l for l in lane_geometry}
     by_id = {str(t.get("track_id")): t for t in tracks}
 
-    # Evaluate every physical endpoint combination once per unordered track pair.
     candidates: list[dict[str, Any]] = []
     for i, a in enumerate(tracks):
         for b in tracks[i + 1:]:
@@ -312,16 +272,12 @@ def stitch_canonical_tracks(
         key=lambda c: (c["score"], c["track_a_id"], c["track_b_id"], c["endpoint_a"], c["endpoint_b"]),
     )
 
-    # Greedy endpoint matching: each physical endpoint can participate in at most
-    # one stitch.  Union-find prevents accidental closed loops.
     parent = {tid: tid for tid in by_id}
-
     def find(x):
         while parent[x] != x:
             parent[x] = parent[parent[x]]
             x = parent[x]
         return x
-
     def union(a, b):
         ra, rb = find(a), find(b)
         if ra != rb:
@@ -349,38 +305,27 @@ def stitch_canonical_tracks(
     visited: set[str] = set()
     merged: list[dict[str, Any]] = []
     old_to_new: dict[str, str] = {}
-
-    # Path components first, then isolated tracks.
     starts = [tid for tid in by_id if len(links.get(tid, [])) <= 1]
     starts += [tid for tid in by_id if tid not in starts]
 
     for start in starts:
         if start in visited:
             continue
-
         component_ids: list[str] = []
         member_ids: list[str] = []
         pieces: list[dict[str, Any]] = []
         centerline: list[list[float]] = []
         widths: list[float] = []
         stitch_records: list[dict[str, Any]] = []
-
-        current = start
-        previous = None
-        entry_side = None
+        current, previous, entry_side = start, None, None
 
         while current in by_id and current not in visited:
             visited.add(current)
             track = by_id[current]
             component_ids.extend(str(x) for x in (track.get("merged_from_track_ids") or [current]))
-
             current_links = links.get(current, [])
             if entry_side is None:
-                if current_links:
-                    exit_side = current_links[0][0]
-                    entry_side = _other_side(exit_side)
-                else:
-                    entry_side = "start"
+                entry_side = _other_side(current_links[0][0]) if current_links else "start"
 
             oriented_center = _oriented_line(track.get("centerline_lcs_m") or [], entry_side)
             oriented_members = list(track.get("member_lane_ids", []) or [])
@@ -388,7 +333,6 @@ def stitch_canonical_tracks(
             if entry_side == "end":
                 oriented_members.reverse()
                 oriented_pieces.reverse()
-
             member_ids.extend(str(x) for x in oriented_members)
             pieces.extend(oriented_pieces)
             _append_points(centerline, oriented_center)
@@ -397,38 +341,40 @@ def stitch_canonical_tracks(
 
             next_link = None
             for local_side, other_id, other_side, edge in current_links:
-                if other_id == previous:
+                if other_id == previous or local_side != _other_side(entry_side):
                     continue
-                if local_side != _other_side(entry_side):
-                    continue
-                next_link = (local_side, other_id, other_side, edge)
+                next_link = (other_id, other_side, edge)
                 break
             if next_link is None:
                 break
 
-            _, other_id, other_side, edge = next_link
+            other_id, other_side, edge = next_link
             stitch_records.append(edge)
-            # Ensure stitch geometry follows current -> other traversal direction.
             if edge["track_a_id"] == current:
                 stitch_center = edge.get("stitch_centerline_lcs_m") or []
+                stitch_left = edge.get("stitch_left_boundary_lcs_m") or []
+                stitch_right = edge.get("stitch_right_boundary_lcs_m") or []
                 stitch_poly = edge.get("stitch_polygon_lcs_m") or []
             else:
                 stitch_center = list(reversed(edge.get("stitch_centerline_lcs_m") or []))
-                stitch_poly = list(reversed(edge.get("stitch_polygon_lcs_m") or []))
+                # Traversal reversal swaps semantic left/right.
+                stitch_left = list(reversed(edge.get("stitch_right_boundary_lcs_m") or []))
+                stitch_right = list(reversed(edge.get("stitch_left_boundary_lcs_m") or []))
+                stitch_poly = stitch_left + list(reversed(stitch_right))
             stitch_piece = {
                 "kind": "canonical_track_stitch",
                 "source_track_id": current,
                 "destination_track_id": other_id,
                 "centerline_lcs_m": stitch_center,
+                "left_boundary_lcs_m": stitch_left,
+                "right_boundary_lcs_m": stitch_right,
                 "polygon_lcs_m": stitch_poly,
+                "geometry_method": "curvature_aware_quintic_hermite",
                 "connection_evidence": edge,
             }
             pieces.append(stitch_piece)
             _append_points(centerline, stitch_center)
-
-            previous = current
-            current = other_id
-            entry_side = other_side
+            previous, current, entry_side = current, other_id, other_side
 
         new_id = component_ids[0]
         width = sorted(widths)[len(widths) // 2] if widths else 3.5
@@ -451,21 +397,13 @@ def stitch_canonical_tracks(
         for old in component_ids:
             old_to_new[old] = new_id
 
-    accepted_keys = {
-        (c["track_a_id"], c["endpoint_a"], c["track_b_id"], c["endpoint_b"])
-        for c in accepted
-    }
+    accepted_keys = {(c["track_a_id"], c["endpoint_a"], c["track_b_id"], c["endpoint_b"]) for c in accepted}
     debug = []
     for c in candidates:
         key = (c["track_a_id"], c["endpoint_a"], c["track_b_id"], c["endpoint_b"])
         record = {**c, "accepted": key in accepted_keys}
         if not record["accepted"] and not record["rejection_reasons"]:
-            ea = (c["track_a_id"], c["endpoint_a"])
-            eb = (c["track_b_id"], c["endpoint_b"])
-            record["rejection_reasons"] = [
-                "endpoint_already_matched" if ea in used_endpoints or eb in used_endpoints
-                else "would_create_stitch_cycle"
-            ]
+            ea, eb = (c["track_a_id"], c["endpoint_a"]), (c["track_b_id"], c["endpoint_b"])
+            record["rejection_reasons"] = ["endpoint_already_matched" if ea in used_endpoints or eb in used_endpoints else "would_create_stitch_cycle"]
         debug.append(record)
-
     return merged, old_to_new, debug
