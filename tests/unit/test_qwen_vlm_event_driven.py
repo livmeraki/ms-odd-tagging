@@ -4,6 +4,7 @@ from ms_odd_tagging.qwen_vlm_poc.config import load_config
 from ms_odd_tagging.qwen_vlm_poc.evidence import _keep_event_driven_waiting_bev
 from ms_odd_tagging.qwen_vlm_poc.event_driven import generate_event_driven_candidates
 from ms_odd_tagging.qwen_vlm_poc.models import CandidateWindow
+from ms_odd_tagging.qwen_vlm_poc.scene_merge import merge_waiting_scene_candidates
 
 
 def _frame(index: int, *, speed: float = 8.0, accel: float = 0.0, pedestrian: dict | None = None):
@@ -132,11 +133,11 @@ def test_waiting_event_candidate_bridges_short_conflict_dropout():
     assert candidates[0].metadata["raw_trigger_end_frame"] == 32
 
 
-def test_event_driven_waiting_bev_excludes_ordinary_medium_speed_but_keeps_braking_medium():
+def test_event_driven_waiting_bev_keeps_neutral_selected_frames():
     config = load_config()
     candidate = _event_candidate()
 
-    assert not _keep_event_driven_waiting_bev(
+    assert _keep_event_driven_waiting_bev(
         _frame(20, speed=8.0, accel=0.0), candidate, config
     )
     assert _keep_event_driven_waiting_bev(
@@ -145,6 +146,60 @@ def test_event_driven_waiting_bev_excludes_ordinary_medium_speed_but_keeps_braki
     assert _keep_event_driven_waiting_bev(
         _frame(22, speed=4.0, accel=0.0), candidate, config
     )
+
+
+def test_scene_merge_combines_overlapping_pedestrian_candidates_and_drops_heuristics():
+    frames = [_frame(index) for index in range(100)]
+    recording = _recording(frames)
+    config = load_config(overrides={"event_scene_merge_gap_s": 0.5, "max_bev_images": 6})
+
+    first = CandidateWindow(
+        candidate_id="first",
+        recording_id="rec-event",
+        scenario="waiting_for_pedestrian_to_cross",
+        start_frame=10,
+        end_frame=40,
+        start_timestamp_s=1.0,
+        end_timestamp_s=4.0,
+        evidence=[],
+        selected_frame_indices=[10, 20, 30, 40],
+        primary_object_ids=["ped-1"],
+        metadata={
+            "candidate_strategy": "event-driven",
+            "raw_trigger_start_frame": 20,
+            "raw_trigger_end_frame": 30,
+            "landmark_roles": {"strongest_conflict": 25},
+        },
+    )
+    second = CandidateWindow(
+        candidate_id="second",
+        recording_id="rec-event",
+        scenario="waiting_for_pedestrian_to_cross",
+        start_frame=18,
+        end_frame=48,
+        start_timestamp_s=1.8,
+        end_timestamp_s=4.8,
+        evidence=[],
+        selected_frame_indices=[18, 28, 38, 48],
+        primary_object_ids=["ped-2"],
+        metadata={
+            "candidate_strategy": "event-driven",
+            "raw_trigger_start_frame": 28,
+            "raw_trigger_end_frame": 36,
+            "ego_response_frames": [29, 30],
+        },
+    )
+
+    merged = merge_waiting_scene_candidates(recording, [first, second], config)
+    assert len(merged) == 1
+    scene = merged[0]
+    assert scene.primary_object_ids == ["ped-1", "ped-2"]
+    assert scene.metadata["source_candidate_count"] == 2
+    assert scene.metadata["vlm_input_mode"] == "bev_only"
+    assert "landmark_roles" not in scene.metadata
+    assert len(scene.evidence) == 1
+    assert scene.evidence[0].kind == "bev_sequence"
+    assert len(scene.selected_frame_indices) <= 6
 
 
 def test_event_driven_strategy_falls_back_for_other_scenarios():
