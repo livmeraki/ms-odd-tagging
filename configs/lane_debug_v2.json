@@ -59,6 +59,8 @@
   "boundary_ego_corridor_half_length_m": 15.0,
   "inferred_ego_route_maximum_endpoint_gap_m": 5.0,
   "inferred_ego_route_maximum_heading_difference_deg": 25.0,
+  "static_inferred_lane_maximum_endpoint_distance_m": 20.0,
+  "static_inferred_lane_maximum_heading_difference_deg": 40.0,
   "object_motion_history_frames": 3,
   "object_motion_minimum_displacement_m": 0.5,
   "lead_direction_filter_mode": "diagnostic",
