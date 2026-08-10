@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from . import DEBUG_IMPLEMENTATION_VERSION
-from .detector import run_lane_debug_v2
+from .detector_static_order import run_lane_debug_v2
 from .lane_changes import run_lane_change_debug
 from .explorer_visualization import render_plotly_explorer
 
@@ -31,11 +31,7 @@ def _add_center_ego_control(path: Path) -> None:
     html = path.read_text(encoding="utf-8")
     button_anchor = '<button id="next">▶</button>'
     if 'id="centerEgo"' not in html:
-        html = html.replace(
-            button_anchor,
-            button_anchor + '<button id="centerEgo" type="button">Center ego</button>',
-            1,
-        )
+        html = html.replace(button_anchor, button_anchor + '<button id="centerEgo" type="button">Center ego</button>', 1)
     script = r'''<script>
 (function(){
   const button=document.getElementById('centerEgo');
@@ -47,10 +43,7 @@ def _add_center_ego_control(path: Path) -> None:
     const defaultSpan=110;
     const xSpan=viewState ? Math.abs(viewState.x[1]-viewState.x[0]) : defaultSpan;
     const ySpan=viewState ? Math.abs(viewState.y[1]-viewState.y[0]) : defaultSpan;
-    viewState={
-      x:[ep[0]-xSpan/2,ep[0]+xSpan/2],
-      y:[ep[1]-ySpan/2,ep[1]+ySpan/2]
-    };
+    viewState={x:[ep[0]-xSpan/2,ep[0]+xSpan/2],y:[ep[1]-ySpan/2,ep[1]+ySpan/2]};
     draw();
   });
 })();
@@ -60,13 +53,7 @@ def _add_center_ego_control(path: Path) -> None:
     path.write_text(html, encoding="utf-8")
 
 
-def run_one(
-    canonical_path: Path,
-    output_root: Path,
-    config: dict[str, Any],
-    lane_change_config: dict[str, Any],
-    run_id: str | None = None,
-) -> list[Path]:
+def run_one(canonical_path: Path, output_root: Path, config: dict[str, Any], lane_change_config: dict[str, Any], run_id: str | None = None) -> list[Path]:
     recording = _load(canonical_path)
     rid = recording.get("recording_id") or canonical_path.stem.replace("_canonical_odld_frames", "")
     run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -111,13 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     canonical = a.canonical_dir / f"{a.recording}_canonical_odld_frames.json"
     if not canonical.is_file():
         p.error(f"missing canonical recording: {canonical}")
-    for output in run_one(
-        canonical,
-        a.output_root,
-        _load(a.config),
-        _load(a.lane_change_config),
-        a.run_id,
-    ):
+    for output in run_one(canonical, a.output_root, _load(a.config), _load(a.lane_change_config), a.run_id):
         print(f"Wrote {output}")
     return 0
 
