@@ -86,13 +86,21 @@ def render_plotly_explorer(
             "lane_roles": frame.get("lane_roles"),
         })
 
+    # The final union polygon is the explorer geometry. Individual evidence
+    # boxes are intentionally omitted from the HTML payload so the inferred
+    # lane is rendered as one static area only.
+    static_inferred = [
+        {key: value for key, value in lane.items() if key != "evidence_boxes"}
+        for lane in following.get("static_inferred_lanes", [])
+    ]
+
     payload = {
         "run_id": run_id,
         "recording_id": following.get("recording_id"),
         "lanes": following.get("lane_geometry", []),
         "lane_boundary_ranges": _boundary_range_debug(store),
         "tracks": following.get("continuous_lane_tracks", []),
-        "static_inferred": following.get("static_inferred_lanes", []),
+        "static_inferred": static_inferred,
         "raw": raw,
         "trajectory": trajectory,
         "frames": frames,
@@ -115,7 +123,7 @@ input[type=range]{width:300px}
 <label><input id="canonical" type="checkbox" checked>constructed lanes + fills</label>
 <label><input id="bridges" type="checkbox" checked>anchored LD bridges</label>
 <label><input id="selected" type="checkbox" checked>ego/adjacent</label>
-<label><input id="inferred" type="checkbox" checked>static inferred lane + boxes</label>
+<label><input id="inferred" type="checkbox" checked>static inferred lane</label>
 <label><input id="order" type="checkbox" checked>lane-order neighbors</label>
 <label><input id="raw" type="checkbox">raw LD lines</label>
 <label><input id="ids" type="checkbox">track IDs + LD indices</label>
@@ -127,6 +135,14 @@ const slider=document.getElementById('frame'),plot=document.getElementById('plot
 const laneMap=new Map(D.lanes.map(x=>[String(x.lane_id),x]));
 const rangeMap=new Map(Object.entries(D.lane_boundary_ranges||{}));
 const trackMap=new Map(D.tracks.map(x=>[String(x.track_id),x]));
+const inferredTrackMap=new Map();
+for(const t of D.tracks||[]){
+  for(const p of t.pieces||[]){
+    if(p.kind!=='static_inferred_corridor')continue;
+    if(p.static_inferred_lane_id)inferredTrackMap.set(String(p.static_inferred_lane_id),String(t.track_id));
+    if(p.route_id)inferredTrackMap.set(String(p.route_id),String(t.track_id));
+  }
+}
 const colors={ego:'#22c55e',left_adjacent:'#06b6d4',right_adjacent:'#f59e0b',irrelevant:'#94a3b8',bridge:'#7c3aed'};
 let timer=null,view=null,span=null,relayoutBound=false;
 slider.max=Math.max(0,D.frames.length-1);
@@ -142,18 +158,40 @@ function laneRangeHover(id){const r=laneRange(id),f=(n,v)=>v?`${n}: edge=${v.edg
 function anchoredPieces(t){return(t.pieces||[]).filter(p=>p.kind==='anchored_ld_bridge');}
 function smoothFillPieces(t){return(t.pieces||[]).filter(p=>p.kind==='canonical_track_stitch'||p.kind==='topology_supported_curvature_stitch');}
 function staticConnectorPieces(t){return(t.pieces||[]).filter(p=>p.kind==='static_inferred_connector');}
+function roleMap(f){return new Map(((((f.lane_roles||{}).roles)||[])).map(x=>[String(x.track_id),x.role]));}
+function roleColor(role){return colors[role]||colors.irrelevant;}
 
 function drawAnchored(out,t,color,strong=false){for(const p of anchoredPieces(t)){if((p.polygon_lcs_m||[]).length)out.push(polygonTrace(p.polygon_lcs_m,`anchored bridge · ${t.track_id}`,color,strong?2:1,strong?'20':'0c','dash'));}}
 function drawFillPieces(out,t,color,strong){for(const p of smoothFillPieces(t)){const e=p.connection_evidence||{};const name=`smooth lane completion · ${t.track_id} · gap=${Number(e.endpoint_gap_m||0).toFixed(2)}m`;if((p.polygon_lcs_m||[]).length)out.push(polygonTrace(p.polygon_lcs_m,name,color,strong?2:1,strong?'20':'0b','dot'));}}
-function drawTrack(out,t,role,strong,constructionOnly=false){const color=constructionOnly?colors.irrelevant:(colors[role]||colors.irrelevant);for(const id of t.member_lane_ids||[]){const lane=laneMap.get(String(id));if(!lane)continue;const rt=laneRangeText(id),hover=`${constructionOnly?'constructed':role} ${t.track_id} lane ${id} · ${laneRangeHover(id)}`;out.push(polygonTrace(lane.polygon_lcs_m,hover,color,strong?2:0.7,strong?'22':'07'));if(document.getElementById('ids').checked&&(lane.centerline_lcs_m||[]).length){const q=lane.centerline_lcs_m[Math.floor(lane.centerline_lcs_m.length/2)];out.push({x:[q[0]],y:[q[1]],mode:'text',text:[`${id} · ${rt}`],showlegend:false,hovertext:[hover],hoverinfo:'text',textfont:{size:10}});}}drawFillPieces(out,t,color,strong);if(strong)drawAnchored(out,t,color,true);if(document.getElementById('ids').checked&&(t.centerline_lcs_m||[]).length){const q=t.centerline_lcs_m[Math.floor(t.centerline_lcs_m.length/2)];out.push({x:[q[0]],y:[q[1]],mode:'text',text:[t.track_id],textposition:'top center',showlegend:false,textfont:{size:11}});}}
-function drawStaticInferred(out){if(!document.getElementById('inferred').checked)return;for(const s of D.static_inferred||[]){const id=s.static_inferred_lane_id||s.route_id;if((s.polygon_lcs_m||[]).length)out.push(polygonTrace(s.polygon_lcs_m,`static inferred lane · ${id} · ${s.start_observed_track_id} → ${s.end_observed_track_id}`,colors.ego,2,'18','solid'));if((s.centerline_lcs_m||[]).length)out.push(lineTrace(s.centerline_lcs_m,`static inferred centerline · ${id}`,colors.ego,1.8,'solid'));for(const p of s.evidence_boxes||[]){if((p.polygon_lcs_m||[]).length)out.push(polygonTrace(p.polygon_lcs_m,`inferred evidence box · ${id} · frame ${p.frame_index}`,colors.ego,1.0,'05','solid'));}}for(const t of D.tracks||[]){for(const p of staticConnectorPieces(t)){const e=p.connection_evidence||{};const name=`static inferred ${p.connector_role||''} connector · ${t.track_id} · gap=${Number(e.gap_m||0).toFixed(2)}m`;if((p.polygon_lcs_m||[]).length)out.push(polygonTrace(p.polygon_lcs_m,name,colors.ego,2,'18','solid'));if((p.centerline_lcs_m||[]).length)out.push(lineTrace(p.centerline_lcs_m,`${name} centerline`,colors.ego,1.8,'solid'));}}}
-function roleMap(f){return new Map(((((f.lane_roles||{}).roles)||[])).map(x=>[String(x.track_id),x.role]));}
+function drawTrack(out,t,role,strong,constructionOnly=false){const color=constructionOnly?colors.irrelevant:roleColor(role);for(const id of t.member_lane_ids||[]){const lane=laneMap.get(String(id));if(!lane)continue;const rt=laneRangeText(id),hover=`${constructionOnly?'constructed':role} ${t.track_id} lane ${id} · ${laneRangeHover(id)}`;out.push(polygonTrace(lane.polygon_lcs_m,hover,color,strong?2:0.7,strong?'22':'07'));if(document.getElementById('ids').checked&&(lane.centerline_lcs_m||[]).length){const q=lane.centerline_lcs_m[Math.floor(lane.centerline_lcs_m.length/2)];out.push({x:[q[0]],y:[q[1]],mode:'text',text:[`${id} · ${rt}`],showlegend:false,hovertext:[hover],hoverinfo:'text',textfont:{size:10}});}}drawFillPieces(out,t,color,strong);if(strong)drawAnchored(out,t,color,true);if(document.getElementById('ids').checked&&(t.centerline_lcs_m||[]).length){const q=t.centerline_lcs_m[Math.floor(t.centerline_lcs_m.length/2)];out.push({x:[q[0]],y:[q[1]],mode:'text',text:[t.track_id],textposition:'top center',showlegend:false,textfont:{size:11}});}}
+function drawStaticInferred(out,roles){
+  if(!document.getElementById('inferred').checked)return;
+  for(const s of D.static_inferred||[]){
+    const id=String(s.static_inferred_lane_id||s.route_id);
+    const trackId=inferredTrackMap.get(id)||inferredTrackMap.get(String(s.route_id||''));
+    const role=trackId?(roles.get(trackId)||'irrelevant'):'irrelevant';
+    const color=roleColor(role);
+    const name=`static inferred lane · ${id} · track=${trackId||'unaffiliated'} · role=${role} · ${s.start_observed_track_id} → ${s.end_observed_track_id}`;
+    if((s.polygon_lcs_m||[]).length)out.push(polygonTrace(s.polygon_lcs_m,name,color,2,role==='irrelevant'?'0b':'20','solid'));
+    if((s.centerline_lcs_m||[]).length)out.push(lineTrace(s.centerline_lcs_m,`${name} centerline`,color,1.8,'solid'));
+  }
+  for(const t of D.tracks||[]){
+    const role=roles.get(String(t.track_id))||'irrelevant';
+    const color=roleColor(role);
+    for(const p of staticConnectorPieces(t)){
+      const e=p.connection_evidence||{};
+      const name=`static inferred ${p.connector_role||''} connector · ${t.track_id} · role=${role} · gap=${Number(e.gap_m||0).toFixed(2)}m`;
+      if((p.polygon_lcs_m||[]).length)out.push(polygonTrace(p.polygon_lcs_m,name,color,2,role==='irrelevant'?'0b':'20','solid'));
+      if((p.centerline_lcs_m||[]).length)out.push(lineTrace(p.centerline_lcs_m,`${name} centerline`,color,1.8,'solid'));
+    }
+  }
+}
 function closestPoint(line,o){let best=null,d0=Infinity;for(const q of line||[]){const d=Math.hypot(q[0]-o[0],q[1]-o[1]);if(d<d0){d0=d;best=q;}}return best;}
 function drawOrder(out,f){if(!document.getElementById('order').checked)return;const cs=f.lane_roles&&f.lane_roles.cross_section;if(!cs||!cs.point)return;out.push({x:[cs.point[0]],y:[cs.point[1]],mode:'markers',marker:{size:8,color:'#111827'},showlegend:false,hovertext:'static lane-order cross-section',hoverinfo:'text'});for(const side of['left','right']){const c=cs[side];if(!c||!c.track_id)continue;const t=trackMap.get(String(c.track_id));if(!t)continue;const q=closestPoint(t.centerline_lcs_m||[],cs.point);if(q)out.push(lineTrace([cs.point,q],`${side} immediate neighbor`,side==='left'?colors.left_adjacent:colors.right_adjacent,2,'dot'));}}
 function stop(){if(timer)clearInterval(timer);timer=null;playButton.textContent='▶ Play';}
 function play(){if(timer){stop();return;}playButton.textContent='❚❚ Pause';timer=setInterval(()=>{if(+slider.value>=D.frames.length-1){stop();return;}slider.value=+slider.value+1;draw();},100);}
 
-function draw(){const f=D.frames[+slider.value]||{},ego=f.ego_position||[0,0],out=[],roles=roleMap(f);if(document.getElementById('raw').checked)for(const r of D.raw)out.push(lineTrace(r.pts,`${r.kind} ${r.id}`,'#cbd5e1',0.7));if(document.getElementById('canonical').checked)for(const t of D.tracks)drawTrack(out,t,'irrelevant',false,true);if(document.getElementById('bridges').checked)for(const t of D.tracks)drawAnchored(out,t,colors.bridge,false);drawStaticInferred(out);if(document.getElementById('selected').checked){for(const t of D.tracks){const role=roles.get(String(t.track_id));if(role&&role!=='irrelevant')drawTrack(out,t,role,true,false);}}drawOrder(out,f);if(document.getElementById('traj').checked)out.push(lineTrace(D.trajectory,'ego trajectory','#111827',1.2));out.push({x:[ego[0]],y:[ego[1]],mode:'markers+text',text:['EGO'],textposition:'top center',marker:{size:13,color:colors.ego,symbol:'triangle-up'},showlegend:false});const follow=document.getElementById('follow').checked,xs=span?span.x:110,ys=span?span.y:110;const xr=follow?[ego[0]-xs/2,ego[0]+xs/2]:(view?view.x:[ego[0]-55,ego[0]+55]);const yr=follow?[ego[1]-ys/2,ego[1]+ys/2]:(view?view.y:[ego[1]-55,ego[1]+55]);Plotly.react(plot,out,{margin:{l:35,r:10,t:10,b:35},xaxis:{scaleanchor:'y',scaleratio:1,range:xr},yaxis:{range:yr},uirevision:'static-inferred-lane-network'},{responsive:true,displaylogo:false}).then(()=>{if(!relayoutBound){plot.on('plotly_relayout',e=>{const x0=e['xaxis.range[0]'],x1=e['xaxis.range[1]'],y0=e['yaxis.range[0]'],y1=e['yaxis.range[1]'];if([x0,x1,y0,y1].every(Number.isFinite)){view={x:[x0,x1],y:[y0,y1]};span={x:Math.abs(x1-x0),y:Math.abs(y1-y0)};}});relayoutBound=true;}}).catch(e=>console.error('Plotly render failed',e));document.getElementById('label').textContent=`frame ${f.frame_index} · ${Number(f.time_since_start_s||0).toFixed(2)}s`;}
+function draw(){const f=D.frames[+slider.value]||{},ego=f.ego_position||[0,0],out=[],roles=roleMap(f);if(document.getElementById('raw').checked)for(const r of D.raw)out.push(lineTrace(r.pts,`${r.kind} ${r.id}`,'#cbd5e1',0.7));if(document.getElementById('canonical').checked)for(const t of D.tracks)drawTrack(out,t,'irrelevant',false,true);if(document.getElementById('bridges').checked)for(const t of D.tracks)drawAnchored(out,t,colors.bridge,false);drawStaticInferred(out,roles);if(document.getElementById('selected').checked){for(const t of D.tracks){const role=roles.get(String(t.track_id));if(role&&role!=='irrelevant')drawTrack(out,t,role,true,false);}}drawOrder(out,f);if(document.getElementById('traj').checked)out.push(lineTrace(D.trajectory,'ego trajectory','#111827',1.2));out.push({x:[ego[0]],y:[ego[1]],mode:'markers+text',text:['EGO'],textposition:'top center',marker:{size:13,color:colors.ego,symbol:'triangle-up'},showlegend:false});const follow=document.getElementById('follow').checked,xs=span?span.x:110,ys=span?span.y:110;const xr=follow?[ego[0]-xs/2,ego[0]+xs/2]:(view?view.x:[ego[0]-55,ego[0]+55]);const yr=follow?[ego[1]-ys/2,ego[1]+ys/2]:(view?view.y:[ego[1]-55,ego[1]+55]);Plotly.react(plot,out,{margin:{l:35,r:10,t:10,b:35},xaxis:{scaleanchor:'y',scaleratio:1,range:xr},yaxis:{range:yr},uirevision:'static-inferred-lane-network'},{responsive:true,displaylogo:false}).then(()=>{if(!relayoutBound){plot.on('plotly_relayout',e=>{const x0=e['xaxis.range[0]'],x1=e['xaxis.range[1]'],y0=e['yaxis.range[0]'],y1=e['yaxis.range[1]'];if([x0,x1,y0,y1].every(Number.isFinite)){view={x:[x0,x1],y:[y0,y1]};span={x:Math.abs(x1-x0),y:Math.abs(y1-y0)};}});relayoutBound=true;}}).catch(e=>console.error('Plotly render failed',e));document.getElementById('label').textContent=`frame ${f.frame_index} · ${Number(f.time_since_start_s||0).toFixed(2)}s`;}
 for(const id of['follow','canonical','bridges','selected','inferred','order','raw','ids','traj'])document.getElementById(id).onchange=draw;
 slider.oninput=()=>{stop();draw();};
 document.getElementById('prev').onclick=()=>{stop();slider.value=Math.max(0,+slider.value-1);draw();};
