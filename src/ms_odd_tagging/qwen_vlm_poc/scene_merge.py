@@ -5,12 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 from .config import VlmPocConfig
+from .geometry import ego_speed
 from .models import CandidateWindow, EvidenceItem
 
 
 def _frame_times(recording: dict[str, Any]) -> dict[int, float]:
     return {
         int(frame["frame_index"]): float(frame.get("time_since_start_s") or 0.0)
+        for frame in recording.get("frames", [])
+        if isinstance(frame.get("frame_index"), int)
+    }
+
+
+def _frames_by_index(recording: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    return {
+        int(frame["frame_index"]): frame
         for frame in recording.get("frames", [])
         if isinstance(frame.get("frame_index"), int)
     }
@@ -36,23 +45,96 @@ def _uniform_indices(indices: list[int], count: int) -> list[int]:
     return [values[pos] for pos in positions]
 
 
+def _nearest(values: list[int], target: float) -> int | None:
+    if not values:
+        return None
+    return min(values, key=lambda value: (abs(value - target), value))
+
+
+def _dense_event_indices(
+    available: list[int],
+    raw_start: int,
+    raw_end: int,
+    count: int,
+) -> list[int]:
+    """Prefer pre/start/inside/end/post frames over uniform context sampling."""
+    values = sorted(set(available))
+    if not values or count <= 0:
+        return []
+    if len(values) <= count:
+        return values
+
+    before = [value for value in values if value < raw_start]
+    inside = [value for value in values if raw_start <= value <= raw_end]
+    after = [value for value in values if value > raw_end]
+
+    span = max(0, raw_end - raw_start)
+    targets: list[int | None] = [
+        before[-1] if before else None,
+        _nearest(inside or values, raw_start),
+        _nearest(inside or values, raw_start + span / 3.0),
+        _nearest(inside or values, raw_start + 2.0 * span / 3.0),
+        _nearest(inside or values, raw_end),
+        after[0] if after else None,
+    ]
+
+    selected: list[int] = []
+    for value in targets:
+        if value is not None and value not in selected:
+            selected.append(value)
+        if len(selected) >= count:
+            return sorted(selected[:count])
+
+    # Very short raw episodes can collapse the target positions. Fill remaining
+    # capacity from the raw episode first, then from the surrounding context.
+    for pool in (inside, values):
+        remaining = count - len(selected)
+        if remaining <= 0:
+            break
+        fill = _uniform_indices([value for value in pool if value not in selected], remaining)
+        selected.extend(value for value in fill if value not in selected)
+
+    return sorted(selected[:count])
+
+
+def _ego_measurements(
+    selected: list[int],
+    frames_by_index: dict[int, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    measurements = []
+    for frame_index in selected:
+        frame = frames_by_index.get(frame_index)
+        if frame is None:
+            continue
+        timestamp = frame.get("time_since_start_s")
+        speed = ego_speed(frame)
+        measurements.append(
+            {
+                "frame": frame_index,
+                "time_s": round(float(timestamp), 3)
+                if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool)
+                else None,
+                "speed_mps": round(float(speed), 3) if speed is not None else None,
+            }
+        )
+    return measurements
+
+
 def merge_waiting_scene_candidates(
     recording: dict[str, Any],
     candidates: list[CandidateWindow],
     config: VlmPocConfig,
 ) -> list[CandidateWindow]:
-    """Merge overlapping pedestrian-specific candidates into scene-level requests.
+    """Merge pedestrian-specific candidates into scene-level VLM requests.
 
-    Clustering uses raw trigger intervals rather than expanded context windows so
-    pre/post context does not create artificial overlap. A short dedicated merge
-    gap allows multiple pedestrians in one physical scene to share one VLM request
-    without chaining separate events into a large scene. The VLM-facing candidate
-    drops heuristic evidence; only neutral scene metadata and BEV frames remain.
+    Candidate heuristics remain internal. The model-facing scene carries ordered
+    BEVs plus neutral ego speed/timestamp measurements aligned to those BEVs.
     """
     if not candidates:
         return []
 
     times = _frame_times(recording)
+    frame_lookup = _frames_by_index(recording)
     ordered = sorted(candidates, key=lambda item: (_raw_bounds(item)[0], _raw_bounds(item)[1]))
     clusters: list[list[CandidateWindow]] = []
 
@@ -73,11 +155,7 @@ def merge_waiting_scene_candidates(
         else:
             clusters.append([candidate])
 
-    frames = [
-        int(frame["frame_index"])
-        for frame in recording.get("frames", [])
-        if isinstance(frame.get("frame_index"), int)
-    ]
+    frame_indices = sorted(frame_lookup)
     results: list[CandidateWindow] = []
     recording_id = str(recording.get("recording_id") or candidates[0].recording_id)
 
@@ -89,8 +167,9 @@ def merge_waiting_scene_candidates(
         pedestrian_ids = sorted({pid for item in cluster for pid in item.primary_object_ids})
         source_ids = [item.candidate_id for item in cluster]
 
-        available = [index for index in frames if context_start <= index <= context_end]
-        selected = _uniform_indices(available, config.max_bev_images)
+        available = [index for index in frame_indices if context_start <= index <= context_end]
+        selected = _dense_event_indices(available, raw_start, raw_end, config.max_bev_images)
+        ego_measurements = _ego_measurements(selected, frame_lookup)
         start_t = times.get(context_start, min(item.start_timestamp_s for item in cluster))
         end_t = times.get(context_end, max(item.end_timestamp_s for item in cluster))
         candidate_id = (
@@ -112,7 +191,7 @@ def merge_waiting_scene_candidates(
                     EvidenceItem(
                         evidence_id=visual_evidence_id,
                         kind="bev_sequence",
-                        summary="Ordered BEV images are the sole VLM evaluation evidence.",
+                        summary="Ordered BEVs plus aligned neutral ego speed measurements.",
                         data={"frame_indices": selected},
                     )
                 ],
@@ -121,11 +200,13 @@ def merge_waiting_scene_candidates(
                 recall_reasons=["scene_level_event_candidate"],
                 metadata={
                     "candidate_strategy": "event-driven",
-                    "vlm_input_mode": "bev_only",
+                    "vlm_input_mode": "bev_plus_neutral_ego_measurements",
                     "visual_evidence_id": visual_evidence_id,
                     "scene_merged": True,
                     "raw_trigger_start_frame": raw_start,
                     "raw_trigger_end_frame": raw_end,
+                    "frame_selection_strategy": "pre_start_inner_thirds_end_post",
+                    "ego_measurements": ego_measurements,
                     "pedestrian_ids": pedestrian_ids,
                     "source_candidate_ids": source_ids,
                     "source_candidate_count": len(cluster),
