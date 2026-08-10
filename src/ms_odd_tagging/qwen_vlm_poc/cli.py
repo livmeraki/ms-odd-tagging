@@ -16,6 +16,7 @@ from .loader import canonical_path, load_recording
 from .merging import merge_decisions
 from .profiling import RunProfiler
 from .review_html import build_review_html
+from .scene_merge import merge_waiting_scene_candidates
 from .validation import parse_and_validate_response
 
 
@@ -90,7 +91,10 @@ def _recording_for_bundle(bundle_path: Path, input_dir: Path) -> dict:
 
 def _generate_candidates(recording: dict, scenario: str, config, strategy: str):
     if strategy == "event-driven":
-        return generate_event_driven_candidates(recording, scenario, config)
+        candidates = generate_event_driven_candidates(recording, scenario, config)
+        if scenario == "waiting_for_pedestrian_to_cross":
+            return merge_waiting_scene_candidates(recording, candidates, config)
+        return candidates
     return generate_candidates(recording, scenario, config)
 
 
