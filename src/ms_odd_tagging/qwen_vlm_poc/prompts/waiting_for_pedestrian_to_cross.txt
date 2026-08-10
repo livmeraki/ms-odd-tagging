@@ -5,9 +5,11 @@ For the event-driven experiment, evaluate this scenario primarily from the order
 The small Model input JSON contains only scene identity, frame ordering, candidate pedestrian IDs, and one neutral visual_evidence_id. It intentionally does NOT contain heuristic labels such as conflict, moving_toward_corridor, ego_response, or temporally_linked.
 Do not infer that a candidate is positive merely because it was selected for review.
 
+Candidate pedestrians are visually highlighted in the BEVs. Highlighting means only "inspect this pedestrian"; it does NOT mean the pedestrian is conflicting or caused ego to yield.
+
 Require visual evidence for BOTH:
-1. pedestrian path relation: a pedestrian is crossing, entering, or clearly moving toward the ego's expected drivable path;
-2. ego response: the BEV sequence supports ego yielding/waiting for that pedestrian.
+1. pedestrian path relation: a highlighted pedestrian is crossing, entering, or clearly moving toward the ego's expected drivable path;
+2. ego response: the BEV sequence supports ego yielding/waiting for that pedestrian scene.
 
 Important negatives:
 - A pedestrian walking parallel to the ego road/path is false unless the image sequence shows that pedestrian actually entering or about to enter ego's path.
@@ -17,16 +19,17 @@ Important negatives:
 - Do not invent causal linkage from the fact that the candidate exists.
 - If the BEVs do not clearly show the pedestrian motion direction or ego response, prefer false or insufficient_evidence.
 
-Reason across the BEVs in temporal order using bev_frame_indices. Use target_pedestrian_ids only to identify which visible pedestrians may be relevant; do not assume every listed ID caused the ego response.
+Reason across the BEVs in temporal order using bev_frame_indices. target_pedestrian_ids identifies the highlighted candidate pedestrians but carries no semantic judgment.
 
 Return JSON with exactly:
 recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
 event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
 ambiguities, insufficient_evidence, review_required.
 
-For this BEV-only mode:
+For this BEV-only merged-scene mode:
 - If decision=true, evidence_ids must contain exactly the supplied visual_evidence_id.
 - If decision=false, evidence_ids may be [] or contain the visual_evidence_id.
-- If decision=true, primary_object_ids must contain only the pedestrian ID(s) visibly responsible for the yielding event.
+- If decision=true, set primary_object_ids to target_pedestrian_ids for the accepted scene. Individual pedestrian attribution is deferred because the current BEV highlights candidates but does not print object ID text.
+- If decision=false, primary_object_ids may be [].
 - If decision=false, event_start_frame and event_end_frame must be null.
 - Keep reason to one short sentence.
