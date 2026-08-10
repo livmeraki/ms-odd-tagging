@@ -65,13 +65,24 @@ def _keep_event_driven_waiting_bev(
     candidate: CandidateWindow,
     config: VlmPocConfig,
 ) -> bool:
-    """Keep all selected BEVs for the BEV-first pedestrian experiment.
-
-    Earlier versions dropped medium-speed images using ego-motion heuristics. That
-    biased the visual evidence toward braking/stopping frames. The BEV-first mode
-    now keeps the neutral temporal sample chosen by scene-level candidate merging.
-    """
+    """Keep all selected BEVs for the BEV-first pedestrian experiment."""
     return True
+
+
+def _waiting_bev_debug_context(candidate: CandidateWindow) -> dict[str, Any] | None:
+    """Highlight candidate pedestrians without adding semantic/conflict labels."""
+    if not (
+        candidate.scenario == "waiting_for_pedestrian_to_cross"
+        and candidate.metadata.get("candidate_strategy") == "event-driven"
+    ):
+        return None
+    return {
+        "rule_based_reference": {
+            "active_events": [
+                {"evidence": {"source_object_ids": list(candidate.primary_object_ids)}}
+            ]
+        }
+    }
 
 
 def render_candidate_bevs(
@@ -87,6 +98,10 @@ def render_candidate_bevs(
     }
     paths = []
     rendered_frame_indices = []
+    waiting_bev_only = (
+        candidate.scenario == "waiting_for_pedestrian_to_cross"
+        and candidate.metadata.get("candidate_strategy") == "event-driven"
+    )
     for frame_index in candidate.selected_frame_indices[: config.max_bev_images]:
         frame = frames_by_index.get(frame_index)
         if frame is None:
@@ -106,7 +121,8 @@ def render_candidate_bevs(
             path,
             config.bev_extent_m,
             config.bev_size_px,
-            proximity_radius_m=0.0 if candidate.scenario == "on_intersection" else 30.0,
+            proximity_radius_m=0.0 if waiting_bev_only or candidate.scenario == "on_intersection" else 30.0,
+            debug_context=_waiting_bev_debug_context(candidate),
         )
         paths.append(str(path))
         rendered_frame_indices.append(frame_index)
