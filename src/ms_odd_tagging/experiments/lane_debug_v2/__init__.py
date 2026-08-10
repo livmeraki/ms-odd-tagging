@@ -4,4 +4,4 @@ Production lane/tagging modules are intentionally duplicated here so this
 experiment can evolve without changing the production implementation.
 """
 
-DEBUG_IMPLEMENTATION_VERSION = "lane-debug-v2.4-static-all-ld-lane-network"
+DEBUG_IMPLEMENTATION_VERSION = "lane-debug-v2.5-static-canonical-plus-gap-recovery"
