@@ -85,16 +85,35 @@ def test_continuous_track_recursively_chains_multiple_segments():
     assert assignment["track_id"]==mapping["A"]
 
 
-def test_canonical_endpoint_stitch_merges_same_lane_fragments_without_matching_boundary_ids():
-    lanes=[_lane("A",0,10,0),_lane("B",11,21,0)]
-    preliminary,_,_=build_continuous_tracks(lanes,_recording([[0,0],[5,0],[15,0]]))
+def test_canonical_endpoint_stitch_merges_same_lane_across_five_metre_gap():
+    # The centerline AND both physical boundaries have a 5 m longitudinal gap.
+    # The old stitcher incorrectly compared that raw 5 m boundary gap against
+    # a 3 m threshold. It should instead see zero lateral continuation error.
+    lanes=[_lane("A",0,10,0),_lane("B",15,25,0)]
+    preliminary,_,_=build_continuous_tracks(lanes,_recording([[0,0],[5,0],[20,0]]))
     assert len(preliminary)==2
-    stitched,mapping,debug=stitch_canonical_tracks(preliminary,lanes)
+    stitched,mapping,debug=stitch_canonical_tracks(
+        preliminary,lanes,
+        maximum_endpoint_gap_m=8.0,
+        maximum_boundary_endpoint_gap_m=3.0,
+    )
     assert len(stitched)==1
     assert stitched[0]["member_lane_ids"]==["A","B"]
     assert stitched[0]["canonical_stitch_count"]==1
     assert mapping["physical_track_0001"]==mapping["physical_track_0002"]=="physical_track_0001"
-    assert any(item["accepted"] for item in debug)
+    accepted=next(item for item in debug if item["accepted"])
+    assert accepted["left_boundary_endpoint_gap_m"]==5.0
+    assert accepted["right_boundary_endpoint_gap_m"]==5.0
+    assert accepted["left_boundary_lateral_error_m"]==0.0
+    assert accepted["right_boundary_lateral_error_m"]==0.0
+    assert accepted["left_boundary_forward_gap_difference_m"]==0.0
+    assert accepted["right_boundary_forward_gap_difference_m"]==0.0
+    assert accepted["boundary_continuation_method"]=="forward_and_lateral_alignment"
+
+    # The accepted stitch polygon itself must keep ego assignment continuous.
+    assignment=assign_point_to_track_strict((12.5,0.0),0.0,stitched)
+    assert assignment["track_id"]=="physical_track_0001"
+    assert assignment["matched_piece_kind"]=="canonical_track_stitch"
 
 
 def test_continuous_track_adjacent_lane_uses_local_parallel_overlap():
