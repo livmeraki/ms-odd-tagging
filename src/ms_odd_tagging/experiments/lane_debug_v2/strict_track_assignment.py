@@ -11,7 +11,7 @@ from typing import Any
 
 from .lane_geometry import nearest_heading, point_in_polygon, polyline_distance, wrap_angle
 
-_ALLOWED_PIECE_KINDS = {"observed_ld", "recovered_full_edge", "inferred_gap", "raw_ld_boundary_pair"}
+_ALLOWED_PIECE_KINDS = {"observed_ld", "recovered_full_edge", "inferred_gap", "anchored_ld_bridge"}
 
 
 def _polygon_status(point: tuple[float, float], polygon: list[list[float]]) -> tuple[bool, float]:
@@ -59,10 +59,7 @@ def assign_point_to_track_strict(
         center_distance=polyline_distance(point,centerline); score=center_distance+heading_difference*0.04
         if not best_match["inside_polygon"]: score+=best_match["polygon_distance_m"]*10.0
         if track_id==str(previous_track_id): score-=0.9
-        # Prefer canonical/recovered lane tracks over supplemental raw-LD pairs
-        # when both truly contain ego, but keep raw LD available when canonical
-        # lane entities are absent at a divergence.
-        if best_match["piece_kind"]=="raw_ld_boundary_pair": score+=0.25
+        if best_match["piece_kind"]=="anchored_ld_bridge": score+=0.15
         candidates.append((score,track,best_match,center_distance,heading_difference,method))
     candidates.sort(key=lambda item:(item[0],str(item[1].get("track_id"))))
     if not candidates:
