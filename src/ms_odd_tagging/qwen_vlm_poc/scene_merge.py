@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .config import VlmPocConfig
-from .models import CandidateWindow
+from .models import CandidateWindow, EvidenceItem
 
 
 def _frame_times(recording: dict[str, Any]) -> dict[int, float]:
@@ -57,15 +57,13 @@ def merge_waiting_scene_candidates(
     clusters: list[list[CandidateWindow]] = []
 
     for candidate in ordered:
-        raw_start, raw_end = _raw_bounds(candidate)
+        raw_start, _ = _raw_bounds(candidate)
         start_t = times.get(raw_start, candidate.start_timestamp_s)
-        end_t = times.get(raw_end, candidate.end_timestamp_s)
         if not clusters:
             clusters.append([candidate])
             continue
 
         previous = clusters[-1]
-        previous_end_frame = max(_raw_bounds(item)[1] for item in previous)
         previous_end_t = max(
             times.get(_raw_bounds(item)[1], item.end_timestamp_s)
             for item in previous
@@ -99,6 +97,7 @@ def merge_waiting_scene_candidates(
             f"{recording_id}_waiting_for_pedestrian_to_cross_scene_"
             f"{context_start:06d}_{context_end:06d}"
         )
+        visual_evidence_id = f"{candidate_id}:bev_sequence"
 
         results.append(
             CandidateWindow(
@@ -109,13 +108,21 @@ def merge_waiting_scene_candidates(
                 end_frame=context_end,
                 start_timestamp_s=float(start_t),
                 end_timestamp_s=float(end_t),
-                evidence=[],
+                evidence=[
+                    EvidenceItem(
+                        evidence_id=visual_evidence_id,
+                        kind="bev_sequence",
+                        summary="Ordered BEV images are the sole VLM evaluation evidence.",
+                        data={"frame_indices": selected},
+                    )
+                ],
                 selected_frame_indices=selected,
                 primary_object_ids=pedestrian_ids,
                 recall_reasons=["scene_level_event_candidate"],
                 metadata={
                     "candidate_strategy": "event-driven",
                     "vlm_input_mode": "bev_only",
+                    "visual_evidence_id": visual_evidence_id,
                     "scene_merged": True,
                     "raw_trigger_start_frame": raw_start,
                     "raw_trigger_end_frame": raw_end,
