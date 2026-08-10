@@ -49,6 +49,7 @@ def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
             "candidate_scene_id": candidate.candidate_id,
             "target_pedestrian_ids": list(candidate.primary_object_ids),
             "bev_frame_indices": list(candidate.selected_frame_indices),
+            "visual_evidence_id": candidate.metadata.get("visual_evidence_id"),
             "bev_images_follow_in_same_order": True,
             "evaluation_mode": "bev_only_no_heuristic_labels",
         }
