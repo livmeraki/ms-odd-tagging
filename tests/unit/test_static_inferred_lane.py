@@ -1,3 +1,6 @@
+from ms_odd_tagging.experiments.lane_debug_v2.static_inferred_connectors import (
+    fill_static_inferred_endpoint_gaps,
+)
 from ms_odd_tagging.experiments.lane_debug_v2.static_inferred_lane import (
     build_static_inferred_lanes,
     integrate_static_inferred_lanes,
@@ -32,8 +35,8 @@ def _track(track_id, x0, x1):
     }
 
 
-def test_overlapping_box_chain_becomes_one_static_corridor():
-    routes = [{
+def _route():
+    return {
         "route_id": "inferred_ego_route_0001",
         "start_observed_track_id": "physical_track_0003",
         "end_observed_track_id": "physical_track_0008",
@@ -41,8 +44,11 @@ def test_overlapping_box_chain_becomes_one_static_corridor():
         "end_frame_index": 13,
         "bridge_complete": True,
         "pieces": [_box(10, 10.0), _box(11, 12.0), _box(12, 14.0), _box(13, 16.0)],
-    }]
-    lanes = build_static_inferred_lanes(routes)
+    }
+
+
+def test_overlapping_box_chain_becomes_one_static_corridor():
+    lanes = build_static_inferred_lanes([_route()])
     assert len(lanes) == 1
     lane = lanes[0]
     assert lane["evidence_box_count"] == 4
@@ -54,16 +60,7 @@ def test_overlapping_box_chain_becomes_one_static_corridor():
 
 
 def test_static_corridor_merges_supported_front_and_back_tracks():
-    routes = [{
-        "route_id": "inferred_ego_route_0001",
-        "start_observed_track_id": "physical_track_0003",
-        "end_observed_track_id": "physical_track_0008",
-        "start_frame_index": 10,
-        "end_frame_index": 13,
-        "bridge_complete": True,
-        "pieces": [_box(10, 10.0), _box(11, 12.0), _box(12, 14.0), _box(13, 16.0)],
-    }]
-    static = build_static_inferred_lanes(routes)
+    static = build_static_inferred_lanes([_route()])
     tracks = [_track("physical_track_0003", 0.0, 8.0), _track("physical_track_0008", 18.0, 30.0)]
     alias = {"physical_track_0003": "physical_track_0003", "physical_track_0008": "physical_track_0008"}
     merged, debug = integrate_static_inferred_lanes(
@@ -78,3 +75,22 @@ def test_static_corridor_merges_supported_front_and_back_tracks():
     assert debug[0]["action"] == "merge_front_back_tracks"
     assert any(p.get("kind") == "static_inferred_corridor" for p in merged[0]["pieces"])
     assert set(merged[0]["merged_from_track_ids"]) == {"physical_track_0003", "physical_track_0008"}
+
+
+def test_static_corridor_endpoint_gaps_get_curvature_connectors():
+    static = build_static_inferred_lanes([_route()])
+    tracks = [_track("physical_track_0003", 0.0, 6.0), _track("physical_track_0008", 20.0, 30.0)]
+    alias = {"physical_track_0003": "physical_track_0003", "physical_track_0008": "physical_track_0008"}
+    merged, _ = integrate_static_inferred_lanes(
+        tracks,
+        static,
+        alias,
+        maximum_endpoint_distance_m=5.0,
+        maximum_heading_difference_deg=20.0,
+    )
+    filled, debug = fill_static_inferred_endpoint_gaps(merged, maximum_gap_m=5.0)
+    connectors = [p for p in filled[0]["pieces"] if p.get("kind") == "static_inferred_connector"]
+    assert len(connectors) == 2
+    assert {p.get("connector_role") for p in connectors} == {"back", "front"}
+    assert all(len(p.get("polygon_lcs_m") or []) >= 4 for p in connectors)
+    assert sum(1 for item in debug if item.get("status") == "connector_created") == 2
