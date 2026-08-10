@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import DEBUG_IMPLEMENTATION_VERSION
-from .detector_static_order_integrated import run_lane_debug_v2
+from .detector_static_order_integrated_piece_local import run_lane_debug_v2
 from .lane_changes import run_lane_change_debug
 from .explorer_visualization import render_plotly_explorer
 
