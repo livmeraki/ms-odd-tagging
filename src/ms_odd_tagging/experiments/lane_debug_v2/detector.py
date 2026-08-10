@@ -11,7 +11,8 @@ from typing import Any
 from .detector_baseline import run_following_lane as run_baseline
 from .lane_geometry import nearest_heading, polyline_distance, wrap_angle
 from .object_motion import build_object_motion_evidence
-from .continuous_tracks import build_continuous_tracks, assign_point_to_track, adjacent_tracks
+from .continuous_tracks import build_continuous_tracks, adjacent_tracks
+from .strict_track_assignment import assign_point_to_track_strict
 
 DEFAULT_DEBUG = {
     "object_motion_history_frames": 3,
@@ -74,9 +75,10 @@ def _apply_continuous_track_state(recording: dict[str,Any], result: dict[str,Any
         if len(p)<2 or not all(_finite(x) for x in p[:2]) or not _finite(heading):
             frame["continuous_ego_track"]={"track_id":None,"method":"invalid_ego_pose","confidence":"unknown"}
             frame["continuous_adjacency"]={"left":{"track_id":None},"right":{"track_id":None},"candidates":[]}
+            frame["ego_lane"]={"lane_id":None,"logical_lane_id":None,"method":"invalid_ego_pose","confidence":"unknown"}
             continue
         point=(float(p[0]),float(p[1]))
-        assignment=assign_point_to_track(
+        assignment=assign_point_to_track_strict(
             point,float(heading),tracks,previous_track_id=previous_track_id,
             maximum_heading_difference_deg=float(settings["continuous_track_maximum_heading_difference_deg"]),
             outside_tolerance_m=float(settings["continuous_track_outside_tolerance_m"]),
@@ -86,9 +88,8 @@ def _apply_continuous_track_state(recording: dict[str,Any], result: dict[str,Any
         if track_id:
             previous_track_id=str(track_id)
             track=track_by_id.get(str(track_id))
-            physical=_nearest_member(track,point,lane_by_id)
+            physical=assignment.get("matched_lane_id") or _nearest_member(track,point,lane_by_id)
             frame["ego_lane"]={
-                **(frame.get("ego_lane") or {}),
                 "lane_id":physical,
                 "logical_lane_id":track_id,
                 "continuous_track_id":track_id,
@@ -96,8 +97,26 @@ def _apply_continuous_track_state(recording: dict[str,Any], result: dict[str,Any
                 "method":assignment.get("method"),
                 "confidence":assignment.get("confidence"),
                 "inside_polygon":assignment.get("inside_polygon"),
+                "polygon_distance_m":assignment.get("polygon_distance_m"),
+                "outside_tolerance_m":assignment.get("outside_tolerance_m"),
+                "matched_piece_kind":assignment.get("matched_piece_kind"),
                 "center_distance_m":assignment.get("center_distance_m"),
                 "heading_difference_deg":assignment.get("heading_difference_deg"),
+            }
+        else:
+            # Do not retain or promote a segment-level left/right candidate as ego
+            # merely because it is near the merged track centerline. The primary
+            # ego lane is unknown until the ego center is inside an actual lane
+            # polygon (or within the explicit 1 m tolerance).
+            frame["ego_lane"]={
+                "lane_id":None,
+                "logical_lane_id":None,
+                "continuous_track_id":None,
+                "method":assignment.get("method","no_track_contains_ego_center_within_tolerance"),
+                "confidence":"unknown",
+                "outside_tolerance_m":assignment.get("outside_tolerance_m"),
+                "candidates":assignment.get("candidates",[]),
+                "rejected_candidates":assignment.get("rejected_candidates",[]),
             }
         adjacency=adjacent_tracks(
             track_id,point,tracks,
@@ -113,7 +132,6 @@ def _apply_continuous_track_state(recording: dict[str,Any], result: dict[str,Any
             adjacent_track=track_by_id.get(str(adjacent_track_id)) if adjacent_track_id else None
             physical=_nearest_member(adjacent_track,point,lane_by_id) if adjacent_track else None
             frame[key]={
-                **(frame.get(key) or {}),
                 "lane_id":physical,
                 "logical_lane_id":adjacent_track_id,
                 "continuous_track_id":adjacent_track_id,
