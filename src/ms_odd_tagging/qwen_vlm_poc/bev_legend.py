@@ -14,6 +14,7 @@ from ms_odd_tagging.input_generator.revised_bev import (
     FUTURE_PATH_CORRIDOR_COLOR,
     LANE_STYLES,
     PEDESTRIAN_COLOR,
+    PEDESTRIAN_TRAIL_COLOR,
     STOPLINE_COLOR,
 )
 
@@ -48,6 +49,7 @@ _COLOR_NAMES = {
     "#64748b": "gray",
     "#111827": "near-black",
     "#67e8f9": "light cyan",
+    "#ca8a04": "yellow-brown",
 }
 
 
@@ -60,6 +62,7 @@ def bev_legend_text() -> str:
         "BEV drawing legend (visual encoding only; colors do not imply scenario truth):",
         "- Ego vehicle: green, centered, with a nose marker showing forward direction.",
         f"- Candidate/active object outline: {_describe_color(ACTIVE_OBJECT_COLOR)}; candidate pedestrians also show their numeric object ID next to the object.",
+        f"- Candidate pedestrian observed trail: {_describe_color(PEDESTRIAN_TRAIL_COLOR)} line/dots; raw observed trajectory across the scene, transformed into the current BEV frame.",
         f"- Future ego trajectory centerline: {_describe_color(FUTURE_PATH_COLOR)}; derived from future canonical ego poses.",
         f"- Future ego path corridor: translucent {_describe_color(FUTURE_PATH_CORRIDOR_COLOR)} band around the future trajectory; this is geometry only, not a conflict label.",
         "- Object classes:",
@@ -80,5 +83,5 @@ def bev_legend_text() -> str:
     )
     for pattern, (color, _width, _alpha) in LANE_STYLES.items():
         lines.append(f"    - {pattern}: {_describe_color(color)}")
-    lines.append("- Interpret object motion by comparing positions across ordered BEVs and matching numeric IDs; colors identify class/overlay type only.")
+    lines.append("- Interpret object motion using the observed trail and matching numeric IDs; colors identify class/overlay type only.")
     return "\n".join(lines)
