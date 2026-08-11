@@ -11,7 +11,7 @@ from typing import Any
 from . import DEBUG_IMPLEMENTATION_VERSION
 from .detector_observed_first_final import run_lane_debug_v2
 from .lane_changes import run_lane_change_debug
-from .explorer_visualization import render_plotly_explorer
+from .explorer_visualization_integrated import render_plotly_explorer
 from .inferred_lane_tuner import render_inferred_lane_tuner
 from .inferred_lane_plotly_tuner import render_inferred_lane_plotly_tuner
 
