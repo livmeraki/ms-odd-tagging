@@ -21,7 +21,7 @@ def _load(path: Path) -> Any:
 
 
 def _write(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
