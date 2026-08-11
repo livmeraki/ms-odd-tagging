@@ -43,9 +43,9 @@ KNOWN_SCENARIOS = {
 def map_scenario_labels(labels: Iterable[str]) -> SimplifiedFrameTags:
     """Map existing scenario labels into the experimental simplified frame taxonomy.
 
-    This function is intentionally conservative: it only maps information that is
-    directly represented by an existing scenario label. Missing information remains
-    ``unknown`` rather than being inferred.
+    The motion dimensions are related rather than fully independent:
+    ``speed_band`` is not applicable while stationary, while a non-zero speed-band
+    label is sufficient evidence that an otherwise-unclassified ego is moving.
     """
     labels = list(dict.fromkeys(labels))
     label_set = set(labels)
@@ -58,12 +58,20 @@ def map_scenario_labels(labels: Iterable[str]) -> SimplifiedFrameTags:
     elif label_set & {"starting_left_turn", "starting_right_turn", "starting_u_turn"}:
         out.ego_motion.state = "starting"
 
+    speed_band: str | None = None
     if "low_magnitude_speed" in label_set:
-        out.ego_motion.speed_band = "low"
+        speed_band = "low"
     elif "medium_magnitude_speed" in label_set:
-        out.ego_motion.speed_band = "medium"
+        speed_band = "medium"
     elif "high_magnitude_speed" in label_set:
-        out.ego_motion.speed_band = "high"
+        speed_band = "high"
+
+    if out.ego_motion.state == "stationary":
+        out.ego_motion.speed_band = None
+    elif speed_band is not None:
+        out.ego_motion.speed_band = speed_band
+        if out.ego_motion.state == "unknown":
+            out.ego_motion.state = "moving"
 
     if label_set & {"changing_lane", "changing_lane_to_left", "changing_lane_to_right"}:
         out.ego_maneuver.type = "lane_change"
