@@ -1,8 +1,9 @@
 """Local, boundary-aware endpoint continuation evidence for static inferred lanes.
 
-This module intentionally avoids track-wide median width.  It evaluates the
-actual observed lane fragment nearest a physical-track endpoint against the
-corresponding inferred-corridor endpoint.
+Track-wide median width is deliberately avoided. The exact inferred/observed
+boundary endpoints are used for endpoint-distance evidence, while tangent,
+curvature, and width are measured over a short local interior window so the
+smoothed union's terminal cap/hook does not create a false discontinuity.
 """
 from __future__ import annotations
 
@@ -27,7 +28,24 @@ def _axis_heading_difference_deg(a: float, b: float) -> float:
     return min(diff, abs(180.0 - diff))
 
 
+def _point_at_distance(points: list[list[float]], distance_m: float) -> list[float]:
+    remaining = max(0.0, float(distance_m))
+    for a, b in zip(points, points[1:]):
+        length = _dist(a, b)
+        if length <= 1e-8:
+            continue
+        if remaining <= length:
+            ratio = remaining / length
+            return [
+                float(a[0]) + ratio * (float(b[0]) - float(a[0])),
+                float(a[1]) + ratio * (float(b[1]) - float(a[1])),
+            ]
+        remaining -= length
+    return [float(points[-1][0]), float(points[-1][1])]
+
+
 def _endpoint_state(line: list[list[float]], side: str, window_points: int = 5) -> dict[str, Any] | None:
+    """Observed-fragment endpoint state in the fragment's stored orientation."""
     pts = [[float(p[0]), float(p[1])] for p in line if len(p) >= 2]
     if len(pts) < 2:
         return None
@@ -54,6 +72,61 @@ def _endpoint_state(line: list[list[float]], side: str, window_points: int = 5) 
     return {"point": endpoint, "heading": tangent, "curvature": curvature}
 
 
+def _robust_inferred_motion_state(center: list[list[float]], role: str) -> dict[str, Any] | None:
+    """Measure inferred road direction over 3-6 m, past short union end hooks.
+
+    This restores the robust behavior that existed before the local-boundary
+    affiliation refactor. The literal endpoint is retained for geometric
+    distances, but heading/curvature are inferred from the interior road shape.
+    """
+    pts = [[float(p[0]), float(p[1])] for p in center if len(p) >= 2]
+    if len(pts) < 2:
+        return None
+    oriented = pts if role == "back" else list(reversed(pts))
+    endpoint = oriented[0]
+    middle = _point_at_distance(oriented, 3.0)
+    far = _point_at_distance(oriented, 6.0)
+    if _dist(endpoint, far) <= 1e-6:
+        return None
+    outward = _heading(endpoint, far)
+    travel_heading = outward if role == "back" else _wrap(outward + math.pi)
+    first_heading = _heading(endpoint, middle) if _dist(endpoint, middle) > 1e-6 else outward
+    second_heading = _heading(middle, far) if _dist(middle, far) > 1e-6 else outward
+    curvature = _wrap(second_heading - first_heading) / max(_dist(middle, far), 1e-6)
+    if role == "front":
+        curvature = -curvature
+    return {
+        "point": endpoint,
+        "heading": travel_heading,
+        "curvature": curvature,
+        "middle_point": middle,
+        "far_point": far,
+        "method": "robust_3m_6m_interior_window",
+    }
+
+
+def _local_endpoint_width(left: list[list[float]], right: list[list[float]], side: str, sample_count: int = 5) -> float | None:
+    """Robust local width near an endpoint, never the whole-track median width."""
+    n = min(len(left), len(right))
+    if n <= 0:
+        return None
+    count = min(sample_count, n)
+    indices = range(count) if side == "start" else range(n - count, n)
+    widths = [
+        _dist(
+            [float(left[i][0]), float(left[i][1])],
+            [float(right[i][0]), float(right[i][1])],
+        )
+        for i in indices
+        if len(left[i]) >= 2 and len(right[i]) >= 2
+    ]
+    widths = [w for w in widths if math.isfinite(w) and w > 0.1]
+    if not widths:
+        return None
+    widths.sort()
+    return widths[len(widths) // 2]
+
+
 def _inferred_endpoint(inferred: dict[str, Any], role: str) -> dict[str, Any] | None:
     center = inferred.get("centerline_lcs_m") or []
     left = inferred.get("left_boundary_lcs_m") or []
@@ -61,17 +134,21 @@ def _inferred_endpoint(inferred: dict[str, Any], role: str) -> dict[str, Any] | 
     if len(center) < 2 or not left or not right:
         return None
     side = "start" if role == "back" else "end"
-    state = _endpoint_state(center, side)
+    state = _robust_inferred_motion_state(center, role)
     if state is None:
         return None
     index = 0 if side == "start" else -1
     left_point = [float(left[index][0]), float(left[index][1])]
     right_point = [float(right[index][0]), float(right[index][1])]
+    local_width = _local_endpoint_width(left, right, side)
+    if local_width is None:
+        local_width = _dist(left_point, right_point)
     state.update({
         "side": side,
         "left_point": left_point,
         "right_point": right_point,
-        "local_width_m": _dist(left_point, right_point),
+        "local_width_m": local_width,
+        "width_method": "median_first_or_last_5_union_cross_sections",
     })
     return state
 
@@ -111,6 +188,9 @@ def _nearest_observed_endpoint(
     index = 0 if lane_side == "start" else -1
     left_point = [float(left[index][0]), float(left[index][1])]
     right_point = [float(right[index][0]), float(right[index][1])]
+    local_width = _local_endpoint_width(left, right, lane_side)
+    if local_width is None:
+        local_width = _dist(left_point, right_point)
     return {
         "track_id": str(track.get("track_id")),
         "track_endpoint_side": track_side,
@@ -121,7 +201,8 @@ def _nearest_observed_endpoint(
         "curvature": state["curvature"],
         "left_point": left_point,
         "right_point": right_point,
-        "local_width_m": _dist(left_point, right_point),
+        "local_width_m": local_width,
+        "width_method": "median_first_or_last_5_observed_cross_sections",
     }
 
 
@@ -171,9 +252,10 @@ def evaluate_inferred_endpoint_candidate(
         observed_right = observed["left_point"] if reverse_orientation else observed["right_point"]
         left_distance = _dist(observed_left, inferred_state["left_point"])
         right_distance = _dist(observed_right, inferred_state["right_point"])
+        endpoint_inside_corridor = _point_in_polygon(cp, inferred.get("polygon_lcs_m") or [])
 
         reasons: list[str] = []
-        if longitudinal <= 0.1 and center_distance > 0.25:
+        if longitudinal <= 0.1 and center_distance > 0.25 and not endpoint_inside_corridor:
             reasons.append("not_longitudinally_before_or_after")
         if center_distance > maximum_endpoint_distance_m:
             reasons.append("center_endpoint_distance")
@@ -187,7 +269,10 @@ def evaluate_inferred_endpoint_candidate(
             reasons.append("local_tangent_difference")
         if width_diff > maximum_width_difference_m:
             reasons.append("local_endpoint_width_difference")
-        if curvature_diff > maximum_curvature_difference_per_m:
+        # Retain the old overlap safeguard: when an observed endpoint already
+        # lies in the inferred area, terminal union curvature is not a reliable
+        # reason by itself to break a longitudinal continuation.
+        if curvature_diff > maximum_curvature_difference_per_m and not endpoint_inside_corridor:
             reasons.append("local_curvature_difference")
 
         score = (
@@ -215,11 +300,32 @@ def evaluate_inferred_endpoint_candidate(
             "local_width_difference_m": round(width_diff, 3),
             "curvature_difference_per_m": round(curvature_diff, 5),
             "reverse_boundary_orientation": reverse_orientation,
+            "endpoint_inside_inferred_polygon": endpoint_inside_corridor,
+            "inferred_heading_method": inferred_state.get("method"),
+            "inferred_width_method": inferred_state.get("width_method"),
+            "candidate_width_method": observed.get("width_method"),
             "score": round(score, 4),
             "rejection_reasons": reasons,
             "accepted_by_gates": not reasons,
         })
     return out
+
+
+def _point_in_polygon(point: list[float], polygon: list[list[float]]) -> bool:
+    if len(polygon) < 3:
+        return False
+    x, y = float(point[0]), float(point[1])
+    inside = False
+    j = len(polygon) - 1
+    for i, current in enumerate(polygon):
+        previous = polygon[j]
+        if ((float(current[1]) > y) != (float(previous[1]) > y)) and (
+            x < (float(previous[0]) - float(current[0])) * (y - float(current[1]))
+            / (float(previous[1]) - float(current[1])) + float(current[0])
+        ):
+            inside = not inside
+        j = i
+    return inside
 
 
 def select_unique_continuation(
