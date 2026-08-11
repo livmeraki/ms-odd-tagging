@@ -46,14 +46,18 @@ def _compact_tracks_reference(value: Any, max_points_per_track: int) -> Any:
     if not isinstance(value, dict):
         return value
     compact = dict(value)
-    tracks = value.get("tracks")
-    if isinstance(tracks, dict):
-        compact["tracks"] = {
-            str(object_id): _uniform_rows(points, max_points_per_track)
-            if isinstance(points, list)
-            else points
-            for object_id, points in tracks.items()
-        }
+    pedestrians = value.get("pedestrians")
+    if isinstance(pedestrians, list):
+        compact_pedestrians = []
+        for pedestrian in pedestrians:
+            if not isinstance(pedestrian, dict):
+                continue
+            row = dict(pedestrian)
+            points = pedestrian.get("points")
+            if isinstance(points, list):
+                row["points"] = _uniform_rows(points, max_points_per_track)
+            compact_pedestrians.append(row)
+        compact["pedestrians"] = compact_pedestrians
     return compact
 
 
@@ -277,7 +281,6 @@ class VlmClient:
                     used_overflow_compaction = True
                     payload = self._payload(candidate, overflow_compact=True)
                     self._persist_request(key, candidate, payload, suffix="overflow_compact")
-                    # This is a deterministic retry mode, not a normal network retry.
                     try:
                         data, elapsed_s = self._send_payload(payload)
                         result = {
