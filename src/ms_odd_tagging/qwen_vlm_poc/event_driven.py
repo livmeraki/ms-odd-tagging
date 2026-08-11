@@ -18,8 +18,21 @@ from .candidates import (
 )
 from .config import VlmPocConfig
 from .evidence import frame_summary
-from .geometry import ego_acceleration, ego_speed, finite, motion_state, object_id
+from .geometry import (
+    ego_acceleration,
+    ego_heading,
+    ego_speed,
+    finite,
+    motion_state,
+    object_id,
+)
 from .models import CandidateWindow, EvidenceItem, ScenarioName
+
+
+_PARALLEL_MIN_DISPLACEMENT_M = 1.5
+_PARALLEL_MIN_DURATION_S = 0.8
+_PARALLEL_MAX_ANGLE_DEG = 20.0
+_PARALLEL_REQUIRED_FRACTION = 0.70
 
 
 @dataclass(frozen=True)
@@ -185,6 +198,62 @@ def _strongest_response_pos(
     return max(response_positions, key=score)
 
 
+def _pedestrian_parallel_to_ego_path(
+    context: list[dict[str, Any]], pedestrian_id: str
+) -> bool:
+    """Conservatively reject clear along-road pedestrian motion.
+
+    This is an early-recall filter for ``waiting_for_pedestrian_to_cross`` only.
+    It requires a sufficiently long observed pedestrian track and persistent
+    alignment with the ego path direction. Short, stationary, or ambiguous tracks
+    are retained for VLM review.
+    """
+    positions: list[tuple[float, float, float]] = []
+    ego_headings: list[float] = []
+    for frame in context:
+        timestamp = _timestamp(frame)
+        if timestamp is None:
+            continue
+        for obj in _pedestrian_objects(frame):
+            if object_id(obj) != pedestrian_id:
+                continue
+            point = obj.get("position_lcs_m") or obj.get("center_lcs_m")
+            if (
+                isinstance(point, (list, tuple))
+                and len(point) >= 2
+                and finite(point[0])
+                and finite(point[1])
+            ):
+                positions.append((timestamp, float(point[0]), float(point[1])))
+                ego_headings.append(ego_heading(frame))
+            break
+
+    if len(positions) < 2 or len(ego_headings) < 2:
+        return False
+    duration_s = positions[-1][0] - positions[0][0]
+    dx = positions[-1][1] - positions[0][1]
+    dy = positions[-1][2] - positions[0][2]
+    displacement_m = math.hypot(dx, dy)
+    if (
+        duration_s < _PARALLEL_MIN_DURATION_S
+        or displacement_m < _PARALLEL_MIN_DISPLACEMENT_M
+    ):
+        return False
+
+    ped_x = dx / displacement_m
+    ped_y = dy / displacement_m
+    threshold = math.cos(math.radians(_PARALLEL_MAX_ANGLE_DEG))
+    aligned = 0
+    for heading in ego_headings:
+        ego_x = math.cos(heading)
+        ego_y = math.sin(heading)
+        # abs(dot) treats same-direction and opposite-direction along-road
+        # motion as parallel; neither is a crossing trajectory.
+        if abs(ped_x * ego_x + ped_y * ego_y) >= threshold:
+            aligned += 1
+    return aligned / len(ego_headings) >= _PARALLEL_REQUIRED_FRACTION
+
+
 def _landmarks(
     frames: list[dict[str, Any]],
     context_start_pos: int,
@@ -279,6 +348,9 @@ def generate_waiting_event_candidates(
                 continue
 
             context = frames[context_start_pos : context_end_pos + 1]
+            if _pedestrian_parallel_to_ego_path(context, pedestrian_id):
+                continue
+
             track = [
                 {
                     "frame_index": sample.frame_index,
@@ -361,6 +433,7 @@ def generate_waiting_event_candidates(
                     recall_reasons=[
                         "event_driven_pedestrian_corridor_conflict",
                         "temporally_linked_ego_response",
+                        "non_parallel_pedestrian_path",
                     ],
                     metadata={
                         "candidate_strategy": "event-driven",
