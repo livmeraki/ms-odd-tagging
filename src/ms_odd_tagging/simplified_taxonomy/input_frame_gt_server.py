@@ -171,6 +171,55 @@ requestAnimationFrame(__syncTaggingHeight);
     return html.replace("</body>", script + "</body>", 1)
 
 
+def _inject_bulk_yes_no(html: str) -> str:
+    css = '''<style>
+.bulk-rest{display:inline-flex;gap:4px;margin-left:8px;vertical-align:middle}
+.bulk-rest button{padding:4px 7px;margin:0 2px;font-size:11px;background:#273449;border-color:#475569}
+.bulk-rest .bulk-yes{border-color:#22c55e}
+.bulk-rest .bulk-no{border-color:#ef4444}
+</style>'''
+    script = '''<script>
+function applyRemaining(path,value){
+  const count=rows.length-i;
+  if(count<=0)return;
+  const pretty=label(path);
+  if(!confirm(`Set ${pretty} = ${value.toUpperCase()} for current frame and all ${count-1} remaining sampled frame(s)?`))return;
+  for(let k=i;k<rows.length;k++){
+    ensureGT(rows[k]);
+    set(rows[k].gt,path,value);
+    rows[k].reviewed=true;
+  }
+  persist();
+  render();
+}
+function addBulkYesNoControls(){
+  const groups=document.querySelectorAll('#form .group');
+  scalarPaths.forEach((path,gidx)=>{
+    const values=defs[path]||[];
+    if(!(values.includes('yes')&&values.includes('no')))return;
+    const group=groups[gidx];
+    if(!group||group.querySelector('.bulk-rest'))return;
+    const h=group.querySelector('h3');
+    if(!h)return;
+    const wrap=document.createElement('span');
+    wrap.className='bulk-rest';
+    const yes=document.createElement('button');
+    yes.type='button'; yes.className='bulk-yes'; yes.textContent='YES → rest';
+    yes.onclick=(e)=>{e.stopPropagation();applyRemaining(path,'yes');};
+    const no=document.createElement('button');
+    no.type='button'; no.className='bulk-no'; no.textContent='NO → rest';
+    no.onclick=(e)=>{e.stopPropagation();applyRemaining(path,'no');};
+    wrap.append(yes,no); h.appendChild(wrap);
+  });
+}
+const __renderBeforeBulk=render;
+render=function(){__renderBeforeBulk();addBulkYesNoControls();};
+render();
+</script>'''
+    html = html.replace("</head>", css + "</head>", 1)
+    return html.replace("</body>", script + "</body>", 1)
+
+
 def _make_handler(gt_path: Path, recording: str, sample_hz: float):
     class Handler(BaseHTTPRequestHandler):
         def _cors(self) -> None:
@@ -250,6 +299,7 @@ def main() -> int:
     snapshot_key = f"simplified-gt-server-v1:{recording}:{len(rows)}:{rows[-1]['frame_index']}"
     html = html.replace(old_key, snapshot_key)
     html = _inject_equal_height_sidebar(html)
+    html = _inject_bulk_yes_no(html)
     html = _inject_autosave(html, endpoint, recording, args.sample_hz)
     html_output.parent.mkdir(parents=True, exist_ok=True)
     html_output.write_text(html, encoding="utf-8")
