@@ -1,9 +1,11 @@
 """Final role pass using piece-local track geometry.
 
 The existing integrated detector owns reconstruction, inferred affiliation,
-connectors, and topology-supported stitching. This wrapper adds a conservative
-embedded-observed-fragment absorption pass before final lane ordering, then uses
-piece-local geometry for ego/left/right role classification.
+connectors, and topology-supported stitching. This wrapper adds conservative
+post-construction identity reconciliation before final lane ordering:
+1. absorb standalone observed fragments embedded in inferred gaps;
+2. merge unambiguous exact-touch canonical endpoints using local geometry;
+3. classify final ego/left/right roles from piece-local geometry.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ from typing import Any
 from .detector import _lane_output, _nearest_member
 from .detector_static_order_integrated import run_lane_debug_v2 as run_integrated
 from .embedded_fragment_absorption import absorb_embedded_observed_fragments
+from .exact_touch_reconciliation import reconcile_exact_touch_tracks
 from .static_lane_order_piece_local import (
     build_constructed_lane_network,
     build_static_lane_order,
@@ -123,9 +126,8 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
     result = run_integrated(recording, cfg)
     settings = {**(result.get("debug_config") or {}), **cfg}
 
-    # Repair duplicate track identities where a standalone observed fragment is
-    # already embedded in one host track's inferred-gap geometry. Preserve the
-    # host track ID and replace only the inferred gap with the observed fragment.
+    # Stage 1: repair duplicate identities where a standalone observed fragment
+    # already occupies one host track's inferred-gap geometry.
     tracks, absorption_debug = absorb_embedded_observed_fragments(
         result.get("continuous_lane_tracks", []),
         result.get("lane_geometry", []),
@@ -135,11 +137,39 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         maximum_width_difference_m=float(cfg.get("embedded_fragment_maximum_width_difference_m", 0.75)),
         require_boundary_continuity=bool(cfg.get("embedded_fragment_require_boundary_continuity", True)),
     )
-    result["continuous_lane_tracks"] = tracks
     result["embedded_observed_fragment_absorption_debug"] = absorption_debug
     result["embedded_observed_fragment_absorption_count"] = sum(
         1 for row in absorption_debug if row.get("accepted")
     )
+
+    # Stage 2: reconcile direct canonical touches that ordinary forward-gap
+    # continuation intentionally skipped. Use local endpoint width and boundary
+    # endpoints; never whole-lane median width and never a synthetic connector.
+    tracks, exact_touch_debug = reconcile_exact_touch_tracks(
+        tracks,
+        result.get("lane_geometry", []),
+        maximum_endpoint_gap_m=float(cfg.get("exact_touch_maximum_endpoint_gap_m", 0.25)),
+        maximum_heading_difference_deg=float(cfg.get("exact_touch_maximum_heading_difference_deg", 8.0)),
+        maximum_local_width_difference_m=float(cfg.get("exact_touch_maximum_local_width_difference_m", 0.5)),
+        maximum_boundary_endpoint_gap_m=float(cfg.get("exact_touch_maximum_boundary_endpoint_gap_m", 0.25)),
+    )
+    result["continuous_lane_tracks"] = tracks
+    result["exact_touch_reconciliation_debug"] = exact_touch_debug
+    result["exact_touch_reconciliation_count"] = sum(
+        1 for row in exact_touch_debug if row.get("accepted") and row.get("action") == "merge_exact_touch_tracks_preserve_source_id"
+    )
+    result["post_construction_identity_audit"] = {
+        "embedded_fragment_candidates_rejected": sum(
+            1 for row in absorption_debug if not row.get("accepted")
+        ),
+        "exact_touch_candidates_rejected": sum(
+            1 for row in exact_touch_debug if row.get("eligible") is False
+        ),
+        "ambiguous_exact_touch_candidates": sum(
+            1 for row in exact_touch_debug
+            if "ambiguous_fork_multiple_exact_touch_destinations" in (row.get("rejection_reasons") or [])
+        ),
+    }
 
     lane_order = build_static_lane_order(
         tracks,
@@ -157,11 +187,19 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         "candidate_projection": "nearest_valid_track_piece_centerline",
         "static_inferred_corridor_participates": True,
         "embedded_observed_fragment_absorption_before_final_order": True,
+        "exact_touch_reconciliation_before_final_order": True,
     }
     result["embedded_fragment_absorption_policy"] = {
         "method": "replace_unambiguous_host_inferred_gap_with_standalone_observed_fragment",
         "preserve_host_track_id": True,
         "global_zero_gap_relaxation": False,
     }
-    result["schema_version"] = "lane-debug-v2-piece-local-final-role-v3-embedded-fragment-absorption"
+    result["exact_touch_reconciliation_policy"] = {
+        "method": "canonical_local_endpoint_touch_merge",
+        "preserve_source_track_id": True,
+        "synthetic_connector": False,
+        "whole_lane_median_width_used": False,
+        "fork_policy": "reject_ambiguous_unless_unique_boundary_identity_winner",
+    }
+    result["schema_version"] = "lane-debug-v2-piece-local-final-role-v4-exact-touch-reconciliation"
     return result
