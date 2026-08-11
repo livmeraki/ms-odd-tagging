@@ -1,8 +1,12 @@
 """Observed-first continuous track construction for lane-debug v2.
 
-Exact canonical observed continuations are resolved before any curvature-based
-inferred gap is allowed to participate. This prevents leapfrog tracks where a
-real observed fragment is skipped only because its forward gap is near zero.
+Continuation priority is intentionally evidence-first:
+1. exact canonical observed touch;
+2. unique local interior endpoint affiliation between fragmented observed lanes;
+3. curvature-based inferred gap.
+
+This prevents leapfrog tracks while allowing short/noisy canonical fragments of
+the same physical lane to integrate before synthetic curvature inference.
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ from .continuous_tracks import (
     _trajectory_cost,
     _trajectory_points,
 )
+from .observed_local_affiliation import build_observed_local_affiliation_graph
 from .observed_touch_graph import (
     build_observed_touch_graph,
     inferred_gap_occupied_by_observed_fragment,
@@ -28,11 +33,15 @@ def build_continuous_tracks(
     lane_geometry: list[dict[str, Any]],
     recording: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, str], list[dict[str, Any]]]:
-    """Construct physical tracks with observed exact-touch edges taking priority."""
+    """Construct physical tracks using exact, local-affiliation, then curvature evidence."""
     lanes = {str(l["lane_id"]): l for l in lane_geometry if l.get("assignment_valid")}
     trajectory = _trajectory_points(recording)
 
     observed_edges, observed_debug = build_observed_touch_graph(lane_geometry)
+    local_edges, local_debug = build_observed_local_affiliation_graph(
+        lane_geometry,
+        excluded_source_ids=set(observed_edges),
+    )
     proposals: list[dict[str, Any]] = []
 
     # Priority 0: real observed canonical continuations. These contain no
@@ -54,11 +63,37 @@ def build_continuous_tracks(
             "evidence": edge,
         })
 
+    # Priority 1: fragmented observed lanes that are not exact-touch but have a
+    # unique longitudinal continuation under the same 3/4.5/6 m interior
+    # geometry evidence used for inferred-lane BACK/FRONT affiliation.
+    for source_id, edge in local_edges.items():
+        destination_id = str(edge["destination_lane_id"])
+        if source_id not in lanes or destination_id not in lanes:
+            continue
+        proposals.append({
+            "source": source_id,
+            "destination": destination_id,
+            "priority": 1,
+            "connection_kind": "observed_local_interior_affiliation",
+            "score": float(edge.get("score", math.inf)),
+            "gap_m": edge.get("center_gap_m"),
+            "projected": edge.get("connection_centerline_lcs_m") or [],
+            "gap_polygon": edge.get("connection_polygon_lcs_m") or [],
+            "evidence": edge,
+        })
+
     inferred_rejections: list[dict[str, Any]] = []
     for source_id, lane in lanes.items():
-        # If a valid observed continuation exists, inferred candidates from the
-        # same source are not even eligible. This is the core anti-leapfrog rule.
-        if source_id in observed_edges:
+        # Higher-confidence observed evidence blocks curvature inference from the
+        # same source. Exact touch is strongest; local affiliation is next.
+        higher_kind = (
+            "observed_exact_touch"
+            if source_id in observed_edges
+            else "observed_local_interior_affiliation"
+            if source_id in local_edges
+            else None
+        )
+        if higher_kind is not None:
             for cont in lane.get("curvature_continuations") or []:
                 destination_id = cont.get("destination_lane_id")
                 if destination_id:
@@ -67,7 +102,7 @@ def build_continuous_tracks(
                         "destination": str(destination_id),
                         "connection_kind": "inferred_gap",
                         "accepted": False,
-                        "rejection_reason": "observed_exact_touch_has_priority",
+                        "rejection_reason": f"{higher_kind}_has_priority",
                     })
             continue
 
@@ -102,7 +137,7 @@ def build_continuous_tracks(
             proposals.append({
                 "source": source_id,
                 "destination": destination_id,
-                "priority": 1,
+                "priority": 2,
                 "connection_kind": "inferred_gap",
                 "score": float(accepted.get("score", math.inf)),
                 "gap_m": accepted.get("gap_m"),
@@ -117,8 +152,8 @@ def build_continuous_tracks(
         outgoing[proposal["source"]].append(proposal)
         incoming[proposal["destination"]].append(proposal)
 
-    # Observed edges always beat inferred edges. Score remains the secondary
-    # discriminator within the same evidence class.
+    # Higher-confidence evidence always beats lower-confidence evidence. Score
+    # remains the secondary discriminator within the same evidence class.
     best_out = {
         src: min(items, key=lambda p: (p["priority"], p["score"], p["destination"]))
         for src, items in outgoing.items()
@@ -183,18 +218,29 @@ def build_continuous_tracks(
             edge = accepted_edges.get(current)
             if not edge:
                 break
-            if edge.get("connection_kind") == "inferred_gap":
-                gap = edge.get("projected") or []
-                if gap:
-                    pieces.append({
-                        "kind": "inferred_gap",
-                        "source_lane_id": current,
-                        "destination_lane_id": edge["destination"],
-                        "centerline_lcs_m": gap,
-                        "polygon_lcs_m": edge.get("gap_polygon") or [],
-                        "connection_evidence": edge.get("evidence"),
-                    })
-                    _append_points(merged, gap)
+            connection_kind = edge.get("connection_kind")
+            gap = edge.get("projected") or []
+            if connection_kind == "inferred_gap" and gap:
+                pieces.append({
+                    "kind": "inferred_gap",
+                    "source_lane_id": current,
+                    "destination_lane_id": edge["destination"],
+                    "centerline_lcs_m": gap,
+                    "polygon_lcs_m": edge.get("gap_polygon") or [],
+                    "connection_evidence": edge.get("evidence"),
+                })
+                _append_points(merged, gap)
+            elif connection_kind == "observed_local_interior_affiliation" and gap:
+                pieces.append({
+                    "kind": "canonical_track_stitch",
+                    "source_lane_id": current,
+                    "destination_lane_id": edge["destination"],
+                    "centerline_lcs_m": gap,
+                    "polygon_lcs_m": edge.get("gap_polygon") or [],
+                    "connection_method": "observed_fragment_local_interior_endpoint_affiliation",
+                    "connection_evidence": edge.get("evidence"),
+                })
+                _append_points(merged, gap)
             # observed_exact_touch intentionally inserts no connector piece.
             current = edge["destination"]
 
@@ -218,6 +264,11 @@ def build_continuous_tracks(
                 for lane_id in members
                 if accepted_edges.get(lane_id, {}).get("connection_kind") == "observed_exact_touch"
             ),
+            "observed_local_affiliation_edge_count": sum(
+                1
+                for lane_id in members
+                if accepted_edges.get(lane_id, {}).get("connection_kind") == "observed_local_interior_affiliation"
+            ),
         }
         tracks.append(track)
         for lane_id in members:
@@ -232,6 +283,7 @@ def build_continuous_tracks(
     ]
     edge_debug = (
         [{"debug_stage": "observed_touch_graph", **row} for row in observed_debug]
+        + [{"debug_stage": "observed_local_affiliation", **row} for row in local_debug]
         + proposal_debug
         + rejected_edges
         + inferred_rejections
