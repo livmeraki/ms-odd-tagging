@@ -69,6 +69,30 @@ def _repeat(objects, count=8):
     return [[copy.deepcopy(item) for item in objects] for _ in range(count)]
 
 
+def _crossing_pedestrian_track(
+    object_id: str = "ped",
+    *,
+    x: float = 10.0,
+    start_y: float = 7.0,
+    step_y: float = -1.0,
+    count: int = 15,
+):
+    return [
+        [
+            _object(
+                object_id,
+                "pedestrian",
+                x,
+                start_y + index * step_y,
+                length=0.5,
+                width=0.5,
+                velocity=(0.0, step_y / 0.1),
+            )
+        ]
+        for index in range(count)
+    ]
+
+
 def _lane_context(lanes, *, direction="left"):
     result = {}
     source, target = "lane-a", "lane-b"
@@ -232,11 +256,55 @@ def test_behind_pedestrian_on_driveable_excludes_crosswalk_pedestrian():
 
 
 def test_waiting_for_pedestrian_requires_response_not_unrelated_stationary():
-    ped = _object("ped", "pedestrian", 6.0, 0.2, length=0.5, width=0.5, velocity=(1.0, 0.0))
-    speeds = [3.0, 2.0, 1.0, 0.3, 0.1, 0.1, 0.1, 0.1]
+    objects = _crossing_pedestrian_track()
+    speeds = [4.0, 4.0, 3.0, 2.0, 1.0, 0.3, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
     accel = [-0.5] * len(speeds)
-    assert _scenario(_events(_frames(speeds, _repeat([ped]), accelerations=accel)), "waiting_for_pedestrian_to_cross")
-    assert not _scenario(_events(_frames([0.0] * 8, _repeat([ped]))), "waiting_for_pedestrian_to_cross")
+    event = _scenario(
+        _events(_frames(speeds, objects, accelerations=accel)),
+        "waiting_for_pedestrian_to_cross",
+    )[0]
+    assert event.evidence["pedestrian_id"] == "object:ped"
+    assert event.evidence["path_conflict_geometry"] == "pedestrian_crosses_ego_future_path_corridor"
+    assert event.evidence["minimum_path_distance_m"] <= 1.5
+    assert event.evidence["lateral_displacement_m"] >= 3.0
+
+    stationary = _frames([0.0] * len(objects), objects)
+    assert not _scenario(_events(stationary), "waiting_for_pedestrian_to_cross")
+
+
+def test_waiting_for_pedestrian_rejects_crossing_without_ego_response():
+    objects = _crossing_pedestrian_track()
+    speeds = [4.0] * len(objects)
+    assert not _scenario(
+        _events(_frames(speeds, objects)),
+        "waiting_for_pedestrian_to_cross",
+    )
+
+
+def test_waiting_for_pedestrian_rejects_near_parallel_pedestrian():
+    ped = _object("ped", "pedestrian", 8.0, 0.4, length=0.5, width=0.5, velocity=(1.0, 0.0))
+    speeds = [4.0, 4.0, 3.0, 2.0, 1.0, 0.3, 0.1, 0.1, 0.1, 0.1]
+    accel = [-0.5] * len(speeds)
+    assert not _scenario(
+        _events(_frames(speeds, _repeat([ped], len(speeds)), accelerations=accel)),
+        "waiting_for_pedestrian_to_cross",
+    )
+
+
+def test_waiting_for_pedestrian_outputs_only_accepted_pedestrian_id():
+    crossing = _crossing_pedestrian_track("crossing")
+    parallel = [
+        _object("parallel", "pedestrian", 12.0, 0.8, length=0.5, width=0.5, velocity=(1.0, 0.0))
+        for _ in crossing
+    ]
+    objects = [row + [parallel[index]] for index, row in enumerate(crossing)]
+    speeds = [4.0, 4.0, 3.0, 2.0, 1.0, 0.3, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+    accel = [-0.5] * len(speeds)
+    events = _scenario(
+        _events(_frames(speeds, objects, accelerations=accel)),
+        "waiting_for_pedestrian_to_cross",
+    )
+    assert [event.evidence["pedestrian_id"] for event in events] == ["object:crossing"]
 
 
 def test_barrier_on_driveable_not_roadside_guardrail():

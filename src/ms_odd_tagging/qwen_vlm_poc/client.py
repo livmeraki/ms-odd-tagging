@@ -82,11 +82,12 @@ def _vlm_candidate_input(
     ):
         ego_speed_series = list(candidate.metadata.get("ego_speed_series") or [])
         pedestrian_tracks = candidate.metadata.get("pedestrian_tracks_reference")
+        focused_primary_id = candidate.metadata.get("focused_primary_pedestrian_id")
         if overflow_compact:
             ego_speed_series = _uniform_rows(ego_speed_series, 12)
             pedestrian_tracks = _compact_tracks_reference(pedestrian_tracks, 10)
 
-        return {
+        payload = {
             "recording_id": candidate.recording_id,
             "scenario": candidate.scenario,
             "window_start_frame": candidate.start_frame,
@@ -107,6 +108,20 @@ def _vlm_candidate_input(
                 else "compact_bev_tracks_speed"
             ),
         }
+        if focused_primary_id is not None:
+            payload.update(
+                {
+                    "focused_evaluation": True,
+                    "primary_pedestrian_id": str(focused_primary_id),
+                    "visual_focus_contract": {
+                        "yellow_outline_and_printed_id": "only_the_primary_pedestrian_currently_being_evaluated",
+                        "yellow_brown_trail": "observed_trajectory_of_the_primary_pedestrian",
+                        "cyan_line_and_band": "ego_actual_future_trajectory_and_corridor",
+                        "ego_speed_series": "same_temporal_interaction_interval_as_this_primary_pedestrian",
+                    },
+                }
+            )
+        return payload
     return candidate.to_dict()
 
 

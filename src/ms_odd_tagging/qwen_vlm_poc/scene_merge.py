@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .config import VlmPocConfig
-from .future_path import future_ego_path, pedestrian_path_distance
+from .future_path import DEFAULT_CORRIDOR_HALF_WIDTH_M, distance_to_polyline, future_ego_path, pedestrian_path_distance
 from .geometry import ego_speed, lcs_to_ego, object_ego_xy, object_id
 from .models import CandidateWindow, EvidenceItem
 
@@ -149,6 +149,168 @@ def _landmark_event_indices(
         selected.extend(value for value in fill if value not in selected)
 
     return sorted(selected[:count]), landmarks
+
+
+def _path_points(path_geometry: dict[str, Any]) -> list[tuple[float, float]]:
+    return [
+        (float(row["longitudinal_m"]), float(row["lateral_m"]))
+        for row in path_geometry.get("points", [])
+        if isinstance(row.get("longitudinal_m"), (int, float))
+        and not isinstance(row.get("longitudinal_m"), bool)
+        and isinstance(row.get("lateral_m"), (int, float))
+        and not isinstance(row.get("lateral_m"), bool)
+    ]
+
+
+def _pedestrian_path_distances(
+    available: list[int],
+    frames_by_index: dict[int, dict[str, Any]],
+    pedestrian_id: str,
+) -> list[dict[str, Any]]:
+    """Neutral distance between one pedestrian and actual future ego corridor."""
+    rows: list[dict[str, Any]] = []
+    for frame_index in available:
+        frame = frames_by_index.get(frame_index)
+        if frame is None:
+            continue
+        path = future_ego_path(frames_by_index, frame_index)
+        points = _path_points(path)
+        if not points:
+            continue
+        for obj in frame.get("objects", []):
+            if object_id(obj) != pedestrian_id:
+                continue
+            position = object_ego_xy(obj, frame)
+            if position is None:
+                continue
+            distance = distance_to_polyline(position, points)
+            if distance is None:
+                continue
+            timestamp = frame.get("time_since_start_s")
+            rows.append(
+                {
+                    "frame": frame_index,
+                    "time_s": round(float(timestamp), 3)
+                    if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool)
+                    else None,
+                    "longitudinal_m": round(float(position[0]), 3),
+                    "lateral_m": round(float(position[1]), 3),
+                    "distance_to_future_path_m": round(float(distance), 3),
+                    "corridor_half_width_m": path.get("corridor_half_width_m", DEFAULT_CORRIDOR_HALF_WIDTH_M),
+                }
+            )
+    return rows
+
+
+def _pedestrian_focus_score(
+    available: list[int],
+    frames_by_index: dict[int, dict[str, Any]],
+    pedestrian_id: str,
+    raw_start: int,
+    raw_end: int,
+) -> dict[str, Any]:
+    """Rank one pedestrian with geometry/motion only; never model-facing truth."""
+    distances = _pedestrian_path_distances(available, frames_by_index, pedestrian_id)
+    if not distances:
+        return {
+            "pedestrian_id": pedestrian_id,
+            "score": -1.0,
+            "min_distance_to_future_path_m": None,
+            "lateral_span_m": 0.0,
+            "speed_overlap_min_mps": None,
+            "observed_frame_count": 0,
+        }
+    inside = [row for row in distances if raw_start <= int(row["frame"]) <= raw_end] or distances
+    min_distance = min(float(row["distance_to_future_path_m"]) for row in inside)
+    laterals = [float(row["lateral_m"]) for row in inside]
+    lateral_span = max(laterals) - min(laterals) if laterals else 0.0
+    speeds = [
+        ego_speed(frames_by_index[row["frame"]])
+        for row in inside
+        if frames_by_index.get(row["frame"]) is not None and ego_speed(frames_by_index[row["frame"]]) is not None
+    ]
+    min_speed = min(speeds) if speeds else None
+    temporal_overlap = len([row for row in distances if raw_start <= int(row["frame"]) <= raw_end])
+    score = (
+        -min_distance
+        + 0.25 * abs(lateral_span)
+        + (2.0 - min(float(min_speed), 2.0) if min_speed is not None else 0.0)
+        + min(temporal_overlap, 10) * 0.01
+    )
+    closest = min(inside, key=lambda row: float(row["distance_to_future_path_m"]))
+    return {
+        "pedestrian_id": pedestrian_id,
+        "score": round(float(score), 3),
+        "min_distance_to_future_path_m": round(float(min_distance), 3),
+        "lateral_span_m": round(float(lateral_span), 3),
+        "speed_overlap_min_mps": round(float(min_speed), 3) if min_speed is not None else None,
+        "observed_frame_count": len(distances),
+        "closest_frame": closest["frame"],
+    }
+
+
+def _pedestrian_landmark_indices(
+    available: list[int],
+    raw_start: int,
+    raw_end: int,
+    count: int,
+    frames_by_index: dict[int, dict[str, Any]],
+    pedestrian_id: str,
+) -> tuple[list[int], dict[str, int | None], list[dict[str, Any]]]:
+    """Select per-pedestrian interaction landmarks for a focused VLM request."""
+    values = sorted(set(available))
+    if not values or count <= 0:
+        return [], {}, []
+    distances = _pedestrian_path_distances(values, frames_by_index, pedestrian_id)
+    if not distances:
+        selected, landmarks = _landmark_event_indices(
+            values, raw_start, raw_end, count, frames_by_index, [pedestrian_id]
+        )
+        return selected, landmarks, distances
+
+    inside = [row for row in distances if raw_start <= int(row["frame"]) <= raw_end] or distances
+    corridor_rows = [
+        row
+        for row in inside
+        if float(row["distance_to_future_path_m"]) <= float(row.get("corridor_half_width_m") or DEFAULT_CORRIDOR_HALF_WIDTH_M)
+    ]
+    speeds = [
+        index
+        for index in values
+        if frames_by_index.get(index) is not None and ego_speed(frames_by_index[index]) is not None
+    ]
+    before = [value for value in values if value < raw_start]
+    after = [value for value in values if value > raw_end]
+    closest = min(inside, key=lambda row: float(row["distance_to_future_path_m"]))
+    min_speed_frame = min(speeds, key=lambda index: ego_speed(frames_by_index[index])) if speeds else None
+    landmarks: dict[str, int | None] = {
+        "before_approach": before[-1] if before else values[0],
+        "raw_trigger_start": _nearest(values, raw_start),
+        "first_entry_toward_corridor": int(corridor_rows[0]["frame"]) if corridor_rows else int(closest["frame"]),
+        "closest_to_future_corridor": int(closest["frame"]),
+        "minimum_ego_speed_during_interaction": min_speed_frame,
+        "exit_or_resolution": _nearest(values, raw_end),
+        "post_interaction": after[0] if after else None,
+    }
+    selected: list[int] = []
+    for key in (
+        "before_approach",
+        "raw_trigger_start",
+        "first_entry_toward_corridor",
+        "closest_to_future_corridor",
+        "minimum_ego_speed_during_interaction",
+        "exit_or_resolution",
+        "post_interaction",
+    ):
+        value = landmarks.get(key)
+        if value is not None and value not in selected:
+            selected.append(value)
+        if len(selected) >= count:
+            break
+    if len(selected) < count:
+        remaining = [value for value in values if value not in selected and raw_start <= value <= raw_end]
+        selected.extend(_uniform_indices(remaining, count - len(selected)))
+    return sorted(set(selected))[:count], landmarks, distances
 
 
 def _ego_measurements(
@@ -351,37 +513,151 @@ def merge_waiting_scene_candidates(
             for item in cluster
         ]
 
-        available = [index for index in frame_indices if context_start <= index <= context_end]
-        selected, landmarks = _landmark_event_indices(
-            available,
-            raw_start,
-            raw_end,
-            config.max_bev_images,
-            frame_lookup,
-            pedestrian_ids,
-        )
-        ego_measurements = _ego_measurements(selected, frame_lookup)
-        ego_speed_series = _dense_ego_speed_series(available, frame_lookup)
-        pedestrian_measurements = _pedestrian_measurements(selected, frame_lookup, pedestrian_ids)
-        ego_future_paths = [future_ego_path(frame_lookup, frame_index) for frame_index in selected]
-        reference_frame = landmarks.get("closest_pedestrian_to_future_path") or landmarks.get("interaction_onset")
-        pedestrian_tracks_reference = _reference_pedestrian_tracks(
-            reference_frame,
-            available,
-            frame_lookup,
-            pedestrian_ids,
-        )
+        scene_available = [index for index in frame_indices if context_start <= index <= context_end]
         start_t = times.get(context_start, min(item.start_timestamp_s for item in cluster))
         end_t = times.get(context_end, max(item.end_timestamp_s for item in cluster))
-        candidate_id = (
+        parent_candidate_id = (
             f"{recording_id}_waiting_for_pedestrian_to_cross_scene_"
             f"{context_start:06d}_{context_end:06d}"
         )
-        visual_evidence_id = f"{candidate_id}:bev_sequence"
+        focus_scores = []
+        for item in cluster:
+            item_raw_start, item_raw_end = _raw_bounds(item)
+            item_available = [index for index in frame_indices if item.start_frame <= index <= item.end_frame]
+            for pedestrian_id in sorted({str(value) for value in item.primary_object_ids}):
+                score = _pedestrian_focus_score(
+                    item_available,
+                    frame_lookup,
+                    pedestrian_id,
+                    item_raw_start,
+                    item_raw_end,
+                )
+                score["source_candidate_id"] = item.candidate_id
+                score["raw_trigger_start_frame"] = item_raw_start
+                score["raw_trigger_end_frame"] = item_raw_end
+                score["candidate_context_start_frame"] = item.start_frame
+                score["candidate_context_end_frame"] = item.end_frame
+                focus_scores.append(score)
+        focus_rank = sorted(
+            focus_scores,
+            key=lambda row: (
+                -float(row.get("score") or -1.0),
+                str(row.get("pedestrian_id") or ""),
+            ),
+        )
 
-        results.append(
-            CandidateWindow(
-                candidate_id=candidate_id,
+        for rank, focus in enumerate(focus_rank, start=1):
+            pedestrian_id = str(focus["pedestrian_id"])
+            item_context_start = int(focus["candidate_context_start_frame"])
+            item_context_end = int(focus["candidate_context_end_frame"])
+            item_raw_start = int(focus["raw_trigger_start_frame"])
+            item_raw_end = int(focus["raw_trigger_end_frame"])
+            available = [index for index in frame_indices if item_context_start <= index <= item_context_end]
+            selected, landmarks, path_distances = _pedestrian_landmark_indices(
+                available,
+                item_raw_start,
+                item_raw_end,
+                config.max_bev_images,
+                frame_lookup,
+                pedestrian_id,
+            )
+            ego_measurements = _ego_measurements(selected, frame_lookup)
+            ego_speed_series = _dense_ego_speed_series(available, frame_lookup)
+            pedestrian_measurements = _pedestrian_measurements(selected, frame_lookup, [pedestrian_id])
+            ego_future_paths = [future_ego_path(frame_lookup, frame_index) for frame_index in selected]
+            reference_frame = (
+                landmarks.get("closest_to_future_corridor")
+                or landmarks.get("first_entry_toward_corridor")
+                or landmarks.get("raw_trigger_start")
+            )
+            pedestrian_tracks_reference = _reference_pedestrian_tracks(
+                reference_frame,
+                available,
+                frame_lookup,
+                [pedestrian_id],
+            )
+            candidate_id = f"{parent_candidate_id}_ped_{pedestrian_id}"
+            visual_evidence_id = f"{candidate_id}:bev_sequence"
+            results.append(
+                CandidateWindow(
+                    candidate_id=candidate_id,
+                    recording_id=recording_id,
+                    scenario="waiting_for_pedestrian_to_cross",
+                    start_frame=context_start,
+                    end_frame=context_end,
+                    start_timestamp_s=float(start_t),
+                    end_timestamp_s=float(end_t),
+                    evidence=[
+                        EvidenceItem(
+                            evidence_id=visual_evidence_id,
+                            kind="bev_sequence",
+                            summary="Focused BEVs for one candidate pedestrian with observed trail, neutral future ego path, and dense ego speed.",
+                            data={"frame_indices": selected, "primary_pedestrian_id": pedestrian_id},
+                        )
+                    ],
+                    selected_frame_indices=selected,
+                    primary_object_ids=[pedestrian_id],
+                    recall_reasons=["focused_scene_level_event_candidate"],
+                    metadata={
+                        "candidate_strategy": "event-driven",
+                        "vlm_input_mode": "focused_bev_primary_pedestrian_track_future_path_and_dense_speed",
+                        "focused_vlm_request": True,
+                        "focused_primary_pedestrian_id": pedestrian_id,
+                        "focused_rank": rank,
+                        "focused_rank_count": len(focus_rank),
+                        "focused_rank_score": focus,
+                        "visual_evidence_id": visual_evidence_id,
+                        "parent_scene_candidate_id": parent_candidate_id,
+                        "scene_merged": len(cluster) > 1,
+                        "raw_trigger_start_frame": item_raw_start,
+                        "raw_trigger_end_frame": item_raw_end,
+                        "scene_raw_trigger_start_frame": raw_start,
+                        "scene_raw_trigger_end_frame": raw_end,
+                        "frame_selection_strategy": "focused_primary_pedestrian_landmarks",
+                        "frame_selection_landmarks": landmarks,
+                        "ego_measurements": ego_measurements,
+                        "ego_speed_series": ego_speed_series,
+                        "pedestrian_measurements": pedestrian_measurements,
+                        "pedestrian_tracks_reference": pedestrian_tracks_reference,
+                        "ego_future_paths": ego_future_paths,
+                        "pedestrian_ids": [pedestrian_id],
+                        "scene_pedestrian_ids": pedestrian_ids,
+                        "source_candidate_ids": source_ids,
+                        "source_candidate_count": len(cluster),
+                        "source_trigger_intervals": source_trigger_intervals,
+                        "source_candidate_id": focus.get("source_candidate_id"),
+                        "pedestrian_path_distance_series": path_distances,
+                        "scene_merge_policy": "pairwise_raw_interval_proximity_with_focused_pedestrian_subrequests",
+                        "scene_merge_gap_s": config.event_scene_merge_gap_s,
+                    },
+                )
+            )
+
+        if not focus_rank:
+            selected, landmarks = _landmark_event_indices(
+                scene_available,
+                raw_start,
+                raw_end,
+                config.max_bev_images,
+                frame_lookup,
+                pedestrian_ids,
+            )
+            ego_measurements = _ego_measurements(selected, frame_lookup)
+            ego_speed_series = _dense_ego_speed_series(scene_available, frame_lookup)
+            pedestrian_measurements = _pedestrian_measurements(selected, frame_lookup, pedestrian_ids)
+            ego_future_paths = [future_ego_path(frame_lookup, frame_index) for frame_index in selected]
+            reference_frame = landmarks.get("closest_pedestrian_to_future_path") or landmarks.get("interaction_onset")
+            pedestrian_tracks_reference = _reference_pedestrian_tracks(
+                reference_frame,
+                scene_available,
+                frame_lookup,
+                pedestrian_ids,
+            )
+            candidate_id = parent_candidate_id
+            visual_evidence_id = f"{candidate_id}:bev_sequence"
+            results.append(
+                CandidateWindow(
+                    candidate_id=candidate_id,
                 recording_id=recording_id,
                 scenario="waiting_for_pedestrian_to_cross",
                 start_frame=context_start,
@@ -399,28 +675,28 @@ def merge_waiting_scene_candidates(
                 selected_frame_indices=selected,
                 primary_object_ids=pedestrian_ids,
                 recall_reasons=["scene_level_event_candidate"],
-                metadata={
-                    "candidate_strategy": "event-driven",
-                    "vlm_input_mode": "bev_plus_neutral_future_path_tracks_and_dense_speed",
-                    "visual_evidence_id": visual_evidence_id,
-                    "scene_merged": len(cluster) > 1,
-                    "raw_trigger_start_frame": raw_start,
-                    "raw_trigger_end_frame": raw_end,
-                    "frame_selection_strategy": "neutral_event_landmarks",
-                    "frame_selection_landmarks": landmarks,
-                    "ego_measurements": ego_measurements,
-                    "ego_speed_series": ego_speed_series,
-                    "pedestrian_measurements": pedestrian_measurements,
-                    "pedestrian_tracks_reference": pedestrian_tracks_reference,
-                    "ego_future_paths": ego_future_paths,
-                    "pedestrian_ids": pedestrian_ids,
-                    "source_candidate_ids": source_ids,
-                    "source_candidate_count": len(cluster),
-                    "source_trigger_intervals": source_trigger_intervals,
-                    "scene_merge_policy": "pairwise_raw_interval_proximity",
-                    "scene_merge_gap_s": config.event_scene_merge_gap_s,
-                },
+                    metadata={
+                        "candidate_strategy": "event-driven",
+                        "vlm_input_mode": "bev_plus_neutral_future_path_tracks_and_dense_speed",
+                        "visual_evidence_id": visual_evidence_id,
+                        "scene_merged": len(cluster) > 1,
+                        "raw_trigger_start_frame": raw_start,
+                        "raw_trigger_end_frame": raw_end,
+                        "frame_selection_strategy": "neutral_event_landmarks",
+                        "frame_selection_landmarks": landmarks,
+                        "ego_measurements": ego_measurements,
+                        "ego_speed_series": ego_speed_series,
+                        "pedestrian_measurements": pedestrian_measurements,
+                        "pedestrian_tracks_reference": pedestrian_tracks_reference,
+                        "ego_future_paths": ego_future_paths,
+                        "pedestrian_ids": pedestrian_ids,
+                        "source_candidate_ids": source_ids,
+                        "source_candidate_count": len(cluster),
+                        "source_trigger_intervals": source_trigger_intervals,
+                        "scene_merge_policy": "pairwise_raw_interval_proximity",
+                        "scene_merge_gap_s": config.event_scene_merge_gap_s,
+                    },
+                )
             )
-        )
 
     return results

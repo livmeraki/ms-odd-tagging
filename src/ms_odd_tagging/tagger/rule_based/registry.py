@@ -403,6 +403,10 @@ def validate_config(config: dict[str, Any]) -> None:
         "behind_pedestrian_maximum_gap_m", "pedestrian_corridor_lateral_m",
         "pedestrian_conflict_lateral_m", "minimum_driveable_confidence",
         "waiting_minimum_duration_s", "barrier_maximum_distance_m",
+        "waiting_path_distance_m", "waiting_minimum_transverse_motion_m",
+        "waiting_minimum_path_normal_speed_mps", "waiting_minimum_slowdown_mps",
+        "waiting_deceleration_mps2", "waiting_ego_response_lookback_s",
+        "waiting_ego_response_lag_s",
         "barrier_minimum_intrusion_m", "barrier_minimum_duration_s",
     )
     for key in numeric_interaction:

@@ -6,6 +6,9 @@ Use only these neutral inputs:
 2. ego_speed_series, a compact speed curve across the scene;
 3. pedestrian_tracks_reference, compact observed tracks for candidate pedestrians in one fixed reference frame.
 
+If Model input JSON has focused_evaluation=true, evaluate ONLY primary_pedestrian_id.
+Other orange pedestrians are context only. Do not require resolving every visible pedestrian.
+
 HOW TO READ EACH BEV:
 - Green vehicle = ego. Ego is re-centered in every BEV, so do not infer speed from ego-icon displacement.
 - Orange = pedestrian class.
@@ -14,12 +17,13 @@ HOW TO READ EACH BEV:
 - Cyan line = ego's actual future trajectory from canonical ego poses.
 - Translucent light-cyan band = ego future path corridor.
 - The trail and corridor are neutral geometry, not precomputed crossing/conflict labels.
+- In focused_evaluation=true requests, yellow outline + printed ID marks ONLY the primary pedestrian being evaluated, and the yellow-brown trail belongs to that same primary pedestrian.
 
 The model input intentionally excludes heuristic truth labels such as conflict, crossing, moving_toward_corridor, yielding, ego_response, or temporally_linked. Candidate existence alone does not imply a positive scene.
 
 Require BOTH:
-1. Pedestrian/path relation: a candidate pedestrian's observed trail crosses, enters, or clearly moves into/through the light-cyan future ego corridor.
-2. Ego response: ego_speed_series shows ego stopped, nearly stopped, stopping, or clearly slowing during the same interaction.
+1. Pedestrian/path relation: the primary/candidate pedestrian's observed trail crosses, enters, or clearly moves into/through the light-cyan future ego corridor.
+2. Ego response: ego_speed_series shows ego stopped, nearly stopped, stopping, or clearly slowing during that same primary-pedestrian interaction.
 
 Pedestrian/path rules:
 - Match the printed numeric pedestrian ID to pedestrian_tracks_reference.
@@ -30,6 +34,9 @@ Pedestrian/path rules:
 
 Ego-response rules:
 - Use ego_speed_series for the scene's speed trend.
+- "stationary" MUST be interpreted as "stopped".
+- "stationary" alone is NOT sufficient for a positive decision.
+- A supported positive reason may state: Ego is stationary, which satisfies the stopped condition.
 - Ego does not need to visibly decelerate in a displayed BEV if it is already stopped or nearly stopped while the pedestrian crosses.
 - Sustained very-low speed during the crossing satisfies the waiting condition.
 - A clear speed decrease leading into the interaction also supports the scenario.

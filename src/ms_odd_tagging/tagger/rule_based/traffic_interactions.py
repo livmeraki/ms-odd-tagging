@@ -61,6 +61,10 @@ def _observations(series: list[dict[str, Any] | None], start: int, end: int) -> 
     return [item for item in series[start : end + 1] if item is not None]
 
 
+def _frame_index_lookup(frames: list[dict[str, Any]]) -> dict[Any, int]:
+    return {frame.get("frame_index"): index for index, frame in enumerate(frames)}
+
+
 def _representative(items: list[dict[str, Any]], key: str, *, default: float = math.inf) -> dict[str, Any]:
     return min(items, key=lambda item: abs(float(item.get(key, default))))
 
@@ -287,26 +291,178 @@ class TrafficInteractionDetector:
             signal.append(selected is not None)
         return [_event("behind_pedestrian_on_driveable", start, end, frames, rule, {**_lead_evidence(_observations(series, start, end), "pedestrian"), "driveable_area_confidence": _observations(series, start, end)[0].get("driveable_area_confidence"), "path_relation": "ahead_in_driveable_corridor"}) for start, end in _intervals(signal, timestamps, minimum_duration_s=rule["minimum_duration_s"], maximum_missing_gap_s=rule["maximum_inactive_gap_s"], merge_gap_s=rule["merge_gap_s"])]
 
-    def _waiting_for_pedestrian(self, frames, timestamps, rule):
-        signal = []
-        pedestrian_sets = []
-        for frame in frames:
-            peds = [item for item in frame.get("objects", []) if item.get("normalized_category") == "pedestrian" and (item.get("ahead") or abs(float(item.get("signed_lateral_m") or 999)) <= rule["pedestrian_conflict_lateral_m"]) and item.get("driveable_area_confidence") is not None and item["driveable_area_confidence"] >= rule["minimum_driveable_confidence"]]
-            crosswalk_conflict = any(interaction.get("state") == "on_crosswalk" and interaction.get("near_ego") for interaction in frame.get("pedestrian_crosswalk_interactions", []))
-            pedestrian_sets.append(peds)
-            signal.append(bool(peds) and (crosswalk_conflict or peds) and frame.get("ego_motion_state") in {"stationary", "decelerating"})
-        result = []
-        for start, end in _intervals(signal, timestamps, minimum_duration_s=rule["waiting_minimum_duration_s"], maximum_missing_gap_s=rule["maximum_inactive_gap_s"], merge_gap_s=rule["merge_gap_s"]):
-            prior_stationary = start > 0 and frames[start - 1].get("ego_motion_state") == "stationary"
-            has_yield_response = any(
-                frames[i].get("ego_motion_state") == "decelerating"
-                for i in range(max(0, start - 3), end + 1)
+    def _waiting_pedestrian_ego_response(self, frames, timestamps, start: int, end: int, rule):
+        lookback_start = start
+        while lookback_start > 0 and timestamps[start] - timestamps[lookback_start - 1] <= rule["waiting_ego_response_lookback_s"] + 1e-9:
+            lookback_start -= 1
+        response_end = end
+        while response_end + 1 < len(frames) and timestamps[response_end + 1] - timestamps[end] <= rule["waiting_ego_response_lag_s"] + 1e-9:
+            response_end += 1
+        before_speeds = [
+            float(frames[index]["ego_speed_mps"])
+            for index in range(lookback_start, start)
+            if _finite(frames[index].get("ego_speed_mps"))
+        ]
+        response_speeds = [
+            float(frames[index]["ego_speed_mps"])
+            for index in range(start, response_end + 1)
+            if _finite(frames[index].get("ego_speed_mps"))
+        ]
+        if not response_speeds:
+            return None
+        before_speed = max(before_speeds) if before_speeds else None
+        minimum_speed = min(response_speeds)
+        slowdown = before_speed - minimum_speed if before_speed is not None else None
+        decel_indices = [
+            index
+            for index in range(lookback_start, response_end + 1)
+            if (
+                frames[index].get("ego_motion_state") == "decelerating"
+                or (
+                    _finite(frames[index].get("ego_acceleration_mps2"))
+                    and float(frames[index]["ego_acceleration_mps2"]) <= -abs(float(rule["waiting_deceleration_mps2"]))
+                )
             )
-            if (start == 0 or prior_stationary) and not has_yield_response:
+        ]
+        stopped_indices = [
+            index
+            for index in range(start, response_end + 1)
+            if _finite(frames[index].get("ego_speed_mps"))
+            and float(frames[index]["ego_speed_mps"]) <= rule["stopping_stopped_speed_mps"]
+        ]
+        moved_before_stop = (
+            before_speed is not None
+            and before_speed >= rule["stopping_moving_speed_mps"]
+            and bool(stopped_indices)
+        )
+        slowed = slowdown is not None and slowdown >= rule["waiting_minimum_slowdown_mps"]
+        if not (slowed or moved_before_stop):
+            return None
+        onset = decel_indices[0] if decel_indices else (stopped_indices[0] if stopped_indices else start)
+        return {
+            "start_index": start,
+            "end_index": response_end,
+            "lookback_start_index": lookback_start,
+            "before_speed_mps": round(before_speed, 4) if before_speed is not None else None,
+            "minimum_speed_mps": round(minimum_speed, 4),
+            "slowdown_mps": round(slowdown, 4) if slowdown is not None else None,
+            "ego_response_onset_frame": frames[onset]["frame_index"],
+            "ego_response": "slowing_or_stopped_for_path_crossing",
+        }
+
+    def _waiting_pedestrian_path_interaction(self, observations: list[dict[str, Any]], rule):
+        valid = [
+            item
+            for item in observations
+            if item.get("relation_valid") is True
+            and _finite(item.get("signed_lateral_distance_m"))
+            and _finite(item.get("nearest_path_distance_m"))
+        ]
+        if len(valid) < 2:
+            return None
+        inside = [
+            item
+            for item in valid
+            if float(item["nearest_path_distance_m"]) <= rule["waiting_path_distance_m"] + 1e-9
+        ]
+        if not inside:
+            return None
+        signed = [float(item["signed_lateral_distance_m"]) for item in valid]
+        lateral_span = max(signed) - min(signed)
+        has_side_change = min(signed) < -rule["waiting_path_distance_m"] and max(signed) > rule["waiting_path_distance_m"]
+        if abs(lateral_span) < rule["waiting_minimum_transverse_motion_m"] or not has_side_change:
+            return None
+        normal_speeds = [
+            abs(float(item["path_normal_speed_mps"]))
+            for item in valid
+            if _finite(item.get("path_normal_speed_mps"))
+        ]
+        if normal_speeds and max(normal_speeds) < rule["waiting_minimum_path_normal_speed_mps"] - 1e-9:
+            return None
+        start_frame = min(item["frame_index"] for item in inside)
+        end_frame = max(item["frame_index"] for item in inside)
+        closest = min(inside, key=lambda item: float(item["nearest_path_distance_m"]))
+        return {
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "closest_frame": closest["frame_index"],
+            "minimum_path_distance_m": round(float(closest["nearest_path_distance_m"]), 4),
+            "lateral_displacement_m": round(abs(lateral_span), 4),
+            "initial_side": "left" if signed[0] > 0 else "right",
+            "final_side": "left" if signed[-1] > 0 else "right",
+            "representative_path_normal_speed_mps": round(max(normal_speeds), 4) if normal_speeds else None,
+        }
+
+    def _waiting_for_pedestrian(self, frames, timestamps, rule):
+        by_track: dict[str, list[dict[str, Any]]] = {}
+        for frame in frames:
+            for item in frame.get("path_conflict_objects", []):
+                if item.get("normalized_category") != "pedestrian":
+                    continue
+                track_id = item.get("track_id")
+                if track_id in (None, ""):
+                    continue
+                by_track.setdefault(str(track_id), []).append(item)
+        frame_lookup = _frame_index_lookup(frames)
+        result = []
+        for track_id, observations in sorted(by_track.items()):
+            observations.sort(key=lambda item: (float(item.get("timestamp_s", math.inf)), item.get("frame_index", -1)))
+            path = self._waiting_pedestrian_path_interaction(observations, rule)
+            if path is None:
                 continue
-            peds = [item for row in pedestrian_sets[start : end + 1] for item in row]
-            selected = min(peds, key=lambda item: abs(float(item.get("longitudinal_gap_m") or 999)), default={})
-            result.append(_event("waiting_for_pedestrian_to_cross", start, end, frames, rule, {"pedestrian_id": selected.get("track_id"), "pedestrian_source_object_ids": selected.get("source_object_ids", []), "crosswalk_relation": "conflict_or_driveable_corridor", "path_conflict_geometry": "ego_aligned_future_path_corridor", "ego_response_onset_frame": frames[start]["frame_index"], "minimum_distance_m": min((abs(float(item.get("longitudinal_gap_m") or 999)) for item in peds), default=None), "evidence_frames": [frames[start]["frame_index"], frames[end]["frame_index"]]}))
+            start = frame_lookup.get(path["start_frame"])
+            end = frame_lookup.get(path["end_frame"])
+            if start is None or end is None:
+                continue
+            response = self._waiting_pedestrian_ego_response(frames, timestamps, start, end, rule)
+            if response is None:
+                continue
+            event_start = min(response["lookback_start_index"], start)
+            event_end = response["end_index"]
+            source_ids = sorted(
+                {
+                    str(source_id)
+                    for item in observations
+                    for source_id in item.get("source_object_ids", [])
+                    if source_id not in (None, "")
+                }
+            )
+            result.append(
+                _event(
+                    "waiting_for_pedestrian_to_cross",
+                    event_start,
+                    event_end,
+                    frames,
+                    rule,
+                    {
+                        "pedestrian_id": track_id,
+                        "pedestrian_source_object_ids": source_ids,
+                        "crosswalk_relation": "not_required",
+                        "path_conflict_geometry": "pedestrian_crosses_ego_future_path_corridor",
+                        "minimum_distance_m": path["minimum_path_distance_m"],
+                        "minimum_path_distance_m": path["minimum_path_distance_m"],
+                        "lateral_displacement_m": path["lateral_displacement_m"],
+                        "representative_path_normal_speed_mps": path["representative_path_normal_speed_mps"],
+                        "initial_side": path["initial_side"],
+                        "final_side": path["final_side"],
+                        "arc_entry_frame": path["start_frame"],
+                        "arc_exit_frame": path["end_frame"],
+                        "closest_path_frame": path["closest_frame"],
+                        "ego_response_onset_frame": response["ego_response_onset_frame"],
+                        "ego_response": response["ego_response"],
+                        "start_speed_mps": response["before_speed_mps"],
+                        "trigger_speed_mps": response["minimum_speed_mps"],
+                        "relative_speed_mps": response["slowdown_mps"],
+                        "evidence_frames": [
+                            frames[event_start]["frame_index"],
+                            path["start_frame"],
+                            path["closest_frame"],
+                            path["end_frame"],
+                            frames[event_end]["frame_index"],
+                        ],
+                    },
+                )
+            )
         return result
 
     def _barriers(self, frames, timestamps, rule):

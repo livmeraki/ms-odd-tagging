@@ -127,6 +127,36 @@ def _print_timing(profiler: RunProfiler, timing_path: Path) -> None:
         print(line)
 
 
+def _focused_scene_results(validation_rows: list[dict]) -> list[dict]:
+    focused_groups: dict[str, list[dict]] = {}
+    for row in validation_rows:
+        parent_scene_id = row.get("parent_scene_candidate_id")
+        if not parent_scene_id:
+            continue
+        focused_groups.setdefault(str(parent_scene_id), []).append(row)
+    results = []
+    for parent_scene_id, rows in sorted(focused_groups.items()):
+        accepted_rows = [row for row in rows if row.get("accepted") is True]
+        accepted_pedestrians = []
+        for row in accepted_rows:
+            decision = row.get("decision") or {}
+            for object_id in decision.get("primary_object_ids") or []:
+                if object_id not in accepted_pedestrians:
+                    accepted_pedestrians.append(object_id)
+        results.append(
+            {
+                "parent_scene_candidate_id": parent_scene_id,
+                "decision": bool(accepted_rows),
+                "accepted_focused_candidate_ids": [row["candidate_id"] for row in accepted_rows],
+                "accepted_primary_object_ids": accepted_pedestrians,
+                "focused_candidate_count": len(rows),
+                "review_required": not accepted_rows and any(row.get("review_required") for row in rows),
+                "all_focused_negative": not accepted_rows,
+            }
+        )
+    return results
+
+
 def main() -> int:
     profiler = RunProfiler()
     args = parse_args()
@@ -152,6 +182,7 @@ def main() -> int:
         "candidate_bundles": [],
         "raw_results": [],
         "validation": [],
+        "focused_scene_results": [],
         "events": [],
         "review_bundles": [],
     }
@@ -259,6 +290,8 @@ def main() -> int:
         manifest["raw_results"].append(raw)
         validation_row = {
             "candidate_id": candidate.candidate_id,
+            "parent_scene_candidate_id": candidate.metadata.get("parent_scene_candidate_id"),
+            "focused_primary_pedestrian_id": candidate.metadata.get("focused_primary_pedestrian_id"),
             "accepted": validation.accepted,
             "review_required": validation.review_required,
             "reasons": validation.reasons,
@@ -281,6 +314,8 @@ def main() -> int:
                     validation.reasons[0] if validation.reasons else "review_required",
                 )
             manifest["review_bundles"].append(str(review_path))
+
+    manifest["focused_scene_results"] = _focused_scene_results(manifest["validation"])
 
     for recording_id, accepted in accepted_by_recording.items():
         with profiler.measure("event_merge", recording_id=recording_id):
