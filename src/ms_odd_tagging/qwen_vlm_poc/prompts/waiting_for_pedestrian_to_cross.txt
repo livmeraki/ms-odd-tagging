@@ -1,70 +1,55 @@
 Scenario: waiting_for_pedestrian_to_cross
 Definition: Ego is stopped, stopping, or clearly slowing because a pedestrian is crossing, entering, or clearly intending to enter ego's expected path.
 
-Evaluate this scenario from neutral evidence:
+Use only these neutral inputs:
 1. ordered BEV images;
-2. ego_measurements at the selected BEV frames;
-3. ego_speed_series, a denser neutral speed curve across the scene;
-4. pedestrian_measurements at the selected BEV frames;
-5. pedestrian_tracks_reference, which expresses each observed candidate-pedestrian track in one fixed reference-frame ego coordinate system;
-6. ego_future_paths containing the actual future ego trajectory and corridor geometry for each selected frame.
+2. ego_speed_series, a compact speed curve across the scene;
+3. pedestrian_tracks_reference, compact observed tracks for candidate pedestrians in one fixed reference frame.
 
-The model input intentionally does NOT contain heuristic truth labels such as conflict, crossing, moving_toward_corridor, ego_response, yielding, or temporally_linked. Do not infer that a candidate is positive merely because it was selected for review.
+HOW TO READ EACH BEV:
+- Green vehicle = ego. Ego is re-centered in every BEV, so do not infer speed from ego-icon displacement.
+- Orange = pedestrian class.
+- Yellow outline + numeric label = candidate pedestrian ID.
+- Yellow-brown dotted trail = observed motion of that candidate pedestrian across the scene.
+- Cyan line = ego's actual future trajectory from canonical ego poses.
+- Translucent light-cyan band = ego future path corridor.
+- The trail and corridor are neutral geometry, not precomputed crossing/conflict labels.
 
-BEV/object convention:
-- Pedestrians are orange by class.
-- Candidate pedestrians have a yellow outline and a visible numeric object-ID label.
-- The numeric label corresponds to pedestrian_measurements.object_id.
-- The yellow-brown trail with small dots is the observed trajectory of that candidate pedestrian across the scene, transformed into the current BEV coordinate frame. It is raw observed motion, not a crossing label.
-- The cyan line is the actual future ego trajectory from canonical ego poses.
-- The translucent light-cyan band around it is the neutral future ego path corridor.
+The model input intentionally excludes heuristic truth labels such as conflict, crossing, moving_toward_corridor, yielding, ego_response, or temporally_linked. Candidate existence alone does not imply a positive scene.
 
-Coordinate convention:
-- pedestrian_measurements are ego-centered and heading-aligned independently for each selected frame.
-- pedestrian_tracks_reference uses one fixed reference_frame for all of its track points, so the points for one pedestrian can be read directly as one continuous observed trajectory.
-- longitudinal_m > 0 means ahead; longitudinal_m < 0 means behind in the relevant reference frame.
-- lateral_m > 0 means left and lateral_m < 0 means right in the relevant reference frame.
-- IMPORTANT: lateral_m = 0 is only an instantaneous/reference-frame ego heading centerline. It is NOT the definition of the future driving path on a curved road.
-- Use ego_future_paths and the cyan BEV corridor as the primary spatial reference for expected ego path.
+Require BOTH:
+1. Pedestrian/path relation: a candidate pedestrian's observed trail crosses, enters, or clearly moves into/through the light-cyan future ego corridor.
+2. Ego response: ego_speed_series shows ego stopped, nearly stopped, stopping, or clearly slowing during the same interaction.
 
-Require evidence for BOTH:
-1. pedestrian/path relation: a candidate pedestrian crosses, enters, or clearly moves toward/through the explicitly shown future ego corridor;
-2. ego response: the selected ego measurements and/or dense ego_speed_series show ego stopped, nearly stopped, stopping, or clearly slowing during the same interaction.
+Pedestrian/path rules:
+- Match the printed numeric pedestrian ID to pedestrian_tracks_reference.
+- Use the full yellow-brown observed trail, not one instantaneous pedestrian position.
+- A crossing may occur between the displayed BEV snapshots; if the continuous observed trail enters/crosses the light-cyan corridor, do not reject only because one snapshot is outside it.
+- Judge crossing against the cyan/light-cyan future path, not lateral_m=0. On a curved road the true future path can be several meters left/right of the instantaneous ego heading centerline.
+- pedestrian_tracks_reference is expressed in one fixed reference frame and is provided to make temporal pedestrian motion easy to follow.
 
-For pedestrian/path relation:
-- Use the printed candidate ID to associate the current pedestrian with its observed trail and structured track.
-- The observed trail is especially important when the crossing happens between selected BEV snapshots.
-- Do not decide from a single instantaneous pedestrian position if the full observed trail crosses the cyan corridor.
-- Judge crossing relative to the cyan future path/corridor, not merely relative to lateral_m = 0.
-- Use pedestrian_tracks_reference as the temporal motion source when separate ego-centered BEVs make the motion hard to mentally reconstruct.
-
-For ego response:
-- Use ego_speed_series to inspect the full scene speed trend rather than relying only on the six selected-frame speeds.
-- Ego does NOT need to visibly decelerate inside a selected BEV if it is already stopped or nearly stopped while the pedestrian is interacting with the future path.
-- Sustained very-low speed during the crossing can satisfy the waiting condition.
-- If the dense speed series shows a clear decrease leading into the interaction, that supports the scenario even if the minimum occurs between selected BEV frames.
-- The ego is re-centered in every BEV; never infer speed from ego-icon displacement.
+Ego-response rules:
+- Use ego_speed_series for the scene's speed trend.
+- Ego does not need to visibly decelerate in a displayed BEV if it is already stopped or nearly stopped while the pedestrian crosses.
+- Sustained very-low speed during the crossing satisfies the waiting condition.
+- A clear speed decrease leading into the interaction also supports the scenario.
 
 Important negatives:
-- A pedestrian whose full observed trail remains parallel to or outside the future ego corridor is false.
-- A pedestrian standing beside the future path with no clear entry/crossing evidence is false.
+- A pedestrian whose observed track is parallel to or remains outside the future ego corridor is false.
 - Pedestrian proximity alone is false.
 - Ego slowing/stopping alone is false.
 - Do not invent causal linkage from candidate existence.
-- If neither the observed trail nor the structured reference track enters/crosses the future ego corridor, prefer false or insufficient_evidence.
-- If ego is neither already very slow/stopped nor slowing in the dense speed series during the interaction, prefer false or insufficient_evidence.
-
-Reason across BEVs, observed pedestrian trails, pedestrian_tracks_reference, ego_future_paths, pedestrian_measurements, ego_measurements, and ego_speed_series in temporal order.
+- If the observed trail/track does not enter or cross the future ego corridor, prefer false or insufficient_evidence.
+- If ego is neither very slow/stopped nor slowing during the interaction, prefer false or insufficient_evidence.
 
 Return JSON with exactly:
 recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
 event_start_frame, event_end_frame, primary_object_ids, evidence_ids, reason,
 ambiguities, insufficient_evidence, review_required.
 
-For this scene mode:
+Output rules:
 - If decision=true, evidence_ids must contain exactly the supplied visual_evidence_id.
-- If decision=false, evidence_ids may be [] or contain the visual_evidence_id.
-- If decision=true, primary_object_ids should contain the candidate object ID(s) that actually participate in the accepted interaction.
+- If decision=true, primary_object_ids should contain only the candidate pedestrian ID(s) participating in the interaction.
 - If decision=false, primary_object_ids may be [].
 - If decision=false, event_start_frame and event_end_frame must be null.
 - Keep reason to one short sentence.
