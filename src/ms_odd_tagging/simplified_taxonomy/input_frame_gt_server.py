@@ -4,6 +4,7 @@ import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from .input_frame_gt import discover_completed_rows
 from .manual_gt import _html
@@ -27,7 +28,89 @@ def _gt_document(recording: str, sample_hz: float, rows: list[dict]) -> dict:
     }
 
 
-def _inject_autosave(html: str, endpoint: str) -> str:
+def _blank_gt() -> dict[str, Any]:
+    return {
+        "ego_motion": {"state": "unknown", "speed_band": "unknown"},
+        "ego_maneuver": {"type": "unknown", "direction": None},
+        "traffic_relation": {"lead": "unknown", "trail": "unknown"},
+        "road_context": {
+            "intersection": "unknown",
+            "traffic_light_intersection": "unknown",
+            "traffic_light_relevant": "unknown",
+            "on_stopline_crosswalk": "unknown",
+        },
+        "interaction_tags": [],
+    }
+
+
+def _prediction_by_frame(path: Path | None) -> dict[int, dict[str, Any]]:
+    if path is None:
+        return {}
+    document = json.loads(path.read_text(encoding="utf-8"))
+    frames = document.get("frames") if isinstance(document, dict) else None
+    if not isinstance(frames, list):
+        raise ValueError("prediction JSON must contain a top-level frames list")
+    result: dict[int, dict[str, Any]] = {}
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        idx = frame.get("frame_index")
+        if not isinstance(idx, int):
+            continue
+        prediction = frame.get("simplified_tags")
+        if not isinstance(prediction, dict):
+            required = {"ego_motion", "ego_maneuver", "traffic_relation", "road_context"}
+            if required.issubset(frame):
+                prediction = {
+                    key: frame.get(key)
+                    for key in (*required, "interaction_tags")
+                }
+        if isinstance(prediction, dict):
+            result[idx] = prediction
+    return result
+
+
+def _existing_gt_by_frame(path: Path) -> dict[int, dict[str, Any]]:
+    if not path.is_file():
+        return {}
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    frames = document.get("frames") if isinstance(document, dict) else None
+    if not isinstance(frames, list):
+        return {}
+    result: dict[int, dict[str, Any]] = {}
+    for frame in frames:
+        if not isinstance(frame, dict) or frame.get("reviewed") is not True:
+            continue
+        idx = frame.get("frame_index")
+        gt = frame.get("gt")
+        if isinstance(idx, int) and isinstance(gt, dict):
+            result[idx] = gt
+    return result
+
+
+def _prepare_rows(
+    rows: list[dict[str, Any]],
+    prediction_path: Path | None,
+    gt_output: Path,
+) -> None:
+    predictions = _prediction_by_frame(prediction_path)
+    existing_gt = _existing_gt_by_frame(gt_output)
+    for row in rows:
+        idx = row["frame_index"]
+        row["prediction"] = predictions.get(idx, {})
+        if idx in existing_gt:
+            row["gt"] = existing_gt[idx]
+            row["reviewed"] = True
+        else:
+            # Keep GT independent from the displayed prediction.
+            row["gt"] = _blank_gt()
+            row["reviewed"] = False
+
+
+def _inject_autosave(html: str, endpoint: str, recording: str, sample_hz: float) -> str:
     patch = f'''<script>
 const __gtAutosaveEndpoint={json.dumps(endpoint)};
 const __originalPersist=persist;
@@ -42,11 +125,50 @@ persist=function(){{
   fetch(__gtAutosaveEndpoint,{{
     method:'POST',
     headers:{{'Content-Type':'application/json'}},
-    body:JSON.stringify({{recording_id:{json.dumps('RECORDING_PLACEHOLDER')},sampling_hz:{json.dumps('SAMPLE_PLACEHOLDER')},frames:reviewed}})
+    body:JSON.stringify({{
+      recording_id:{json.dumps(recording)},
+      sampling_hz:{sample_hz},
+      frames:reviewed
+    }})
   }}).catch(err=>console.warn('GT autosave failed',err));
 }};
 </script>'''
     return html.replace("</body>", patch + "</body>")
+
+
+def _inject_equal_height_sidebar(html: str) -> str:
+    old = '<section class="card"><div id="form"></div><div class="toolbar">'
+    new = (
+        '<section class="card" id="taggingCard">'
+        '<div id="formScroll"><div id="form"></div></div>'
+        '<div class="toolbar">'
+    )
+    html = html.replace(old, new, 1)
+    css = '''<style>
+#taggingCard{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+#formScroll{flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:4px}
+#taggingCard>.toolbar{flex:0 0 auto;padding-top:8px;border-top:1px solid #374151;background:#1f2937}
+@media(max-width:1000px){#taggingCard{height:auto!important;max-height:none!important}#formScroll{overflow-y:visible}}
+</style>'''
+    script = '''<script>
+function __syncTaggingHeight(){
+  const bev=document.getElementById('bev');
+  const card=document.getElementById('taggingCard');
+  if(!bev||!card)return;
+  if(window.innerWidth<=1000){card.style.height='';return;}
+  const h=Math.max(240,Math.round(bev.getBoundingClientRect().height));
+  card.style.height=h+'px';
+}
+window.addEventListener('resize',__syncTaggingHeight);
+const __bevResizeObserver=new ResizeObserver(__syncTaggingHeight);
+const __bevNode=document.getElementById('bev');
+if(__bevNode)__bevResizeObserver.observe(__bevNode);
+const __bevImage=document.getElementById('bevImg');
+if(__bevImage)__bevImage.addEventListener('load',__syncTaggingHeight);
+requestAnimationFrame(__syncTaggingHeight);
+</script>'''
+    html = html.replace("</head>", css + "</head>", 1)
+    return html.replace("</body>", script + "</body>", 1)
 
 
 def _make_handler(gt_path: Path, recording: str, sample_hz: float):
@@ -79,7 +201,7 @@ def _make_handler(gt_path: Path, recording: str, sample_hz: float):
                 tmp = gt_path.with_suffix(gt_path.suffix + ".tmp")
                 tmp.write_text(json.dumps(document, indent=2, ensure_ascii=False), encoding="utf-8")
                 tmp.replace(gt_path)
-            except Exception as exc:  # browser autosave should not crash the server
+            except Exception as exc:
                 self.send_response(400)
                 self._cors()
                 self.end_headers()
@@ -100,6 +222,7 @@ def main() -> int:
         description="Generate read-only input-frame GT HTML and autosave reviewed GT to disk."
     )
     parser.add_argument("recording_dir", type=Path)
+    parser.add_argument("--prediction", type=Path, default=None)
     parser.add_argument("--source-hz", type=float, default=10.0)
     parser.add_argument("--sample-hz", type=float, default=1.0)
     parser.add_argument("--port", type=int, default=8765)
@@ -118,11 +241,16 @@ def main() -> int:
 
     html_output = args.html_output or Path("outputs/06_gt_comparison") / f"{recording}_manual_gt.html"
     gt_output = args.gt_output or Path("outputs/06_gt_comparison/gt") / f"{recording}_manual_gt.json"
+    _prepare_rows(rows, args.prediction, gt_output)
+
     endpoint = f"http://127.0.0.1:{args.port}/save"
     html = _html(rows, recording, args.sample_hz)
-    html = _inject_autosave(html, endpoint)
-    html = html.replace('"RECORDING_PLACEHOLDER"', json.dumps(recording))
-    html = html.replace('"SAMPLE_PLACEHOLDER"', str(args.sample_hz))
+    # Avoid stale browser rows when the generation snapshot gains new frames.
+    old_key = f"simplified-gt-v3:{recording}"
+    snapshot_key = f"simplified-gt-server-v1:{recording}:{len(rows)}:{rows[-1]['frame_index']}"
+    html = html.replace(old_key, snapshot_key)
+    html = _inject_equal_height_sidebar(html)
+    html = _inject_autosave(html, endpoint, recording, args.sample_hz)
     html_output.parent.mkdir(parents=True, exist_ok=True)
     html_output.write_text(html, encoding="utf-8")
 
@@ -137,6 +265,11 @@ def main() -> int:
     print(f"Completed input frames in snapshot: {len(rows)}")
     print(f"Manual GT review: {html_output}")
     print(f"Autosave GT file: {gt_output}")
+    if args.prediction:
+        matched = sum(1 for row in rows if row.get("prediction"))
+        print(f"Prediction overlay: {args.prediction} ({matched}/{len(rows)} sampled frames matched)")
+    else:
+        print("Prediction overlay: disabled")
     print(f"Autosave server: {endpoint}")
     print("Keep this process running while annotating. Ctrl+C stops autosave. Source input frames remain read-only.")
     try:
