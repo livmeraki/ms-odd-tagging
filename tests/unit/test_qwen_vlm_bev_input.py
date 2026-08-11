@@ -65,6 +65,11 @@ def test_event_driven_waiting_vlm_input_excludes_candidate_heuristics():
     assert payload["evaluation_mode"] == "bev_plus_neutral_ego_and_pedestrian_measurements"
     assert payload["bev_frame_indices"] == [10, 16, 22, 28, 34, 40]
     assert payload["target_pedestrian_ids"] == ["ped-1", "ped-2"]
+    assert payload["coordinate_convention"] == {
+        "frame": "ego_centered_heading_up",
+        "longitudinal_m": "positive_ahead_of_ego_negative_behind",
+        "lateral_m": "zero_is_ego_forward_centerline_opposite_signs_are_opposite_sides",
+    }
     assert payload["ego_measurements"][0] == {
         "frame": 10,
         "time_s": 1.0,
