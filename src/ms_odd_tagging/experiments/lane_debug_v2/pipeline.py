@@ -72,6 +72,8 @@ def run_one(
         "lane_change_config_source": "provided direct_scenarios config",
         "artifact_policy": "fresh_run_no_reuse",
         "tuners_generated": generate_tuners,
+        "inferred_affiliation_runtime_selection_policy": "highest_ranked_eligible_candidate",
+        "inferred_affiliation_unique_score_margin_role": "diagnostic_only",
     }
     if generate_tuners:
         metadata.update({
@@ -85,8 +87,16 @@ def run_one(
     render_plotly_explorer(recording, following, changes, explorer_path, run_id)
     outputs = [metadata_path, lane_path, tag_path, explorer_path]
     if generate_tuners:
-        render_inferred_lane_tuner(following, tuner_path, run_id, config)
-        render_inferred_lane_plotly_tuner(following, plotly_tuner_path, run_id, config)
+        # Runtime no longer rejects the top candidate for a small runner-up
+        # margin. Seed both tuners with margin=0 so their default visualization
+        # matches runtime behavior; users can still raise it interactively as a
+        # diagnostic experiment.
+        tuner_config = {
+            **config,
+            "static_inferred_affiliation_minimum_unique_score_margin": 0.0,
+        }
+        render_inferred_lane_tuner(following, tuner_path, run_id, tuner_config)
+        render_inferred_lane_plotly_tuner(following, plotly_tuner_path, run_id, tuner_config)
         outputs.extend([tuner_path, plotly_tuner_path])
     return outputs
 
