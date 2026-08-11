@@ -34,8 +34,8 @@ def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
     """Return the model-facing candidate payload.
 
     Event-driven waiting-for-pedestrian evaluation keeps candidate-generation
-    heuristics hidden. The model receives BEV ordering plus neutral ego speed and
-    candidate-pedestrian positions aligned to the same selected frames.
+    heuristics hidden. The model receives neutral future ego path geometry plus
+    ego speed and candidate-pedestrian positions aligned to selected BEV frames.
     """
     if (
         candidate.scenario == "waiting_for_pedestrian_to_cross"
@@ -50,15 +50,17 @@ def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
             "target_pedestrian_ids": list(candidate.primary_object_ids),
             "bev_frame_indices": list(candidate.selected_frame_indices),
             "coordinate_convention": {
-                "frame": "ego_centered_heading_up",
+                "frame": "ego_centered_heading_up_per_selected_frame",
                 "longitudinal_m": "positive_ahead_of_ego_negative_behind",
-                "lateral_m": "zero_is_ego_forward_centerline_opposite_signs_are_opposite_sides",
+                "lateral_m": "positive_left_negative_right_relative_to_instantaneous_ego_heading",
+                "expected_path_reference": "ego_future_paths_not_lateral_zero",
             },
             "ego_measurements": list(candidate.metadata.get("ego_measurements") or []),
             "pedestrian_measurements": list(candidate.metadata.get("pedestrian_measurements") or []),
+            "ego_future_paths": list(candidate.metadata.get("ego_future_paths") or []),
             "visual_evidence_id": candidate.metadata.get("visual_evidence_id"),
             "bev_images_follow_in_same_order": True,
-            "evaluation_mode": "bev_plus_neutral_ego_and_pedestrian_measurements",
+            "evaluation_mode": "bev_plus_neutral_future_path_and_motion_measurements",
         }
     return candidate.to_dict()
 
