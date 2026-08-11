@@ -29,6 +29,7 @@ ms-odd-ld-topology = "ms_odd_tagging.ld_topology.cli:main"
 ms-odd-qwen-vlm-poc = "ms_odd_tagging.qwen_vlm_poc.cli:main"
 ms-odd-qwen-vlm-review = "ms_odd_tagging.qwen_vlm_poc.visualization:main"
 ms-odd-qwen-candidate-explorer = "ms_odd_tagging.qwen_vlm_poc.candidate_explorer:main"
+ms-odd-simplify-frames = "ms_odd_tagging.simplified_taxonomy.exporter:main"
 
 [project.optional-dependencies]
 dev = [
