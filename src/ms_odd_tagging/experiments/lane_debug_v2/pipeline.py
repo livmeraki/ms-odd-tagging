@@ -12,6 +12,7 @@ from . import DEBUG_IMPLEMENTATION_VERSION
 from .detector_observed_first_final import run_lane_debug_v2
 from .lane_changes import run_lane_change_debug
 from .explorer_visualization import render_plotly_explorer
+from .inferred_lane_tuner import render_inferred_lane_tuner
 
 
 def _load(path: Path) -> Any:
@@ -51,6 +52,7 @@ def run_one(
     lane_path = root / "lane_results" / f"{rid}_lane_debug_v2.json"
     tag_path = root / "tagging_results" / f"{rid}_lane_change_debug_v2.json"
     explorer_path = root / "explorers" / f"{rid}_lane_debug_v2_plotly.html"
+    tuner_path = root / "explorers" / f"{rid}_inferred_lane_tuner.html"
     metadata_path = root / "metadata.json"
 
     _write(lane_path, following)
@@ -65,9 +67,11 @@ def run_one(
         "lane_debug_config": config,
         "lane_change_config_source": "provided direct_scenarios config",
         "artifact_policy": "fresh_run_no_reuse",
+        "inferred_lane_tuner": str(tuner_path),
     })
     render_plotly_explorer(recording, following, changes, explorer_path, run_id)
-    return [metadata_path, lane_path, tag_path, explorer_path]
+    render_inferred_lane_tuner(following, tuner_path, run_id, config)
+    return [metadata_path, lane_path, tag_path, explorer_path, tuner_path]
 
 
 def main(argv: list[str] | None = None) -> int:
