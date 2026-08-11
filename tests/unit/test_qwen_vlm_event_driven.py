@@ -22,12 +22,12 @@ def _frame(index: int, *, speed: float = 8.0, accel: float = 0.0, pedestrian: di
     }
 
 
-def _pedestrian(index: int, object_id: str = "ped-1") -> dict:
+def _pedestrian(index: int, object_id: str = "ped-1", lateral: float = 2.0) -> dict:
     return {
         "object_id": object_id,
         "class": "pedestrian",
-        "position_lcs_m": [10.0 + index * 0.02, 2.0, 0.0],
-        "position_ego_m": {"longitudinal": 10.0, "lateral": 2.0},
+        "position_lcs_m": [10.0 + index * 0.02, lateral, 0.0],
+        "position_ego_m": {"longitudinal": 10.0, "lateral": lateral},
         "relative_velocity_ego_mps": {"longitudinal": 0.0, "lateral": -0.4},
     }
 
@@ -149,7 +149,13 @@ def test_event_driven_waiting_bev_keeps_neutral_selected_frames():
 
 
 def test_scene_merge_combines_overlapping_pedestrian_candidates_and_drops_heuristics():
-    frames = [_frame(index) for index in range(100)]
+    frames = []
+    selected_lateral = {19: 4.0, 20: 3.0, 25: 1.0, 31: -1.0, 36: -3.0, 37: -4.0}
+    for index in range(100):
+        ped = None
+        if index in selected_lateral:
+            ped = _pedestrian(index, "ped-1", selected_lateral[index])
+        frames.append(_frame(index, pedestrian=ped))
     recording = _recording(frames)
     config = load_config(overrides={"event_scene_merge_gap_s": 0.5, "max_bev_images": 6})
 
@@ -195,11 +201,18 @@ def test_scene_merge_combines_overlapping_pedestrian_candidates_and_drops_heuris
     scene = merged[0]
     assert scene.primary_object_ids == ["ped-1", "ped-2"]
     assert scene.metadata["source_candidate_count"] == 2
-    assert scene.metadata["vlm_input_mode"] == "bev_plus_neutral_ego_measurements"
+    assert scene.metadata["vlm_input_mode"] == "bev_plus_neutral_ego_and_pedestrian_measurements"
     assert scene.metadata["frame_selection_strategy"] == "pre_start_inner_thirds_end_post"
     assert scene.selected_frame_indices == [19, 20, 25, 31, 36, 37]
     assert [item["frame"] for item in scene.metadata["ego_measurements"]] == scene.selected_frame_indices
     assert all(item["speed_mps"] == 8.0 for item in scene.metadata["ego_measurements"])
+    assert [item["frame"] for item in scene.metadata["pedestrian_measurements"]] == scene.selected_frame_indices
+    ped1_lateral = [
+        row["pedestrians"][0]["lateral_m"]
+        for row in scene.metadata["pedestrian_measurements"]
+        if row["pedestrians"] and row["pedestrians"][0]["object_id"] == "ped-1"
+    ]
+    assert ped1_lateral == [4.0, 3.0, 1.0, -1.0, -3.0, -4.0]
     assert "landmark_roles" not in scene.metadata
     assert "ego_response_frames" not in scene.metadata
     assert len(scene.evidence) == 1
