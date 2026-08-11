@@ -39,18 +39,33 @@ def _finite(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+def _matched_piece_lane_id(assignment: dict[str, Any]) -> str | None:
+    """Return the physical piece identity selected inside a final track.
+
+    Observed pieces retain their canonical LD lane ID. Integrated inferred pieces
+    expose their static inferred lane ID; connector/legacy inferred pieces fall
+    back to a stable route-derived inferred ID rather than becoming lane-less.
+    """
+    lane_id = assignment.get("matched_lane_id")
+    if lane_id is not None:
+        return str(lane_id)
+    if assignment.get("matched_piece_kind") in _INFERRED_TRACK_PIECE_KINDS:
+        static_id = assignment.get("matched_static_inferred_lane_id")
+        if static_id is not None:
+            return str(static_id)
+        route_id = assignment.get("matched_route_id")
+        if route_id is not None:
+            route = str(route_id)
+            return route if route.startswith("static_") else f"static_{route}"
+    return None
+
+
 def _assign_object_to_final_track(
     obj: dict[str, Any],
     tracks: list[dict[str, Any]],
     member_to_track: dict[str, str],
 ) -> None:
-    """Attach an object to the final physical track, including inferred pieces.
-
-    Existing canonical lane membership remains the first choice. If the object
-    has no usable physical lane ID, strict center-in-polygon assignment is run
-    against final track pieces. This is what lets objects inside an integrated
-    static inferred corridor share the same logical track as ego.
-    """
+    """Attach an object to the final physical track, including inferred pieces."""
     lane_id = obj.get("lane_id")
     if lane_id is not None and str(lane_id) in member_to_track:
         track_id = member_to_track[str(lane_id)]
@@ -71,10 +86,14 @@ def _assign_object_to_final_track(
         )
         track_id = assignment.get("track_id")
         if track_id:
+            piece_lane_id = _matched_piece_lane_id(assignment)
+            if piece_lane_id is not None:
+                obj["lane_id"] = piece_lane_id
             obj["logical_lane_id"] = str(track_id)
             obj["continuous_track_id"] = str(track_id)
             obj["final_track_assignment_method"] = "inside_final_track_piece_polygon"
             obj["final_track_matched_piece_kind"] = assignment.get("matched_piece_kind")
+            obj["final_track_piece_lane_id"] = piece_lane_id
             obj["inside_ego_lane_area"] = True
             obj["ego_lane_area_source"] = "final_integrated_track_piece"
             return
@@ -124,6 +143,7 @@ def _refresh_final_following_lane_state(result: dict[str, Any], settings: dict[s
         frame["lead_candidates_debug_final"] = [
             {
                 "object_id": obj.get("object_id"),
+                "lane_id": obj.get("lane_id"),
                 "continuous_track_id": obj.get("continuous_track_id"),
                 "longitudinal_m": obj.get("longitudinal_m"),
                 "matched_piece_kind": obj.get("final_track_matched_piece_kind"),
@@ -152,6 +172,7 @@ def _refresh_final_following_lane_state(result: dict[str, Any], settings: dict[s
     result["final_following_lane_policy"] = {
         "ego_reference": "final_integrated_continuous_track_id",
         "static_inferred_corridor_counts_as_lane": True,
+        "inferred_piece_has_explicit_lane_id": True,
         "objects_inside_integrated_inferred_piece_can_share_ego_track": True,
         "intervals_recomputed_after_final_track_assignment": True,
     }
@@ -199,11 +220,8 @@ def _recompute_frames_piece_local(
             track = track_by_id.get(track_id)
             matched_kind = assignment.get("matched_piece_kind")
             inferred_piece = matched_kind in _INFERRED_TRACK_PIECE_KINDS
-            # Do not fabricate a physical LD lane ID while ego is physically in
-            # an inferred piece. The physical track identity is still continuous
-            # across BACK + inferred corridor + FRONT.
-            physical = assignment.get("matched_lane_id")
-            if physical is None and not inferred_piece:
+            physical = _matched_piece_lane_id(assignment)
+            if physical is None:
                 physical = _nearest_member(track, point, lane_by_id)
             frame["ego_lane"] = {
                 "lane_id": physical,
@@ -217,6 +235,8 @@ def _recompute_frames_piece_local(
                 "source": "final_piece_local_static_lane_network",
                 "track_source": None if not track else track.get("source"),
                 "matched_piece_kind": matched_kind,
+                "matched_static_inferred_lane_id": assignment.get("matched_static_inferred_lane_id"),
+                "matched_route_id": assignment.get("matched_route_id"),
                 "inferred": inferred_piece,
                 "whole_integrated_track_is_ego_lane": True,
             }
@@ -258,8 +278,6 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
     result = run_integrated(recording, cfg)
     settings = {**(result.get("debug_config") or {}), **cfg}
 
-    # Stage 1: repair duplicate identities where a standalone observed fragment
-    # already occupies one host track's inferred-gap geometry.
     tracks, absorption_debug = absorb_embedded_observed_fragments(
         result.get("continuous_lane_tracks", []),
         result.get("lane_geometry", []),
@@ -274,9 +292,6 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         1 for row in absorption_debug if row.get("accepted")
     )
 
-    # Stage 2: reconcile direct canonical touches that ordinary forward-gap
-    # continuation intentionally skipped. Use local endpoint width and boundary
-    # endpoints; never whole-lane median width and never a synthetic connector.
     tracks, exact_touch_debug = reconcile_exact_touch_tracks(
         tracks,
         result.get("lane_geometry", []),
@@ -288,7 +303,8 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
     result["continuous_lane_tracks"] = tracks
     result["exact_touch_reconciliation_debug"] = exact_touch_debug
     result["exact_touch_reconciliation_count"] = sum(
-        1 for row in exact_touch_debug if row.get("accepted") and row.get("action") == "merge_exact_touch_tracks_preserve_source_id"
+        1 for row in exact_touch_debug
+        if row.get("accepted") and row.get("action") == "merge_exact_touch_tracks_preserve_source_id"
     )
     result["post_construction_identity_audit"] = {
         "embedded_fragment_candidates_rejected": sum(
@@ -318,6 +334,7 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         "method": "static_cross_section_piece_local_lane_order",
         "candidate_projection": "nearest_valid_track_piece_centerline",
         "static_inferred_corridor_participates": True,
+        "inferred_piece_lane_id_is_explicit": True,
         "integrated_track_is_single_ego_lane_across_inferred_piece": True,
         "objects_reassigned_against_final_track_pieces": True,
         "following_lane_recomputed_after_final_assignment": True,
@@ -336,5 +353,5 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         "whole_lane_median_width_used": False,
         "fork_policy": "reject_ambiguous_unless_unique_boundary_identity_winner",
     }
-    result["schema_version"] = "lane-debug-v2-piece-local-final-role-v5-integrated-inferred-following"
+    result["schema_version"] = "lane-debug-v2-piece-local-final-role-v6-explicit-inferred-piece-lane-id"
     return result
