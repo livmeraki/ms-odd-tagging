@@ -127,11 +127,9 @@ def _recompute_frames(
 def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = dict(config or {})
 
-    # First pass gives canonical lane geometry and all normal debug evidence.
     result = run_static_order(recording, cfg)
     settings = {**(result.get("debug_config") or {}), **cfg}
 
-    # Hard experimental eligibility rule: intersection=true AND curved => unusable.
     filtered_geometry, eligibility_debug = exclude_curved_intersection_lanes(
         result.get("lane_geometry", []),
         enabled=bool(cfg.get("exclude_curved_intersection_lanes", True)),
@@ -144,25 +142,26 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         x["lane_id"] for x in eligibility_debug if x.get("rejected")
     ]
 
-    # Rebuild all physical tracks and inferred-route episodes from the filtered
-    # geometry so banned lanes cannot influence final ego/adjacent tracking.
     _apply_static_order(recording, result, settings)
     base_tracks = result.get("continuous_lane_tracks", [])
+    lane_geometry = result.get("lane_geometry", [])
 
-    # Static inferred geometry comes from the complete overlap-box episode.
     static_inferred_lanes = build_static_inferred_lanes(result.get("inferred_ego_routes", []))
 
-    # IMPORTANT: affiliation happens against base physical tracks before any
-    # topology-supported neighbor stitching. No lane-order/adjacency evidence is
-    # passed to this function.
+    # BACK/FRONT affiliation is local and boundary-aware. It compares the
+    # actual observed lane fragment at each physical-track endpoint rather than
+    # track-wide median width. No adjacency evidence is passed here.
     affiliated_lanes, affiliation_debug = assign_static_inferred_affiliations(
         static_inferred_lanes,
         base_tracks,
+        lane_geometry,
         maximum_endpoint_distance_m=float(cfg.get("static_inferred_lane_maximum_endpoint_distance_m", 20.0)),
+        maximum_boundary_endpoint_distance_m=float(cfg.get("static_inferred_affiliation_maximum_boundary_endpoint_distance_m", 20.0)),
         maximum_lateral_error_m=float(cfg.get("static_inferred_affiliation_maximum_lateral_error_m", 2.0)),
         maximum_heading_difference_deg=float(cfg.get("static_inferred_lane_maximum_heading_difference_deg", 30.0)),
         maximum_curvature_difference_per_m=float(cfg.get("static_inferred_affiliation_maximum_curvature_difference_per_m", 0.08)),
         maximum_width_difference_m=float(cfg.get("static_inferred_affiliation_maximum_width_difference_m", 1.0)),
+        minimum_unique_score_margin=float(cfg.get("static_inferred_affiliation_minimum_unique_score_margin", 0.5)),
     )
 
     integrated_tracks, static_inferred_debug = integrate_static_inferred_lanes(
@@ -177,7 +176,6 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         maximum_gap_m=float(cfg.get("static_inferred_connector_maximum_gap_m", 20.0)),
     )
 
-    # Adjacency/topology is deliberately downstream of inferred-lane affiliation.
     post_inferred_order = build_static_lane_order(
         connected_tracks,
         sample_spacing_m=float(settings.get("lane_order_sample_spacing_m", 2.0)),
@@ -221,10 +219,17 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
     result["constructed_lane_network"] = build_constructed_lane_network(final_tracks, lane_order)
 
     _recompute_frames(recording, result, final_tracks, lane_order, settings)
-    result["schema_version"] = "lane-debug-v2-longitudinal-inferred-affiliation-v1"
+    result["schema_version"] = "lane-debug-v2-local-boundary-aware-inferred-affiliation-v2"
     result["inferred_affiliation_policy"] = {
-        "method": "longitudinal_endpoint_continuation_no_adjacency",
+        "method": "local_boundary_aware_longitudinal_endpoint_continuation_no_adjacency",
         "adjacency_used_for_affiliation": False,
+        "track_wide_median_width_used_for_affiliation": False,
+        "local_endpoint_width_used": True,
+        "left_right_boundary_endpoint_distance_used": True,
+        "local_tangent_used": True,
+        "local_curvature_used": True,
+        "unique_continuation_required": True,
+        "integration_reuses_selected_affiliation_support": True,
         "affiliation_before_neighbor_topology": True,
     }
     return result
