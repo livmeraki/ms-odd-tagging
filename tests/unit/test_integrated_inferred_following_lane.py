@@ -90,12 +90,15 @@ def test_ego_and_lead_inside_integrated_inferred_corridor_follow_same_lane():
     frame = result["frames"][0]
     assert frame["continuous_ego_track"]["track_id"] == "physical_track_0001"
     assert frame["continuous_ego_track"]["matched_piece_kind"] == "static_inferred_corridor"
-    assert frame["ego_lane"]["lane_id"] is None
+    assert frame["continuous_ego_track"]["matched_static_inferred_lane_id"] == "static_route_1"
+    assert frame["ego_lane"]["lane_id"] == "static_route_1"
     assert frame["ego_lane"]["continuous_track_id"] == "physical_track_0001"
+    assert frame["ego_lane"]["continuous_track_member_lane_ids"] == ["back", "front"]
     assert frame["ego_lane"]["whole_integrated_track_is_ego_lane"] is True
     assert next(r for r in frame["lane_roles"]["roles"] if r["track_id"] == "physical_track_0001")["role"] == "ego"
 
     obj = frame["objects"][0]
+    assert obj["lane_id"] == "static_route_1"
     assert obj["continuous_track_id"] == "physical_track_0001"
     assert obj["final_track_matched_piece_kind"] == "static_inferred_corridor"
     assert obj["final_following_lane_same_track_as_ego"] is True
@@ -128,6 +131,7 @@ def test_moving_ego_inside_integrated_inferred_corridor_without_lead_is_followin
     _recompute_frames_piece_local(recording, result, tracks, lane_order, {})
 
     frame = result["frames"][0]
+    assert frame["ego_lane"]["lane_id"] == "static_route_1"
     assert frame["ego_lane"]["continuous_track_id"] == "physical_track_0001"
     assert frame["state"] == "following_lane_without_lead"
     assert result["intervals"][0]["scenario"] == "following_lane_without_lead"
