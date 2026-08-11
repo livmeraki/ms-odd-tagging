@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
-import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,26 +17,18 @@ from .input_frame_gt_server import (
 )
 from .manual_gt import _html
 
-_FRAME_RE = re.compile(r"^frame_(\d+)$")
-
 
 def _sampled_frame_indices(recording_dir: Path, source_hz: float, sample_hz: float) -> list[int]:
-    if source_hz <= 0 or sample_hz <= 0:
+    """Use the same timestamp-based sampling as the editor itself."""
+    try:
+        rows = discover_completed_rows(
+            recording_dir,
+            source_hz=source_hz,
+            sample_hz=sample_hz,
+        )
+    except ValueError:
         return []
-    step = max(1, round(source_hz / sample_hz))
-    result: list[int] = []
-    for frame_dir in recording_dir.glob("frame_*"):
-        if not frame_dir.is_dir():
-            continue
-        match = _FRAME_RE.match(frame_dir.name)
-        if not match:
-            continue
-        idx = int(match.group(1))
-        if idx % step != 0:
-            continue
-        if (frame_dir / "frame.json").is_file() and (frame_dir / "bev_revised.png").is_file():
-            result.append(idx)
-    return sorted(result)
+    return [row["frame_index"] for row in rows]
 
 
 def _prediction_path(prediction_root: Path, recording: str) -> Path:
