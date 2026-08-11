@@ -6,7 +6,7 @@ from typing import Any
 
 from .config import VlmPocConfig
 from .future_path import future_ego_path, pedestrian_path_distance
-from .geometry import ego_speed, object_ego_xy, object_id
+from .geometry import ego_speed, lcs_to_ego, object_ego_xy, object_id
 from .models import CandidateWindow, EvidenceItem
 
 
@@ -141,8 +141,6 @@ def _landmark_event_indices(
         if len(selected) >= count:
             return sorted(selected[:count]), landmarks
 
-    # Collapsed landmarks are common in short events. Prefer additional frames
-    # from the actual trigger interval, then context, while preserving chronology.
     for pool in (inside, values):
         remaining = count - len(selected)
         if remaining <= 0:
@@ -174,6 +172,31 @@ def _ego_measurements(
             }
         )
     return measurements
+
+
+def _dense_ego_speed_series(
+    available: list[int],
+    frames_by_index: dict[int, dict[str, Any]],
+    *,
+    max_points: int = 25,
+) -> list[dict[str, Any]]:
+    """Compact the full scene speed curve while preserving the minimum-speed frame."""
+    valid = [
+        index
+        for index in available
+        if frames_by_index.get(index) is not None and ego_speed(frames_by_index[index]) is not None
+    ]
+    if not valid:
+        return []
+    min_frame = min(valid, key=lambda index: ego_speed(frames_by_index[index]))
+    sampled = _uniform_indices(valid, max(1, max_points - 1))
+    if min_frame not in sampled:
+        sampled.append(min_frame)
+    sampled = sorted(set(sampled))
+    if len(sampled) > max_points:
+        non_min = [index for index in sampled if index != min_frame]
+        sampled = sorted(_uniform_indices(non_min, max_points - 1) + [min_frame])
+    return _ego_measurements(sampled, frames_by_index)
 
 
 def _pedestrian_measurements(
@@ -218,6 +241,69 @@ def _pedestrian_measurements(
     return measurements
 
 
+def _reference_pedestrian_tracks(
+    reference_frame: int | None,
+    available: list[int],
+    frames_by_index: dict[int, dict[str, Any]],
+    pedestrian_ids: list[str],
+    *,
+    max_points_per_pedestrian: int = 24,
+) -> dict[str, Any] | None:
+    """Express each observed candidate track in one fixed BEV coordinate frame."""
+    if reference_frame is None:
+        return None
+    anchor = frames_by_index.get(reference_frame)
+    if anchor is None:
+        return None
+    anchor_time = anchor.get("time_since_start_s")
+    anchor_time = float(anchor_time) if isinstance(anchor_time, (int, float)) else 0.0
+    wanted = {str(value) for value in pedestrian_ids}
+    tracks: dict[str, list[dict[str, Any]]] = {value: [] for value in wanted}
+    for frame_index in available:
+        frame = frames_by_index.get(frame_index)
+        if frame is None:
+            continue
+        timestamp = frame.get("time_since_start_s")
+        for obj in frame.get("objects", []):
+            obj_id = object_id(obj)
+            if obj_id not in wanted:
+                continue
+            position = obj.get("position_lcs_m") or obj.get("center_lcs_m")
+            if not isinstance(position, (list, tuple)) or len(position) < 2:
+                continue
+            longitudinal_m, lateral_m = lcs_to_ego(position, anchor)
+            tracks[obj_id].append(
+                {
+                    "frame": frame_index,
+                    "time_offset_s": round(
+                        float(timestamp) - anchor_time,
+                        3,
+                    )
+                    if isinstance(timestamp, (int, float))
+                    else None,
+                    "longitudinal_m": round(float(longitudinal_m), 3),
+                    "lateral_m": round(float(lateral_m), 3),
+                }
+            )
+    serialized = []
+    for obj_id in sorted(tracks):
+        rows = tracks[obj_id]
+        if not rows:
+            continue
+        indices = _uniform_indices(list(range(len(rows))), max_points_per_pedestrian)
+        serialized.append(
+            {
+                "object_id": obj_id,
+                "points": [rows[index] for index in indices],
+            }
+        )
+    return {
+        "reference_frame": reference_frame,
+        "coordinate_frame": "reference_frame_ego_centered_heading_aligned",
+        "pedestrians": serialized,
+    }
+
+
 def merge_waiting_scene_candidates(
     recording: dict[str, Any],
     candidates: list[CandidateWindow],
@@ -226,7 +312,7 @@ def merge_waiting_scene_candidates(
     """Merge truly co-temporal pedestrian candidates into compact VLM scenes.
 
     Candidate heuristics remain internal. Model-facing scenes carry neutral future
-    ego trajectory geometry, target identity, ego speed, and pedestrian positions.
+    ego trajectory geometry, target identity, dense ego speed, and pedestrian tracks.
     """
     if not candidates:
         return []
@@ -275,8 +361,16 @@ def merge_waiting_scene_candidates(
             pedestrian_ids,
         )
         ego_measurements = _ego_measurements(selected, frame_lookup)
+        ego_speed_series = _dense_ego_speed_series(available, frame_lookup)
         pedestrian_measurements = _pedestrian_measurements(selected, frame_lookup, pedestrian_ids)
         ego_future_paths = [future_ego_path(frame_lookup, frame_index) for frame_index in selected]
+        reference_frame = landmarks.get("closest_pedestrian_to_future_path") or landmarks.get("interaction_onset")
+        pedestrian_tracks_reference = _reference_pedestrian_tracks(
+            reference_frame,
+            available,
+            frame_lookup,
+            pedestrian_ids,
+        )
         start_t = times.get(context_start, min(item.start_timestamp_s for item in cluster))
         end_t = times.get(context_end, max(item.end_timestamp_s for item in cluster))
         candidate_id = (
@@ -298,7 +392,7 @@ def merge_waiting_scene_candidates(
                     EvidenceItem(
                         evidence_id=visual_evidence_id,
                         kind="bev_sequence",
-                        summary="Ordered BEVs plus neutral future ego path, ego speed, and pedestrian positions.",
+                        summary="Ordered BEVs with observed candidate trails plus neutral future ego path and dense ego speed.",
                         data={"frame_indices": selected},
                     )
                 ],
@@ -307,7 +401,7 @@ def merge_waiting_scene_candidates(
                 recall_reasons=["scene_level_event_candidate"],
                 metadata={
                     "candidate_strategy": "event-driven",
-                    "vlm_input_mode": "bev_plus_neutral_future_path_and_motion_measurements",
+                    "vlm_input_mode": "bev_plus_neutral_future_path_tracks_and_dense_speed",
                     "visual_evidence_id": visual_evidence_id,
                     "scene_merged": len(cluster) > 1,
                     "raw_trigger_start_frame": raw_start,
@@ -315,7 +409,9 @@ def merge_waiting_scene_candidates(
                     "frame_selection_strategy": "neutral_event_landmarks",
                     "frame_selection_landmarks": landmarks,
                     "ego_measurements": ego_measurements,
+                    "ego_speed_series": ego_speed_series,
                     "pedestrian_measurements": pedestrian_measurements,
+                    "pedestrian_tracks_reference": pedestrian_tracks_reference,
                     "ego_future_paths": ego_future_paths,
                     "pedestrian_ids": pedestrian_ids,
                     "source_candidate_ids": source_ids,
