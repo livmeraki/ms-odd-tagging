@@ -30,6 +30,20 @@ def _track(track_id, lane, bogus_median_width=8.0):
     }
 
 
+def _assign(inferred, tracks, lanes, **overrides):
+    params = {
+        "maximum_endpoint_distance_m": 5.0,
+        "maximum_boundary_endpoint_distance_m": 5.0,
+        "maximum_lateral_error_m": 2.0,
+        "maximum_heading_difference_deg": 10.0,
+        "maximum_curvature_difference_per_m": 0.05,
+        "maximum_width_difference_m": 0.5,
+        "minimum_unique_score_margin": 0.5,
+    }
+    params.update(overrides)
+    return assign_static_inferred_affiliations([inferred], tracks, lanes, **params)
+
+
 def test_affiliation_uses_local_endpoint_width_not_track_median_width():
     back_lane = _lane("back", 0.0, 9.0)
     front_lane = _lane("front", 21.0, 30.0)
@@ -47,17 +61,12 @@ def test_affiliation_uses_local_endpoint_width_not_track_median_width():
         "median_width_m": 3.0,
     }
 
-    resolved, debug = assign_static_inferred_affiliations(
-        [inferred],
+    resolved, debug = _assign(
+        inferred,
         tracks,
         [back_lane, front_lane],
-        maximum_endpoint_distance_m=5.0,
-        maximum_boundary_endpoint_distance_m=5.0,
         maximum_lateral_error_m=1.0,
-        maximum_heading_difference_deg=10.0,
-        maximum_curvature_difference_per_m=0.05,
         maximum_width_difference_m=0.25,
-        minimum_unique_score_margin=0.5,
     )
 
     lane = resolved[0]
@@ -68,13 +77,13 @@ def test_affiliation_uses_local_endpoint_width_not_track_median_width():
     assert lane["back_affiliation"]["inferred_local_width_m"] == 3.0
     assert lane["back_affiliation"]["local_width_difference_m"] == 0.0
     assert lane["front_affiliation"]["candidate_local_width_m"] == 3.0
+    assert lane["back_affiliation"]["candidate_width_method"] == "median_3m_4p5m_6m_interior_boundary_width"
     assert debug[0]["accepted"] is True
 
 
 def test_affiliation_rejects_boundary_endpoint_mismatch_even_when_center_matches():
     back_lane = _lane("back", 0.0, 9.0)
     front_lane = _lane("front", 21.0, 30.0)
-    # Keep the centerline close but move both physical boundaries sideways.
     front_lane["left_boundary_lcs_m"] = [[21.0, 5.0], [30.0, 5.0]]
     front_lane["right_boundary_lcs_m"] = [[21.0, 2.0], [30.0, 2.0]]
     tracks = [
@@ -91,15 +100,13 @@ def test_affiliation_rejects_boundary_endpoint_mismatch_even_when_center_matches
         "median_width_m": 3.0,
     }
 
-    resolved, debug = assign_static_inferred_affiliations(
-        [inferred], tracks, [back_lane, front_lane],
-        maximum_endpoint_distance_m=5.0,
+    resolved, debug = _assign(
+        inferred,
+        tracks,
+        [back_lane, front_lane],
         maximum_boundary_endpoint_distance_m=2.0,
         maximum_lateral_error_m=1.0,
-        maximum_heading_difference_deg=10.0,
-        maximum_curvature_difference_per_m=0.05,
         maximum_width_difference_m=0.25,
-        minimum_unique_score_margin=0.5,
     )
 
     assert resolved[0]["end_observed_track_id"] is None
@@ -124,9 +131,6 @@ def test_affiliation_ignores_short_inferred_union_endpoint_hooks():
         _track("physical_track_front", front_lane, bogus_median_width=8.0),
     ]
 
-    # Literal first/last segments hook sideways, but the 3-6 m interior road
-    # direction is straight. This matches the smoothed-union terminal artifact
-    # that caused affiliation to regress after the local-boundary refactor.
     inferred = {
         "static_inferred_lane_id": "static_route_hooked",
         "route_id": "route_hooked",
@@ -145,21 +149,80 @@ def test_affiliation_ignores_short_inferred_union_endpoint_hooks():
         "median_width_m": 3.0,
     }
 
-    resolved, debug = assign_static_inferred_affiliations(
-        [inferred], tracks, [back_lane, front_lane],
-        maximum_endpoint_distance_m=5.0,
-        maximum_boundary_endpoint_distance_m=5.0,
-        maximum_lateral_error_m=2.0,
-        maximum_heading_difference_deg=15.0,
-        maximum_curvature_difference_per_m=0.08,
-        maximum_width_difference_m=0.5,
-        minimum_unique_score_margin=0.5,
+    resolved, debug = _assign(
+        inferred,
+        tracks,
+        [back_lane, front_lane],
+        maximum_heading_difference_deg=5.0,
+        maximum_curvature_difference_per_m=0.02,
     )
 
     lane = resolved[0]
     assert lane["bridge_complete"] is True
     assert lane["start_observed_track_id"] == "physical_track_back"
     assert lane["end_observed_track_id"] == "physical_track_front"
-    assert lane["back_affiliation"]["inferred_heading_method"] == "robust_3m_6m_interior_window"
-    assert lane["front_affiliation"]["inferred_heading_method"] == "robust_3m_6m_interior_window"
+    assert lane["back_affiliation"]["inferred_heading_method"] == "interior_only_3m_4p5m_6m_window"
+    assert lane["front_affiliation"]["inferred_heading_method"] == "interior_only_3m_4p5m_6m_window"
+    assert debug[0]["accepted"] is True
+
+
+def test_affiliation_ignores_observed_lane_endpoint_hooks_too():
+    back_lane = {
+        "lane_id": "back_hooked",
+        "assignment_valid": True,
+        "centerline_lcs_m": [
+            [0.0, 0.0], [4.0, 0.0], [7.0, 0.0], [9.7, 0.0], [10.0, 0.8]
+        ],
+        "left_boundary_lcs_m": [
+            [0.0, 1.5], [4.0, 1.5], [7.0, 1.5], [9.7, 1.5], [10.0, 2.3]
+        ],
+        "right_boundary_lcs_m": [
+            [0.0, -1.5], [4.0, -1.5], [7.0, -1.5], [9.7, -1.5], [10.0, -0.7]
+        ],
+        "polygon_lcs_m": [[0.0, -1.5], [10.2, -1.5], [10.2, 2.3], [0.0, 2.3]],
+    }
+    front_lane = {
+        "lane_id": "front_hooked",
+        "assignment_valid": True,
+        "centerline_lcs_m": [
+            [20.0, 0.8], [20.3, 0.0], [23.0, 0.0], [26.0, 0.0], [30.0, 0.0]
+        ],
+        "left_boundary_lcs_m": [
+            [20.0, 2.3], [20.3, 1.5], [23.0, 1.5], [26.0, 1.5], [30.0, 1.5]
+        ],
+        "right_boundary_lcs_m": [
+            [20.0, -0.7], [20.3, -1.5], [23.0, -1.5], [26.0, -1.5], [30.0, -1.5]
+        ],
+        "polygon_lcs_m": [[19.8, -1.5], [30.0, -1.5], [30.0, 2.3], [19.8, 2.3]],
+    }
+    tracks = [
+        _track("physical_track_back", back_lane),
+        _track("physical_track_front", front_lane),
+    ]
+    inferred = {
+        "static_inferred_lane_id": "static_route_observed_hooks",
+        "route_id": "route_observed_hooks",
+        "centerline_lcs_m": [[10.0, 0.8], [13.0, 0.0], [17.0, 0.0], [20.0, 0.8]],
+        "left_boundary_lcs_m": [[10.0, 2.3], [13.0, 1.5], [17.0, 1.5], [20.0, 2.3]],
+        "right_boundary_lcs_m": [[10.0, -0.7], [13.0, -1.5], [17.0, -1.5], [20.0, -0.7]],
+        "polygon_lcs_m": [[9.8, -1.5], [20.2, -1.5], [20.2, 2.3], [9.8, 2.3]],
+        "median_width_m": 3.0,
+    }
+
+    resolved, debug = _assign(
+        inferred,
+        tracks,
+        [back_lane, front_lane],
+        maximum_heading_difference_deg=5.0,
+        maximum_curvature_difference_per_m=0.02,
+    )
+
+    lane = resolved[0]
+    assert lane["bridge_complete"] is True
+    assert lane["start_observed_track_id"] == "physical_track_back"
+    assert lane["end_observed_track_id"] == "physical_track_front"
+    assert lane["back_affiliation"]["candidate_heading_method"] == "interior_only_3m_4p5m_6m_window"
+    assert lane["front_affiliation"]["candidate_heading_method"] == "interior_only_3m_4p5m_6m_window"
+    assert lane["back_affiliation"]["heading_difference_deg"] <= 5.0
+    assert lane["front_affiliation"]["heading_difference_deg"] <= 5.0
     assert debug[0]["accepted"] is True
