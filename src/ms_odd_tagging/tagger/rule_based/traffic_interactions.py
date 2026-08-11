@@ -303,15 +303,15 @@ class TrafficInteractionDetector:
             for index in range(lookback_start, start)
             if _finite(frames[index].get("ego_speed_mps"))
         ]
-        response_speeds = [
-            float(frames[index]["ego_speed_mps"])
+        response_speed_samples = [
+            (index, float(frames[index]["ego_speed_mps"]))
             for index in range(start, response_end + 1)
             if _finite(frames[index].get("ego_speed_mps"))
         ]
-        if not response_speeds:
+        if not response_speed_samples:
             return None
         before_speed = max(before_speeds) if before_speeds else None
-        minimum_speed = min(response_speeds)
+        minimum_speed_index, minimum_speed = min(response_speed_samples, key=lambda item: item[1])
         slowdown = before_speed - minimum_speed if before_speed is not None else None
         decel_indices = [
             index
@@ -338,16 +338,49 @@ class TrafficInteractionDetector:
         slowed = slowdown is not None and slowdown >= rule["waiting_minimum_slowdown_mps"]
         if not (slowed or moved_before_stop):
             return None
+
+        recovery_threshold = minimum_speed + rule["waiting_minimum_slowdown_mps"]
+        recovery_start = None
+        resume_index = None
+        for index in range(max(end, minimum_speed_index), response_end + 1):
+            speed = frames[index].get("ego_speed_mps")
+            if not _finite(speed) or float(speed) < recovery_threshold:
+                recovery_start = None
+                continue
+            if recovery_start is None:
+                recovery_start = index
+            if timestamps[index] - timestamps[recovery_start] >= rule["waiting_minimum_duration_s"] - 1e-9:
+                resume_index = index
+                break
+
+        event_end_index = resume_index if resume_index is not None else response_end
         onset = decel_indices[0] if decel_indices else (stopped_indices[0] if stopped_indices else start)
+        resume_speed = (
+            float(frames[resume_index]["ego_speed_mps"])
+            if resume_index is not None and _finite(frames[resume_index].get("ego_speed_mps"))
+            else None
+        )
         return {
             "start_index": start,
             "end_index": response_end,
+            "event_end_index": event_end_index,
             "lookback_start_index": lookback_start,
             "before_speed_mps": round(before_speed, 4) if before_speed is not None else None,
             "minimum_speed_mps": round(minimum_speed, 4),
+            "minimum_speed_index": minimum_speed_index,
             "slowdown_mps": round(slowdown, 4) if slowdown is not None else None,
             "ego_response_onset_frame": frames[onset]["frame_index"],
             "ego_response": "slowing_or_stopped_for_path_crossing",
+            "ego_resume_index": resume_index,
+            "ego_resume_speed_mps": round(resume_speed, 4) if resume_speed is not None else None,
+            "ego_speed_recovery_mps": (
+                round(resume_speed - minimum_speed, 4) if resume_speed is not None else None
+            ),
+            "event_end_reason": (
+                "confirmed_ego_speed_recovery"
+                if resume_index is not None
+                else "no_confirmed_resume_within_horizon"
+            ),
         }
 
     def _waiting_pedestrian_path_interaction(self, observations: list[dict[str, Any]], rule):
@@ -418,7 +451,7 @@ class TrafficInteractionDetector:
             if response is None:
                 continue
             event_start = min(response["lookback_start_index"], start)
-            event_end = response["end_index"]
+            event_end = response["event_end_index"]
             source_ids = sorted(
                 {
                     str(source_id)
@@ -450,6 +483,15 @@ class TrafficInteractionDetector:
                         "closest_path_frame": path["closest_frame"],
                         "ego_response_onset_frame": response["ego_response_onset_frame"],
                         "ego_response": response["ego_response"],
+                        "ego_minimum_speed_frame": frames[response["minimum_speed_index"]]["frame_index"],
+                        "ego_resume_frame": (
+                            frames[response["ego_resume_index"]]["frame_index"]
+                            if response["ego_resume_index"] is not None
+                            else None
+                        ),
+                        "ego_resume_speed_mps": response["ego_resume_speed_mps"],
+                        "ego_speed_recovery_mps": response["ego_speed_recovery_mps"],
+                        "event_end_reason": response["event_end_reason"],
                         "start_speed_mps": response["before_speed_mps"],
                         "trigger_speed_mps": response["minimum_speed_mps"],
                         "relative_speed_mps": response["slowdown_mps"],
