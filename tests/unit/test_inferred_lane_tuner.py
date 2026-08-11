@@ -3,10 +3,14 @@ from pathlib import Path
 from ms_odd_tagging.experiments.lane_debug_v2.inferred_lane_tuner import (
     render_inferred_lane_tuner,
 )
+from ms_odd_tagging.experiments.lane_debug_v2.inferred_lane_plotly_tuner import (
+    render_inferred_lane_plotly_tuner,
+)
 
 
-def test_inferred_lane_tuner_contains_live_controls_and_visual_candidates(tmp_path: Path):
-    following = {
+def _following_fixture():
+    return {
+        "recording_id": "test_recording",
         "lane_geometry": [{
             "lane_id": "100",
             "centerline_lcs_m": [[0.0, 0.0], [5.0, 0.0]],
@@ -61,8 +65,11 @@ def test_inferred_lane_tuner_contains_live_controls_and_visual_candidates(tmp_pa
             "rejection_reason": "incomplete_route_or_missing_track_endpoint",
         }],
     }
+
+
+def test_inferred_lane_tuner_contains_live_controls_and_visual_candidates(tmp_path: Path):
     out = tmp_path / "tuner.html"
-    render_inferred_lane_tuner(following, out, "test_run", {})
+    render_inferred_lane_tuner(_following_fixture(), out, "test_run", {})
     html = out.read_text(encoding="utf-8")
     assert "Inferred Lane Affiliation / Integration Tuner" in html
     assert "Max center endpoint distance" in html
@@ -80,3 +87,22 @@ def test_inferred_lane_tuner_contains_live_controls_and_visual_candidates(tmp_pa
     assert "back-eligible" in html
     assert "candidate-rejected" in html
     assert "Download tuned JSON" in html
+
+
+def test_plotly_inferred_lane_tuner_is_interactive_and_candidate_centric(tmp_path: Path):
+    out = tmp_path / "plotly_tuner.html"
+    render_inferred_lane_plotly_tuner(_following_fixture(), out, "plotly_test", {})
+    html = out.read_text(encoding="utf-8")
+    assert "Plotly inferred lane candidate tuner" in html
+    assert "Plotly.react" in html
+    assert "scrollZoom:true" in html
+    assert "Fit candidates" in html
+    assert "Background LD" in html
+    assert "Boundary links" in html
+    assert "Wheel zoom" in html
+    assert "physical_track_0001" in html
+    assert "support LD" in html
+    assert "selected BACK" in html
+    assert "eligible FRONT" in html
+    assert "type:'scatter'" in html
+    assert "scattergl" not in html
