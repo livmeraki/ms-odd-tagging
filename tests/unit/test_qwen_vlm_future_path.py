@@ -25,10 +25,12 @@ def test_future_ego_path_preserves_curve_in_selected_frame_coordinates():
         2: _frame(2, 2.0, 0.5),
         3: _frame(3, 3.0, 1.5),
     }
-    geometry = future_ego_path(frames, 0, horizon_s=1.0, max_points=12)
+    geometry = future_ego_path(frames, 0, horizon_s=1.0, target_distance_m=40.0, max_points=12)
 
     assert geometry["coordinate_frame"] == "selected_frame_ego_centered_heading_aligned"
     assert geometry["corridor_half_width_m"] == 1.5
+    assert geometry["target_distance_m"] == 40.0
+    assert geometry["path_length_m"] > 3.0
     assert geometry["points"][0]["longitudinal_m"] == 0.0
     assert geometry["points"][0]["lateral_m"] == 0.0
     assert geometry["points"][-1]["longitudinal_m"] == 3.0
@@ -48,6 +50,32 @@ def test_future_ego_path_rotates_with_anchor_heading():
     assert abs(geometry["points"][1]["lateral_m"]) < 1e-6
     assert geometry["points"][2]["longitudinal_m"] == 2.0
     assert geometry["points"][2]["lateral_m"] == 1.0
+
+
+def test_future_ego_path_reaches_distance_target_before_long_time_horizon():
+    frames = {
+        index: _frame(index, index * 0.5, 0.0)
+        for index in range(200)
+    }
+    geometry = future_ego_path(frames, 0)
+
+    assert geometry["target_distance_m"] == 40.0
+    assert geometry["path_length_m"] >= 40.0
+    assert geometry["horizon_s"] <= 12.0
+    assert len(geometry["points"]) <= 16
+    assert geometry["points"][-1]["path_distance_m"] >= 40.0
+
+
+def test_future_ego_path_uses_longer_time_when_ego_is_slow():
+    frames = {
+        index: _frame(index, index * 0.05, 0.0)
+        for index in range(150)
+    }
+    geometry = future_ego_path(frames, 0)
+
+    assert geometry["horizon_s"] == 12.0
+    assert geometry["path_length_m"] < 40.0
+    assert geometry["path_length_m"] > 5.0
 
 
 def test_distance_to_polyline_uses_curved_path_not_heading_centerline():
