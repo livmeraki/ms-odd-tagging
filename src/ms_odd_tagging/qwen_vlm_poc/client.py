@@ -35,7 +35,7 @@ def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
 
     Event-driven waiting-for-pedestrian evaluation keeps candidate-generation
     heuristics hidden. The model receives BEV ordering plus neutral ego speed and
-    timestamp measurements aligned to the same selected frames.
+    candidate-pedestrian positions aligned to the same selected frames.
     """
     if (
         candidate.scenario == "waiting_for_pedestrian_to_cross"
@@ -50,9 +50,10 @@ def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
             "target_pedestrian_ids": list(candidate.primary_object_ids),
             "bev_frame_indices": list(candidate.selected_frame_indices),
             "ego_measurements": list(candidate.metadata.get("ego_measurements") or []),
+            "pedestrian_measurements": list(candidate.metadata.get("pedestrian_measurements") or []),
             "visual_evidence_id": candidate.metadata.get("visual_evidence_id"),
             "bev_images_follow_in_same_order": True,
-            "evaluation_mode": "bev_plus_neutral_ego_measurements",
+            "evaluation_mode": "bev_plus_neutral_ego_and_pedestrian_measurements",
         }
     return candidate.to_dict()
 
