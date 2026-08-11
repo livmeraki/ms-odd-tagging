@@ -12,6 +12,7 @@ from typing import Any
 
 
 INTERIOR_NEAR_M = 3.0
+INTERIOR_MID_M = 4.5
 INTERIOR_FAR_M = 6.0
 
 
@@ -52,12 +53,11 @@ def _robust_endpoint_motion_state(
     center: list[list[float]],
     side: str,
 ) -> dict[str, Any] | None:
-    """Measure stored lane direction using points 3 m and 6 m inside an endpoint.
+    """Measure stored lane direction only from the 3-6 m interior span.
 
-    ``point`` remains the literal endpoint. ``near_point`` and ``far_point`` are
-    reached by walking inward from that endpoint. For an ``end`` endpoint the
-    inward walking direction is opposite the stored lane travel direction, so
-    the reported heading and curvature are converted back to stored orientation.
+    ``point`` is still the literal endpoint for gap checks. Motion evidence is
+    built from 3.0 m, 4.5 m, and 6.0 m anchors walked inward from that endpoint,
+    so a hooked/noisy terminal segment contributes neither tangent nor curvature.
     """
     pts = [[float(p[0]), float(p[1])] for p in center if len(p) >= 2]
     if len(pts) < 2:
@@ -65,15 +65,16 @@ def _robust_endpoint_motion_state(
     oriented = pts if side == "start" else list(reversed(pts))
     endpoint = oriented[0]
     near = _point_at_distance(oriented, INTERIOR_NEAR_M)
+    middle = _point_at_distance(oriented, INTERIOR_MID_M)
     far = _point_at_distance(oriented, INTERIOR_FAR_M)
-    if _dist(endpoint, far) <= 1e-6:
+    if _dist(near, far) <= 1e-6:
         return None
 
-    inward_heading = _heading(endpoint, far)
+    inward_heading = _heading(near, far)
     travel_heading = inward_heading if side == "start" else _wrap(inward_heading + math.pi)
-    first_heading = _heading(endpoint, near) if _dist(endpoint, near) > 1e-6 else inward_heading
-    second_heading = _heading(near, far) if _dist(near, far) > 1e-6 else inward_heading
-    curvature = _wrap(second_heading - first_heading) / max(_dist(near, far), 1e-6)
+    first_heading = _heading(near, middle) if _dist(near, middle) > 1e-6 else inward_heading
+    second_heading = _heading(middle, far) if _dist(middle, far) > 1e-6 else inward_heading
+    curvature = _wrap(second_heading - first_heading) / max(_dist(middle, far), 1e-6)
     if side == "end":
         curvature = -curvature
 
@@ -82,8 +83,9 @@ def _robust_endpoint_motion_state(
         "heading": travel_heading,
         "curvature": curvature,
         "near_point": near,
+        "middle_point": middle,
         "far_point": far,
-        "method": "robust_3m_6m_interior_window",
+        "method": "interior_only_3m_4p5m_6m_window",
     }
 
 
@@ -92,7 +94,7 @@ def _interior_endpoint_width(
     right: list[list[float]],
     side: str,
 ) -> float | None:
-    """Estimate local width from 3 m and 6 m interior boundary samples."""
+    """Estimate local width from 3 m, 4.5 m, and 6 m interior samples."""
     lpts = [[float(p[0]), float(p[1])] for p in left if len(p) >= 2]
     rpts = [[float(p[0]), float(p[1])] for p in right if len(p) >= 2]
     if not lpts or not rpts:
@@ -101,7 +103,7 @@ def _interior_endpoint_width(
         lpts.reverse()
         rpts.reverse()
     widths = []
-    for distance_m in (INTERIOR_NEAR_M, INTERIOR_FAR_M):
+    for distance_m in (INTERIOR_NEAR_M, INTERIOR_MID_M, INTERIOR_FAR_M):
         lp = _point_at_distance(lpts, distance_m)
         rp = _point_at_distance(rpts, distance_m)
         width = _dist(lp, rp)
@@ -134,7 +136,7 @@ def _inferred_endpoint(inferred: dict[str, Any], role: str) -> dict[str, Any] | 
         "left_point": left_point,
         "right_point": right_point,
         "local_width_m": local_width,
-        "width_method": "median_3m_6m_interior_boundary_width",
+        "width_method": "median_3m_4p5m_6m_interior_boundary_width",
     })
     return state
 
@@ -187,12 +189,13 @@ def _nearest_observed_endpoint(
         "heading": state["heading"],
         "curvature": state["curvature"],
         "near_point": state["near_point"],
+        "middle_point": state["middle_point"],
         "far_point": state["far_point"],
         "motion_method": state["method"],
         "left_point": left_point,
         "right_point": right_point,
         "local_width_m": local_width,
-        "width_method": "median_3m_6m_interior_boundary_width",
+        "width_method": "median_3m_4p5m_6m_interior_boundary_width",
     }
 
 
@@ -235,8 +238,6 @@ def evaluate_inferred_endpoint_candidate(
         curvature_diff = abs(abs(float(observed["curvature"])) - abs(float(inferred_state["curvature"])))
         width_diff = abs(float(observed["local_width_m"]) - float(inferred_state["local_width_m"]))
 
-        # If the observed lane is stored in the opposite orientation, physical
-        # left/right swap relative to the inferred travel direction.
         reverse_orientation = abs(math.degrees(_wrap(float(observed["heading"]) - ih))) > 90.0
         observed_left = observed["right_point"] if reverse_orientation else observed["left_point"]
         observed_right = observed["left_point"] if reverse_orientation else observed["right_point"]
@@ -293,8 +294,10 @@ def evaluate_inferred_endpoint_candidate(
             "inferred_width_method": inferred_state.get("width_method"),
             "candidate_width_method": observed.get("width_method"),
             "inferred_interior_near_point": inferred_state.get("near_point"),
+            "inferred_interior_middle_point": inferred_state.get("middle_point"),
             "inferred_interior_far_point": inferred_state.get("far_point"),
             "candidate_interior_near_point": observed.get("near_point"),
+            "candidate_interior_middle_point": observed.get("middle_point"),
             "candidate_interior_far_point": observed.get("far_point"),
             "score": round(score, 4),
             "rejection_reasons": reasons,
