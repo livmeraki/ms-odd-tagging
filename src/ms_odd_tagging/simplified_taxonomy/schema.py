@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Literal
 
 MotionState = Literal["stationary", "moving", "starting", "stopping", "unknown"]
-SpeedBand = Literal["low", "medium", "high", "unknown"]
+SpeedBand = Literal["low", "medium", "high", "unknown"] | None
 ManeuverType = Literal["lane_keeping", "lane_change", "turn", "u_turn", "unknown"]
 Direction = Literal["left", "right", "straight"] | None
 TriState = Literal["present", "absent", "unknown"]
@@ -14,6 +14,8 @@ YesNoUnknown = Literal["yes", "no", "unknown"]
 @dataclass
 class EgoMotion:
     state: MotionState = "unknown"
+    # None means not applicable (for example, a stationary ego vehicle).
+    # "unknown" means a speed band is applicable but cannot be determined.
     speed_band: SpeedBand = "unknown"
 
 
