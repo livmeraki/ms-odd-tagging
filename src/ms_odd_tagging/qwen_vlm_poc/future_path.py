@@ -8,9 +8,10 @@ from typing import Any
 from .geometry import ego_position, lcs_to_ego, object_ego_xy, object_id
 
 
-DEFAULT_HORIZON_S = 5.0
+DEFAULT_HORIZON_S = 12.0
+DEFAULT_TARGET_DISTANCE_M = 40.0
 DEFAULT_CORRIDOR_HALF_WIDTH_M = 1.5
-DEFAULT_MAX_POINTS = 12
+DEFAULT_MAX_POINTS = 16
 
 
 def _finite_number(value: Any) -> bool:
@@ -33,12 +34,17 @@ def future_ego_path(
     frame_index: int,
     *,
     horizon_s: float = DEFAULT_HORIZON_S,
+    target_distance_m: float = DEFAULT_TARGET_DISTANCE_M,
     corridor_half_width_m: float = DEFAULT_CORRIDOR_HALF_WIDTH_M,
     max_points: int = DEFAULT_MAX_POINTS,
 ) -> dict[str, Any]:
-    """Return future ego positions expressed in the selected frame's ego axes.
+    """Return a spatially useful future ego path in the selected frame's axes.
 
-    This is raw trajectory geometry, not a prediction/classification heuristic.
+    The path uses actual future canonical ego poses. Collection continues until
+    either ``target_distance_m`` of traveled trajectory has been covered,
+    ``horizon_s`` has elapsed, or the recording ends. This keeps the path useful
+    when ego is slow/stopped while preventing an unbounded trajectory payload.
+    It is raw trajectory geometry, not a prediction/classification heuristic.
     """
     anchor = frames_by_index.get(frame_index)
     if anchor is None:
@@ -46,6 +52,8 @@ def future_ego_path(
             "frame": frame_index,
             "coordinate_frame": "selected_frame_ego_centered_heading_aligned",
             "horizon_s": 0.0,
+            "target_distance_m": round(float(target_distance_m), 3),
+            "path_length_m": 0.0,
             "corridor_half_width_m": corridor_half_width_m,
             "points": [],
         }
@@ -56,6 +64,9 @@ def future_ego_path(
     anchor_time = float(anchor_time)
 
     rows: list[dict[str, Any]] = []
+    traveled_m = 0.0
+    previous_lcs: tuple[float, float] | None = None
+
     for index in sorted(frames_by_index):
         if index < frame_index:
             continue
@@ -68,7 +79,16 @@ def future_ego_path(
             continue
         if offset_s > horizon_s + 1e-9:
             break
+
         position = ego_position(frame)
+        current_lcs = (float(position[0]), float(position[1]))
+        if previous_lcs is not None:
+            traveled_m += math.hypot(
+                current_lcs[0] - previous_lcs[0],
+                current_lcs[1] - previous_lcs[1],
+            )
+        previous_lcs = current_lcs
+
         longitudinal_m, lateral_m = lcs_to_ego(position, anchor)
         rows.append(
             {
@@ -76,15 +96,22 @@ def future_ego_path(
                 "time_offset_s": round(offset_s, 3),
                 "longitudinal_m": round(float(longitudinal_m), 3),
                 "lateral_m": round(float(lateral_m), 3),
+                "path_distance_m": round(float(traveled_m), 3),
             }
         )
 
+        if traveled_m >= target_distance_m - 1e-9:
+            break
+
     sampled = _uniform_rows(rows, max_points)
-    actual_horizon = sampled[-1]["time_offset_s"] if sampled else 0.0
+    actual_horizon = rows[-1]["time_offset_s"] if rows else 0.0
+    actual_path_length = rows[-1]["path_distance_m"] if rows else 0.0
     return {
         "frame": frame_index,
         "coordinate_frame": "selected_frame_ego_centered_heading_aligned",
         "horizon_s": actual_horizon,
+        "target_distance_m": round(float(target_distance_m), 3),
+        "path_length_m": round(float(actual_path_length), 3),
         "corridor_half_width_m": round(float(corridor_half_width_m), 3),
         "points": sampled,
     }
