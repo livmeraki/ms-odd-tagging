@@ -105,7 +105,7 @@ function renderList(){const list=document.getElementById('list');list.innerHTML=
 function selectRecording(name,reload){selected=name;const r=recordings.find(x=>x.recording===name);document.getElementById('current').textContent=r?`${name} · ${r.reviewed}/${r.total}`:name;document.getElementById('empty').style.display='none';const f=document.getElementById('editor');f.style.display='block';const url='/editor/'+encodeURIComponent(name);if(reload||!f.src.endsWith(url))f.src=url;renderList();}
 function nextUnfinished(){const unfinished=recordings.filter(r=>r.status!=='done'&&r.total>0);if(!unfinished.length)return;let idx=selected?unfinished.findIndex(r=>r.recording===selected):-1;selectRecording(unfinished[(idx+1+unfinished.length)%unfinished.length].recording,true);}
 document.getElementById('search').addEventListener('input',renderList);document.getElementById('filter').addEventListener('change',renderList);
-window.addEventListener('message',async e=>{if(!e.data||!['gt-saved','gt-complete'].includes(e.data.type))return;const completed=e.data.type==='gt-complete';await refresh();if(completed)nextUnfinished();});
+window.addEventListener('message',async e=>{if(!e.data||!['gt-saved','gt-complete'].includes(e.data.type))return;await refresh();});
 refresh().then(()=>{const first=recordings.find(r=>r.status!=='done'&&r.total>0)||recordings[0];if(first)selectRecording(first.recording,true);});
 </script></body></html>'''
 
