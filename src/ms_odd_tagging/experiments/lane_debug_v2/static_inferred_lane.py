@@ -1,17 +1,10 @@
-"""Build recording-level static inferred lane components from ego corridor boxes.
-
-The overlapping per-frame corridor boxes remain the evidence source. Completed
-routes are converted into one static corridor available for the whole recording.
-The corridor geometry is reconstructed from the union area of all overlapping
-box polygons, then smoothed before front/back affiliation and track integration.
-"""
+"""Build and integrate recording-level static inferred lane components."""
 from __future__ import annotations
 
 import copy
 import math
 from typing import Any
 
-from .lane_geometry import nearest_heading, wrap_angle
 from .static_inferred_union import build_smoothed_box_union_corridor
 
 
@@ -29,12 +22,7 @@ def _append_points(target: list[list[float]], points: list[list[float]]) -> None
 
 
 def build_static_inferred_lanes(routes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Convert overlapping-box routes into static smoothed union corridors.
-
-    The final lane width/polygon is not a fixed-width fit through ego centers.
-    Instead, every local cross-section is derived from the area union of the
-    green evidence boxes and the resulting left/right envelopes are smoothed.
-    """
+    """Convert overlapping-box routes into static smoothed union corridors."""
     out: list[dict[str, Any]] = []
     for route in routes:
         pieces = sorted(route.get("pieces") or [], key=lambda p: int(p.get("frame_index", 0)))
@@ -71,42 +59,6 @@ def build_static_inferred_lanes(routes: list[dict[str, Any]]) -> list[dict[str, 
     return out
 
 
-def _endpoint_support(track: dict[str, Any], point: list[float], inferred_heading: float | None) -> dict[str, Any] | None:
-    line = track.get("centerline_lcs_m") or []
-    if len(line) < 2:
-        return None
-    options = [("start", line[0]), ("end", line[-1])]
-    side, endpoint = min(options, key=lambda x: _dist(x[1], point))
-    distance = _dist(endpoint, point)
-    lane_heading = nearest_heading((float(endpoint[0]), float(endpoint[1])), line)
-    heading_diff = 0.0
-    if inferred_heading is not None and lane_heading is not None:
-        diff = abs(math.degrees(wrap_angle(float(lane_heading) - float(inferred_heading))))
-        heading_diff = min(diff, abs(180.0 - diff))
-    return {"side": side, "distance_m": distance, "heading_difference_deg": heading_diff}
-
-
-def _robust_endpoint_heading(line: list[list[float]], side: str, window_m: float = 6.0) -> float | None:
-    points = [[float(p[0]), float(p[1])] for p in line if len(p) >= 2]
-    if len(points) < 2:
-        return None
-    oriented = points if side == "start" else list(reversed(points))
-    endpoint = oriented[0]
-    remaining = window_m
-    target = oriented[-1]
-    for a, b in zip(oriented, oriented[1:]):
-        length = _dist(a, b)
-        if length <= 1e-8:
-            continue
-        if remaining <= length:
-            ratio = remaining / length
-            target = [a[0] + ratio * (b[0] - a[0]), a[1] + ratio * (b[1] - a[1])]
-            break
-        remaining -= length
-    outward = math.atan2(target[1] - endpoint[1], target[0] - endpoint[0])
-    return outward if side == "start" else wrap_angle(outward + math.pi)
-
-
 def _orient_for_exit(track: dict[str, Any], exit_side: str) -> list[list[float]]:
     line = [[float(p[0]), float(p[1])] for p in track.get("centerline_lcs_m") or []]
     return line if exit_side == "end" else list(reversed(line))
@@ -117,6 +69,23 @@ def _orient_for_entry(track: dict[str, Any], entry_side: str) -> list[list[float
     return line if entry_side == "start" else list(reversed(line))
 
 
+def _selected_support(inferred: dict[str, Any], role: str, expected_track_id: str) -> dict[str, Any] | None:
+    support = inferred.get(f"{role}_affiliation")
+    if not isinstance(support, dict):
+        return None
+    if str(support.get("track_id")) != str(expected_track_id):
+        return None
+    if support.get("rejection_reasons"):
+        return None
+    if not support.get("accepted_by_gates"):
+        return None
+    if not support.get("selected"):
+        return None
+    if support.get("track_endpoint_side") not in {"start", "end"}:
+        return None
+    return support
+
+
 def integrate_static_inferred_lanes(
     tracks: list[dict[str, Any]],
     static_lanes: list[dict[str, Any]],
@@ -125,7 +94,14 @@ def integrate_static_inferred_lanes(
     maximum_endpoint_distance_m: float = 20.0,
     maximum_heading_difference_deg: float = 40.0,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Attach static corridors and merge supported before/after track pairs."""
+    """Integrate corridors using the exact local support selected by affiliation.
+
+    ``maximum_endpoint_distance_m`` and ``maximum_heading_difference_deg`` remain
+    in the signature for compatibility with older callers, but integration no
+    longer performs a weaker second endpoint test. The selected affiliation
+    support has already passed center + left/right boundary endpoint distance,
+    local tangent, local width, curvature, lateral, and uniqueness gates.
+    """
     working = copy.deepcopy(tracks)
     debug: list[dict[str, Any]] = []
 
@@ -136,13 +112,14 @@ def integrate_static_inferred_lanes(
         start_id = alias.get(str(start_raw), str(start_raw)) if start_raw else None
         end_id = alias.get(str(end_raw), str(end_raw)) if end_raw else None
         center = inferred.get("centerline_lcs_m") or []
-        record = {
+        record: dict[str, Any] = {
             "static_inferred_lane_id": inferred.get("static_inferred_lane_id"),
             "route_id": inferred.get("route_id"),
             "start_track_id": start_id,
             "end_track_id": end_id,
             "accepted": False,
             "action": "none",
+            "support_method": "reuse_selected_local_boundary_aware_affiliation_support",
         }
         if len(center) < 2 or not inferred.get("bridge_complete") or not start_id or not end_id:
             record["rejection_reason"] = "incomplete_route_or_missing_track_endpoint"
@@ -154,22 +131,15 @@ def integrate_static_inferred_lanes(
             debug.append(record)
             continue
 
-        start_h = _robust_endpoint_heading(center, "start")
-        end_h = _robust_endpoint_heading(center, "end")
-        start_support = _endpoint_support(start_track, center[0], start_h)
-        end_support = _endpoint_support(end_track, center[-1], end_h)
+        # Affiliation happened immediately before integration against these base
+        # tracks, so reuse the exact endpoint evidence rather than picking a new
+        # closest endpoint from the whole merged track.
+        start_support = _selected_support(inferred, "back", str(start_raw))
+        end_support = _selected_support(inferred, "front", str(end_raw))
         record["start_support"] = start_support
         record["end_support"] = end_support
         if start_support is None or end_support is None:
-            record["rejection_reason"] = "missing_track_centerline"
-            debug.append(record)
-            continue
-        if start_support["distance_m"] > maximum_endpoint_distance_m or end_support["distance_m"] > maximum_endpoint_distance_m:
-            record["rejection_reason"] = "endpoint_distance"
-            debug.append(record)
-            continue
-        if start_support["heading_difference_deg"] > maximum_heading_difference_deg or end_support["heading_difference_deg"] > maximum_heading_difference_deg:
-            record["rejection_reason"] = "endpoint_heading_difference"
+            record["rejection_reason"] = "missing_or_invalid_selected_local_affiliation_support"
             debug.append(record)
             continue
 
@@ -183,6 +153,8 @@ def integrate_static_inferred_lanes(
             "polygon_lcs_m": inferred.get("polygon_lcs_m"),
             "evidence_box_count": inferred.get("evidence_box_count"),
             "geometry_method": inferred.get("geometry_method"),
+            "back_supporting_lane_id": start_support.get("supporting_lane_id"),
+            "front_supporting_lane_id": end_support.get("supporting_lane_id"),
             "source": "static_lane_from_smoothed_box_area_union",
         }
 
@@ -196,8 +168,8 @@ def integrate_static_inferred_lanes(
             debug.append(record)
             continue
 
-        a_line = _orient_for_exit(start_track, start_support["side"])
-        b_line = _orient_for_entry(end_track, end_support["side"])
+        a_line = _orient_for_exit(start_track, str(start_support["track_endpoint_side"]))
+        b_line = _orient_for_entry(end_track, str(end_support["track_endpoint_side"]))
         merged_center: list[list[float]] = []
         _append_points(merged_center, a_line)
         _append_points(merged_center, center)
@@ -210,14 +182,16 @@ def integrate_static_inferred_lanes(
         merged_track = {
             "track_id": new_id,
             "logical_lane_id": new_id,
-            "member_lane_ids": list(start_track.get("member_lane_ids") or []) + list(end_track.get("member_lane_ids") or []),
+            "member_lane_ids": list(dict.fromkeys(
+                list(start_track.get("member_lane_ids") or []) + list(end_track.get("member_lane_ids") or [])
+            )),
             "centerline_lcs_m": merged_center,
             "polygon_lcs_m": [],
             "median_width_m": round((float(start_track.get("median_width_m", 3.5)) + float(end_track.get("median_width_m", 3.5))) / 2.0, 3),
             "pieces": list(start_track.get("pieces") or []) + [static_piece] + list(end_track.get("pieces") or []),
             "piece_count": len(start_track.get("pieces") or []) + len(end_track.get("pieces") or []) + 1,
             "observed_segment_count": int(start_track.get("observed_segment_count", 0)) + int(end_track.get("observed_segment_count", 0)),
-            "inferred_gap_count": int(start_track.get("inferred_gap_count", 0)) + int(end_track.get("inferred_gap_count", 0)) + 1,
+            "inferred_gap_count": int(start_track.get("inferred_gap_count", 0)) + int(end_track.get("inferred_gap_count", 0)),
             "canonical_stitch_count": int(start_track.get("canonical_stitch_count", 0)) + int(end_track.get("canonical_stitch_count", 0)),
             "topology_supported_stitch_count": int(start_track.get("topology_supported_stitch_count", 0)) + int(end_track.get("topology_supported_stitch_count", 0)),
             "static_inferred_corridor_count": 1,
