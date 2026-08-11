@@ -31,10 +31,6 @@ def test_event_driven_waiting_vlm_input_excludes_candidate_heuristics():
             "ego_measurements": [
                 {"frame": 10, "time_s": 1.0, "speed_mps": 7.5},
                 {"frame": 16, "time_s": 1.6, "speed_mps": 5.0},
-                {"frame": 22, "time_s": 2.2, "speed_mps": 2.0},
-                {"frame": 28, "time_s": 2.8, "speed_mps": 0.5},
-                {"frame": 34, "time_s": 3.4, "speed_mps": 0.4},
-                {"frame": 40, "time_s": 4.0, "speed_mps": 1.2},
             ],
             "pedestrian_measurements": [
                 {
@@ -44,14 +40,19 @@ def test_event_driven_waiting_vlm_input_excludes_candidate_heuristics():
                         {"object_id": "ped-1", "longitudinal_m": 8.0, "lateral_m": 4.0},
                         {"object_id": "ped-2", "longitudinal_m": 12.0, "lateral_m": -3.0},
                     ],
-                },
+                }
+            ],
+            "ego_future_paths": [
                 {
-                    "frame": 16,
-                    "time_s": 1.6,
-                    "pedestrians": [
-                        {"object_id": "ped-1", "longitudinal_m": 7.5, "lateral_m": 1.5}
+                    "frame": 10,
+                    "coordinate_frame": "selected_frame_ego_centered_heading_aligned",
+                    "horizon_s": 4.0,
+                    "corridor_half_width_m": 1.5,
+                    "points": [
+                        {"frame": 10, "time_offset_s": 0.0, "longitudinal_m": 0.0, "lateral_m": 0.0},
+                        {"frame": 20, "time_offset_s": 1.0, "longitudinal_m": 8.0, "lateral_m": 2.0},
                     ],
-                },
+                }
             ],
             "ego_response_frames": [20, 21],
             "temporally_linked": True,
@@ -62,14 +63,11 @@ def test_event_driven_waiting_vlm_input_excludes_candidate_heuristics():
     payload = _vlm_candidate_input(candidate)
     text = json.dumps(payload, sort_keys=True)
 
-    assert payload["evaluation_mode"] == "bev_plus_neutral_ego_and_pedestrian_measurements"
+    assert payload["evaluation_mode"] == "bev_plus_neutral_future_path_and_motion_measurements"
     assert payload["bev_frame_indices"] == [10, 16, 22, 28, 34, 40]
     assert payload["target_pedestrian_ids"] == ["ped-1", "ped-2"]
-    assert payload["coordinate_convention"] == {
-        "frame": "ego_centered_heading_up",
-        "longitudinal_m": "positive_ahead_of_ego_negative_behind",
-        "lateral_m": "zero_is_ego_forward_centerline_opposite_signs_are_opposite_sides",
-    }
+    assert payload["coordinate_convention"]["expected_path_reference"] == "ego_future_paths_not_lateral_zero"
+    assert payload["coordinate_convention"]["lateral_m"].startswith("positive_left_negative_right")
     assert payload["ego_measurements"][0] == {
         "frame": 10,
         "time_s": 1.0,
@@ -80,6 +78,8 @@ def test_event_driven_waiting_vlm_input_excludes_candidate_heuristics():
         "longitudinal_m": 8.0,
         "lateral_m": 4.0,
     }
+    assert payload["ego_future_paths"][0]["corridor_half_width_m"] == 1.5
+    assert payload["ego_future_paths"][0]["points"][1]["lateral_m"] == 2.0
     assert payload["visual_evidence_id"].endswith(":bev_sequence")
     for forbidden in (
         "conflict",
