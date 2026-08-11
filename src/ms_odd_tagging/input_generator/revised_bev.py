@@ -34,6 +34,7 @@ ACTIVE_OBJECT_COLOR = "#facc15"
 PEDESTRIAN_COLOR = "#f97316"
 FUTURE_PATH_COLOR = "#0891b2"
 FUTURE_PATH_CORRIDOR_COLOR = "#67e8f9"
+PEDESTRIAN_TRAIL_COLOR = "#ca8a04"
 
 _DIGIT_GLYPHS = {
     "0": ("111", "101", "101", "101", "111"),
@@ -162,6 +163,61 @@ def _draw_future_path(canvas, debug_context, screen, scale_x: float, scale_y: fl
         width=4,
         alpha=0.95,
     )
+
+
+def _draw_candidate_pedestrian_trails(
+    canvas,
+    recording: dict[str, Any],
+    debug_context: dict[str, Any] | None,
+    ego_position,
+    ego_yaw: float,
+    screen,
+    visible,
+) -> None:
+    """Draw observed candidate-pedestrian motion in the current BEV frame."""
+    context = debug_context or {}
+    candidate_ids = {str(value) for value in context.get("candidate_object_ids", [])}
+    if not candidate_ids:
+        return
+    start_frame = context.get("candidate_track_start_frame")
+    end_frame = context.get("candidate_track_end_frame")
+    tracks: dict[str, list[tuple[int, tuple[float, float]]]] = {value: [] for value in candidate_ids}
+    for source_frame in recording.get("frames", []):
+        source_index = source_frame.get("frame_index")
+        if not isinstance(source_index, int):
+            continue
+        if isinstance(start_frame, int) and source_index < start_frame:
+            continue
+        if isinstance(end_frame, int) and source_index > end_frame:
+            continue
+        for obj in source_frame.get("objects", []):
+            obj_id = str(obj.get("track_id") or obj.get("object_id") or obj.get("id") or "")
+            if obj_id not in candidate_ids:
+                continue
+            if str(obj.get("class") or "").lower() != "pedestrian":
+                continue
+            position = obj.get("position_lcs_m") or obj.get("center_lcs_m")
+            if not isinstance(position, (list, tuple)) or len(position) < 2:
+                continue
+            tracks[obj_id].append((source_index, lcs_to_ego(position, ego_position, ego_yaw)))
+
+    trail_color = hex_to_rgb(PEDESTRIAN_TRAIL_COLOR)
+    for states in tracks.values():
+        if len(states) < 2:
+            continue
+        for (frame_a, point_a), (frame_b, point_b) in zip(states, states[1:]):
+            if frame_b - frame_a > 5:
+                continue
+            if not (visible(point_a) or visible(point_b)):
+                continue
+            start = screen(point_a)
+            end = screen(point_b)
+            canvas.line(*start, *end, trail_color, width=3, alpha=0.72)
+        marker_stride = max(1, len(states) // 8)
+        for _frame_index, point in states[::marker_stride]:
+            if visible(point):
+                sx, sy = screen(point)
+                canvas.circle(sx, sy, 2.5, trail_color, alpha=0.78)
 
 
 def _object_corners_lcs(obj: dict[str, Any], ego_yaw: float):
@@ -327,6 +383,15 @@ def render_revised_bev_png(
             _draw_feature(canvas, _feature_points(feature, points_by_id), ego_position, ego_yaw, screen, extent, color, line_width, alpha)
 
     _draw_future_path(canvas, debug_context, screen, scale_x, scale_y)
+    _draw_candidate_pedestrian_trails(
+        canvas,
+        recording,
+        debug_context,
+        ego_position,
+        ego_yaw,
+        screen,
+        visible,
+    )
 
     if crossing_arc is not None:
         arc_points = _forward_arc_points(*crossing_arc)
@@ -358,7 +423,7 @@ def render_revised_bev_png(
         if not visible(center_ego):
             continue
         class_name = str(obj.get("class") or "").lower()
-        object_id = str(obj.get("object_id"))
+        object_id = str(obj.get("track_id") or obj.get("object_id") or obj.get("id") or "")
         color = hex_to_rgb(
             PEDESTRIAN_COLOR
             if class_name == "pedestrian"
