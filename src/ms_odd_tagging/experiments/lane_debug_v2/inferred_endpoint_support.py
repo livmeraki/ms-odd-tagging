@@ -1,14 +1,18 @@
 """Local, boundary-aware endpoint continuation evidence for static inferred lanes.
 
-Track-wide median width is deliberately avoided. The exact inferred/observed
-boundary endpoints are used for endpoint-distance evidence, while tangent,
-curvature, and width are measured over a short local interior window so the
-smoothed union's terminal cap/hook does not create a false discontinuity.
+Literal inferred/observed endpoints are retained for center and boundary gap
+checks. Tangent, curvature, and width are deliberately measured several metres
+inside *both* lanes so terminal hooks/noise cannot dominate affiliation.
+Track-wide median width is never used.
 """
 from __future__ import annotations
 
 import math
 from typing import Any
+
+
+INTERIOR_NEAR_M = 3.0
+INTERIOR_FAR_M = 6.0
 
 
 def _dist(a: list[float], b: list[float]) -> float:
@@ -44,83 +48,65 @@ def _point_at_distance(points: list[list[float]], distance_m: float) -> list[flo
     return [float(points[-1][0]), float(points[-1][1])]
 
 
-def _endpoint_state(line: list[list[float]], side: str, window_points: int = 5) -> dict[str, Any] | None:
-    """Observed-fragment endpoint state in the fragment's stored orientation."""
-    pts = [[float(p[0]), float(p[1])] for p in line if len(p) >= 2]
-    if len(pts) < 2:
-        return None
-    if side == "start":
-        sample = pts[: min(window_points, len(pts))]
-        endpoint = sample[0]
-    else:
-        sample = pts[-min(window_points, len(pts)):]
-        endpoint = sample[-1]
-    headings: list[float] = []
-    lengths: list[float] = []
-    for a, b in zip(sample, sample[1:]):
-        d = _dist(a, b)
-        if d <= 1e-6:
-            continue
-        headings.append(_heading(a, b))
-        lengths.append(d)
-    if not headings:
-        return None
-    tangent = headings[0] if side == "start" else headings[-1]
-    curvature = 0.0
-    if len(headings) >= 2:
-        curvature = sum(_wrap(b - a) for a, b in zip(headings, headings[1:])) / max(sum(lengths), 1e-6)
-    return {"point": endpoint, "heading": tangent, "curvature": curvature}
+def _robust_endpoint_motion_state(
+    center: list[list[float]],
+    side: str,
+) -> dict[str, Any] | None:
+    """Measure stored lane direction using points 3 m and 6 m inside an endpoint.
 
-
-def _robust_inferred_motion_state(center: list[list[float]], role: str) -> dict[str, Any] | None:
-    """Measure inferred road direction over 3-6 m, past short union end hooks.
-
-    This restores the robust behavior that existed before the local-boundary
-    affiliation refactor. The literal endpoint is retained for geometric
-    distances, but heading/curvature are inferred from the interior road shape.
+    ``point`` remains the literal endpoint. ``near_point`` and ``far_point`` are
+    reached by walking inward from that endpoint. For an ``end`` endpoint the
+    inward walking direction is opposite the stored lane travel direction, so
+    the reported heading and curvature are converted back to stored orientation.
     """
     pts = [[float(p[0]), float(p[1])] for p in center if len(p) >= 2]
     if len(pts) < 2:
         return None
-    oriented = pts if role == "back" else list(reversed(pts))
+    oriented = pts if side == "start" else list(reversed(pts))
     endpoint = oriented[0]
-    middle = _point_at_distance(oriented, 3.0)
-    far = _point_at_distance(oriented, 6.0)
+    near = _point_at_distance(oriented, INTERIOR_NEAR_M)
+    far = _point_at_distance(oriented, INTERIOR_FAR_M)
     if _dist(endpoint, far) <= 1e-6:
         return None
-    outward = _heading(endpoint, far)
-    travel_heading = outward if role == "back" else _wrap(outward + math.pi)
-    first_heading = _heading(endpoint, middle) if _dist(endpoint, middle) > 1e-6 else outward
-    second_heading = _heading(middle, far) if _dist(middle, far) > 1e-6 else outward
-    curvature = _wrap(second_heading - first_heading) / max(_dist(middle, far), 1e-6)
-    if role == "front":
+
+    inward_heading = _heading(endpoint, far)
+    travel_heading = inward_heading if side == "start" else _wrap(inward_heading + math.pi)
+    first_heading = _heading(endpoint, near) if _dist(endpoint, near) > 1e-6 else inward_heading
+    second_heading = _heading(near, far) if _dist(near, far) > 1e-6 else inward_heading
+    curvature = _wrap(second_heading - first_heading) / max(_dist(near, far), 1e-6)
+    if side == "end":
         curvature = -curvature
+
     return {
         "point": endpoint,
         "heading": travel_heading,
         "curvature": curvature,
-        "middle_point": middle,
+        "near_point": near,
         "far_point": far,
         "method": "robust_3m_6m_interior_window",
     }
 
 
-def _local_endpoint_width(left: list[list[float]], right: list[list[float]], side: str, sample_count: int = 5) -> float | None:
-    """Robust local width near an endpoint, never the whole-track median width."""
-    n = min(len(left), len(right))
-    if n <= 0:
+def _interior_endpoint_width(
+    left: list[list[float]],
+    right: list[list[float]],
+    side: str,
+) -> float | None:
+    """Estimate local width from 3 m and 6 m interior boundary samples."""
+    lpts = [[float(p[0]), float(p[1])] for p in left if len(p) >= 2]
+    rpts = [[float(p[0]), float(p[1])] for p in right if len(p) >= 2]
+    if not lpts or not rpts:
         return None
-    count = min(sample_count, n)
-    indices = range(count) if side == "start" else range(n - count, n)
-    widths = [
-        _dist(
-            [float(left[i][0]), float(left[i][1])],
-            [float(right[i][0]), float(right[i][1])],
-        )
-        for i in indices
-        if len(left[i]) >= 2 and len(right[i]) >= 2
-    ]
-    widths = [w for w in widths if math.isfinite(w) and w > 0.1]
+    if side == "end":
+        lpts.reverse()
+        rpts.reverse()
+    widths = []
+    for distance_m in (INTERIOR_NEAR_M, INTERIOR_FAR_M):
+        lp = _point_at_distance(lpts, distance_m)
+        rp = _point_at_distance(rpts, distance_m)
+        width = _dist(lp, rp)
+        if math.isfinite(width) and width > 0.1:
+            widths.append(width)
     if not widths:
         return None
     widths.sort()
@@ -134,13 +120,13 @@ def _inferred_endpoint(inferred: dict[str, Any], role: str) -> dict[str, Any] | 
     if len(center) < 2 or not left or not right:
         return None
     side = "start" if role == "back" else "end"
-    state = _robust_inferred_motion_state(center, role)
+    state = _robust_endpoint_motion_state(center, side)
     if state is None:
         return None
     index = 0 if side == "start" else -1
     left_point = [float(left[index][0]), float(left[index][1])]
     right_point = [float(right[index][0]), float(right[index][1])]
-    local_width = _local_endpoint_width(left, right, side)
+    local_width = _interior_endpoint_width(left, right, side)
     if local_width is None:
         local_width = _dist(left_point, right_point)
     state.update({
@@ -148,7 +134,7 @@ def _inferred_endpoint(inferred: dict[str, Any], role: str) -> dict[str, Any] | 
         "left_point": left_point,
         "right_point": right_point,
         "local_width_m": local_width,
-        "width_method": "median_first_or_last_5_union_cross_sections",
+        "width_method": "median_3m_6m_interior_boundary_width",
     })
     return state
 
@@ -174,12 +160,13 @@ def _nearest_observed_endpoint(
         if len(center) < 2:
             continue
         for lane_side, lane_point in (("start", center[0]), ("end", center[-1])):
-            state = _endpoint_state(center, lane_side)
+            state = _robust_endpoint_motion_state(center, lane_side)
             if state is None:
                 continue
             candidates.append((_dist(track_point, lane_point), str(lane_id), lane_side, lane, state))
     if not candidates:
         return None
+
     _, lane_id, lane_side, lane, state = min(candidates, key=lambda x: (x[0], x[1], x[2]))
     left = lane.get("left_boundary_lcs_m") or []
     right = lane.get("right_boundary_lcs_m") or []
@@ -188,7 +175,7 @@ def _nearest_observed_endpoint(
     index = 0 if lane_side == "start" else -1
     left_point = [float(left[index][0]), float(left[index][1])]
     right_point = [float(right[index][0]), float(right[index][1])]
-    local_width = _local_endpoint_width(left, right, lane_side)
+    local_width = _interior_endpoint_width(left, right, lane_side)
     if local_width is None:
         local_width = _dist(left_point, right_point)
     return {
@@ -199,10 +186,13 @@ def _nearest_observed_endpoint(
         "point": state["point"],
         "heading": state["heading"],
         "curvature": state["curvature"],
+        "near_point": state["near_point"],
+        "far_point": state["far_point"],
+        "motion_method": state["method"],
         "left_point": left_point,
         "right_point": right_point,
         "local_width_m": local_width,
-        "width_method": "median_first_or_last_5_observed_cross_sections",
+        "width_method": "median_3m_6m_interior_boundary_width",
     }
 
 
@@ -269,9 +259,6 @@ def evaluate_inferred_endpoint_candidate(
             reasons.append("local_tangent_difference")
         if width_diff > maximum_width_difference_m:
             reasons.append("local_endpoint_width_difference")
-        # Retain the old overlap safeguard: when an observed endpoint already
-        # lies in the inferred area, terminal union curvature is not a reliable
-        # reason by itself to break a longitudinal continuation.
         if curvature_diff > maximum_curvature_difference_per_m and not endpoint_inside_corridor:
             reasons.append("local_curvature_difference")
 
@@ -302,8 +289,13 @@ def evaluate_inferred_endpoint_candidate(
             "reverse_boundary_orientation": reverse_orientation,
             "endpoint_inside_inferred_polygon": endpoint_inside_corridor,
             "inferred_heading_method": inferred_state.get("method"),
+            "candidate_heading_method": observed.get("motion_method"),
             "inferred_width_method": inferred_state.get("width_method"),
             "candidate_width_method": observed.get("width_method"),
+            "inferred_interior_near_point": inferred_state.get("near_point"),
+            "inferred_interior_far_point": inferred_state.get("far_point"),
+            "candidate_interior_near_point": observed.get("near_point"),
+            "candidate_interior_far_point": observed.get("far_point"),
             "score": round(score, 4),
             "rejection_reasons": reasons,
             "accepted_by_gates": not reasons,
