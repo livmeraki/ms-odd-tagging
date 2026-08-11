@@ -8,13 +8,28 @@ For the event-driven experiment, evaluate this scenario from three neutral input
 The model input intentionally does NOT contain heuristic labels such as conflict, crossing, moving_toward_corridor, ego_response, yielding, or temporally_linked.
 Do not infer that a candidate is positive merely because it was selected for review.
 
-Candidate pedestrians are visually highlighted in orange in the BEVs. Highlighting means only "inspect this pedestrian"; it does NOT mean the pedestrian is conflicting or caused ego to yield.
+BEV/object convention:
+- Pedestrians are orange by class.
+- Candidate pedestrians to inspect have a yellow active-object outline/highlight.
+- The yellow highlight identifies the target only; it does NOT imply conflict, crossing, or causality.
+
+Coordinate convention for pedestrian_measurements:
+- Coordinates are ego-centered and heading-aligned for each frame.
+- longitudinal_m > 0 means ahead of ego; longitudinal_m < 0 means behind ego.
+- lateral_m = 0 is the ego forward centerline.
+- Opposite lateral signs are opposite sides of the ego forward centerline.
+- A candidate pedestrian that approaches lateral_m = 0, passes through/near 0 while ahead of ego, or changes lateral sign across consecutive selected frames has strong neutral evidence of traversing the ego forward path, provided the BEV road geometry is consistent with that interpretation.
 
 Require evidence for BOTH:
-1. pedestrian path relation: using the BEV sequence together with pedestrian_measurements, a highlighted pedestrian is crossing, entering, or clearly moving toward the ego's expected drivable path;
+1. pedestrian path relation: using the BEV sequence together with pedestrian_measurements, a candidate pedestrian is crossing, entering, or clearly moving toward the ego's expected drivable path;
 2. ego response: from ego_measurements over the same frames, ego is stopped, stopping, or clearly slowing during that pedestrian interaction.
 
-Use the BEV sequence to judge road/lane geometry and where the pedestrian sits relative to the drivable path. Use pedestrian_measurements as neutral temporal position evidence for the same pedestrian across frames. A pedestrian whose lateral position moves from one side of ego's path toward or across the other side is evidence of path crossing when that motion is consistent with the BEV road geometry. Do not treat any single lateral value or proximity alone as proof of crossing.
+IMPORTANT for ego response:
+- Ego does NOT need to visibly decelerate during the selected frames if it is already stopped or nearly stopped while the pedestrian is crossing. Sustained near-zero/very-low speed during the crossing satisfies the "waiting" part of this scenario.
+- Do not reject a true waiting scene merely because the braking/deceleration onset happened before the first selected interaction frame.
+- If ego speed decreases during the interaction, that also supports the scenario.
+
+Use the BEV sequence to judge road/lane geometry and where the pedestrian sits relative to the drivable path. Use pedestrian_measurements as neutral temporal position evidence for the same pedestrian across frames. Do not require a full sign change if the BEVs clearly show the pedestrian entering/passing through the forward path; passing close to lateral_m = 0 while longitudinal_m is positive can be sufficient when visually consistent.
 
 Use ego_measurements to judge ego motion; the ego is re-centered in every BEV, so do NOT expect ego displacement or slowing to be visually apparent from the ego icon itself.
 
@@ -25,9 +40,9 @@ Important negatives:
 - Ego slowing/stopping alone is false.
 - Do not invent causal linkage from the fact that the candidate exists.
 - If neither the BEVs nor pedestrian_measurements establish the pedestrian/path relation, prefer false or insufficient_evidence even if ego speed decreases.
-- If ego_measurements do not show a meaningful stop/slow response during the pedestrian interaction, prefer false or insufficient_evidence even if the pedestrian crosses.
+- If ego is neither already stopped/near-stopped nor slowing during the interaction, prefer false or insufficient_evidence even if the pedestrian crosses.
 
-Reason across BEVs, pedestrian_measurements, and ego_measurements in temporal order using bev_frame_indices. target_pedestrian_ids identifies highlighted candidate pedestrians but carries no semantic judgment.
+Reason across BEVs, pedestrian_measurements, and ego_measurements in temporal order using bev_frame_indices. target_pedestrian_ids identifies candidate pedestrians but carries no semantic judgment.
 
 Return JSON with exactly:
 recording_id, window_start_frame, window_end_frame, scenario, decision, confidence,
