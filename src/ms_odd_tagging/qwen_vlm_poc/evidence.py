@@ -65,23 +65,36 @@ def _keep_event_driven_waiting_bev(
     candidate: CandidateWindow,
     config: VlmPocConfig,
 ) -> bool:
-    """Keep all selected BEVs for the BEV-first pedestrian experiment."""
+    """Keep all selected BEVs for the pedestrian experiment."""
     return True
 
 
-def _waiting_bev_debug_context(candidate: CandidateWindow) -> dict[str, Any] | None:
-    """Highlight candidate pedestrians without adding semantic/conflict labels."""
+def _waiting_bev_debug_context(
+    candidate: CandidateWindow,
+    frame_index: int,
+) -> dict[str, Any] | None:
+    """Expose neutral target identity and future-path geometry to the BEV renderer."""
     if not (
         candidate.scenario == "waiting_for_pedestrian_to_cross"
         and candidate.metadata.get("candidate_strategy") == "event-driven"
     ):
         return None
+    future_path = next(
+        (
+            row
+            for row in candidate.metadata.get("ego_future_paths", [])
+            if int(row.get("frame", -1)) == frame_index
+        ),
+        None,
+    )
     return {
+        "candidate_object_ids": list(candidate.primary_object_ids),
+        "ego_future_path": future_path,
         "rule_based_reference": {
             "active_events": [
                 {"evidence": {"source_object_ids": list(candidate.primary_object_ids)}}
             ]
-        }
+        },
     }
 
 
@@ -122,7 +135,7 @@ def render_candidate_bevs(
             config.bev_extent_m,
             config.bev_size_px,
             proximity_radius_m=0.0 if waiting_bev_only or candidate.scenario == "on_intersection" else 30.0,
-            debug_context=_waiting_bev_debug_context(candidate),
+            debug_context=_waiting_bev_debug_context(candidate, frame_index),
         )
         paths.append(str(path))
         rendered_frame_indices.append(frame_index)
