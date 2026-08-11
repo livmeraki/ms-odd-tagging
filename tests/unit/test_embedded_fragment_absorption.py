@@ -16,7 +16,7 @@ def _lane(lane_id, start, end, right_edge_id="85", width=3.5):
         ],
         "left_boundary_lcs_m": [[start[0], start[1] + half], [end[0], end[1] + half]],
         "right_boundary_lcs_m": [[start[0], start[1] - half], [end[0], end[1] - half]],
-        "left_edge_id": "left-common",
+        "left_edge_id": f"left-{lane_id}",
         "right_edge_id": right_edge_id,
     }
 
