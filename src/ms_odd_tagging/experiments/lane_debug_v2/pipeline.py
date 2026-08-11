@@ -52,7 +52,7 @@ def run_one(
     lane_path = root / "lane_results" / f"{rid}_lane_debug_v2.json"
     tag_path = root / "tagging_results" / f"{rid}_lane_change_debug_v2.json"
     explorer_path = root / "explorers" / f"{rid}_lane_debug_v2_plotly.html"
-    tuner_path = root / "explorers" / f"{rid}_inferred_lane_tuner.html"
+    tuner_path = root / "explorers" / f"{rid}_inferred_lane_candidate_tuner.html"
     metadata_path = root / "metadata.json"
 
     _write(lane_path, following)
@@ -67,7 +67,8 @@ def run_one(
         "lane_debug_config": config,
         "lane_change_config_source": "provided direct_scenarios config",
         "artifact_policy": "fresh_run_no_reuse",
-        "inferred_lane_tuner": str(tuner_path),
+        "inferred_lane_candidate_tuner": str(tuner_path),
+        "inferred_lane_candidate_tuner_ui": "visual-candidates-v2",
     })
     render_plotly_explorer(recording, following, changes, explorer_path, run_id)
     render_inferred_lane_tuner(following, tuner_path, run_id, config)
