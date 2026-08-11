@@ -13,6 +13,7 @@ from .detector_observed_first_final import run_lane_debug_v2
 from .lane_changes import run_lane_change_debug
 from .explorer_visualization import render_plotly_explorer
 from .inferred_lane_tuner import render_inferred_lane_tuner
+from .inferred_lane_plotly_tuner import render_inferred_lane_plotly_tuner
 
 
 def _load(path: Path) -> Any:
@@ -20,7 +21,7 @@ def _load(path: Path) -> Any:
 
 
 def _write(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True)
     path.write_text(json.dumps(value, ensure_ascii=True, indent=2), encoding="utf-8")
 
 
@@ -53,6 +54,7 @@ def run_one(
     tag_path = root / "tagging_results" / f"{rid}_lane_change_debug_v2.json"
     explorer_path = root / "explorers" / f"{rid}_lane_debug_v2_plotly.html"
     tuner_path = root / "explorers" / f"{rid}_inferred_lane_candidate_tuner.html"
+    plotly_tuner_path = root / "explorers" / f"{rid}_inferred_lane_plotly_tuner.html"
     metadata_path = root / "metadata.json"
 
     _write(lane_path, following)
@@ -69,10 +71,13 @@ def run_one(
         "artifact_policy": "fresh_run_no_reuse",
         "inferred_lane_candidate_tuner": str(tuner_path),
         "inferred_lane_candidate_tuner_ui": "visual-candidates-v2",
+        "inferred_lane_plotly_tuner": str(plotly_tuner_path),
+        "inferred_lane_plotly_tuner_ui": "plotly-2d-scatter-candidates-v1",
     })
     render_plotly_explorer(recording, following, changes, explorer_path, run_id)
     render_inferred_lane_tuner(following, tuner_path, run_id, config)
-    return [metadata_path, lane_path, tag_path, explorer_path, tuner_path]
+    render_inferred_lane_plotly_tuner(following, plotly_tuner_path, run_id, config)
+    return [metadata_path, lane_path, tag_path, explorer_path, tuner_path, plotly_tuner_path]
 
 
 def main(argv: list[str] | None = None) -> int:
