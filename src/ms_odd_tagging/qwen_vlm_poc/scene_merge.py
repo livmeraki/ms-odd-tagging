@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .config import VlmPocConfig
-from .geometry import ego_speed
+from .geometry import ego_speed, object_ego_xy, object_id
 from .models import CandidateWindow, EvidenceItem
 
 
@@ -120,6 +120,48 @@ def _ego_measurements(
     return measurements
 
 
+def _pedestrian_measurements(
+    selected: list[int],
+    frames_by_index: dict[int, dict[str, Any]],
+    pedestrian_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Serialize neutral per-frame candidate-pedestrian positions in ego coordinates."""
+    wanted = {str(value) for value in pedestrian_ids}
+    measurements = []
+    for frame_index in selected:
+        frame = frames_by_index.get(frame_index)
+        if frame is None:
+            continue
+        timestamp = frame.get("time_since_start_s")
+        pedestrians = []
+        for obj in frame.get("objects", []):
+            obj_id = object_id(obj)
+            if obj_id not in wanted:
+                continue
+            position = object_ego_xy(obj, frame)
+            if position is None:
+                continue
+            longitudinal_m, lateral_m = position
+            pedestrians.append(
+                {
+                    "object_id": obj_id,
+                    "longitudinal_m": round(float(longitudinal_m), 3),
+                    "lateral_m": round(float(lateral_m), 3),
+                }
+            )
+        pedestrians.sort(key=lambda item: item["object_id"])
+        measurements.append(
+            {
+                "frame": frame_index,
+                "time_s": round(float(timestamp), 3)
+                if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool)
+                else None,
+                "pedestrians": pedestrians,
+            }
+        )
+    return measurements
+
+
 def merge_waiting_scene_candidates(
     recording: dict[str, Any],
     candidates: list[CandidateWindow],
@@ -128,7 +170,8 @@ def merge_waiting_scene_candidates(
     """Merge pedestrian-specific candidates into scene-level VLM requests.
 
     Candidate heuristics remain internal. The model-facing scene carries ordered
-    BEVs plus neutral ego speed/timestamp measurements aligned to those BEVs.
+    BEVs plus neutral ego speed and candidate-pedestrian position measurements
+    aligned to those BEVs.
     """
     if not candidates:
         return []
@@ -170,6 +213,7 @@ def merge_waiting_scene_candidates(
         available = [index for index in frame_indices if context_start <= index <= context_end]
         selected = _dense_event_indices(available, raw_start, raw_end, config.max_bev_images)
         ego_measurements = _ego_measurements(selected, frame_lookup)
+        pedestrian_measurements = _pedestrian_measurements(selected, frame_lookup, pedestrian_ids)
         start_t = times.get(context_start, min(item.start_timestamp_s for item in cluster))
         end_t = times.get(context_end, max(item.end_timestamp_s for item in cluster))
         candidate_id = (
@@ -191,7 +235,7 @@ def merge_waiting_scene_candidates(
                     EvidenceItem(
                         evidence_id=visual_evidence_id,
                         kind="bev_sequence",
-                        summary="Ordered BEVs plus aligned neutral ego speed measurements.",
+                        summary="Ordered BEVs plus aligned neutral ego and pedestrian measurements.",
                         data={"frame_indices": selected},
                     )
                 ],
@@ -200,13 +244,14 @@ def merge_waiting_scene_candidates(
                 recall_reasons=["scene_level_event_candidate"],
                 metadata={
                     "candidate_strategy": "event-driven",
-                    "vlm_input_mode": "bev_plus_neutral_ego_measurements",
+                    "vlm_input_mode": "bev_plus_neutral_ego_and_pedestrian_measurements",
                     "visual_evidence_id": visual_evidence_id,
                     "scene_merged": True,
                     "raw_trigger_start_frame": raw_start,
                     "raw_trigger_end_frame": raw_end,
                     "frame_selection_strategy": "pre_start_inner_thirds_end_post",
                     "ego_measurements": ego_measurements,
+                    "pedestrian_measurements": pedestrian_measurements,
                     "pedestrian_ids": pedestrian_ids,
                     "source_candidate_ids": source_ids,
                     "source_candidate_count": len(cluster),
