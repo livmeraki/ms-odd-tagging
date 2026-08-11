@@ -69,7 +69,10 @@ def assign_static_inferred_affiliations(
                 minimum_score_margin=minimum_unique_score_margin,
             )
             chosen[role] = selected
-            record[f"{role}_candidates"] = candidates[:24]
+            # Keep the complete candidate set. The dedicated inferred-lane tuner
+            # reapplies gates live, so candidates that fail the default config
+            # must remain available when the user loosens a threshold.
+            record[f"{role}_candidates"] = candidates
             record[f"{role}_selected_track_id"] = None if selected is None else selected.get("track_id")
             record[f"{role}_selected_support"] = selected
             record[f"{role}_selection_rejection_reason"] = selection_rejection
