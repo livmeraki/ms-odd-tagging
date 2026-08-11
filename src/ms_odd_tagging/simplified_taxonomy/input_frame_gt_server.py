@@ -172,48 +172,95 @@ requestAnimationFrame(__syncTaggingHeight);
 
 
 def _inject_bulk_yes_no(html: str) -> str:
+    """Inject apply-to-rest controls for every scalar value and interaction tag.
+
+    The historical function name is kept because the workspace imports it, but
+    the behavior is now generic across the complete simplified taxonomy.
+    """
     css = '''<style>
-.bulk-rest{display:inline-flex;gap:4px;margin-left:8px;vertical-align:middle}
-.bulk-rest button{padding:4px 7px;margin:0 2px;font-size:11px;background:#273449;border-color:#475569}
-.bulk-rest .bulk-yes{border-color:#22c55e}
-.bulk-rest .bulk-no{border-color:#ef4444}
+.bulk-rest{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0 2px}
+.bulk-rest button{padding:4px 7px;margin:0;font-size:11px;background:#273449;border-color:#475569}
+.bulk-rest .bulk-value{border-color:#38bdf8}
+.bulk-rest .bulk-on{border-color:#22c55e}
+.bulk-rest .bulk-off{border-color:#ef4444}
+.interaction-rest{display:inline-flex;gap:3px;margin-left:7px;vertical-align:middle}
+.interaction-rest button{padding:2px 5px;margin:0;font-size:10px;background:#273449}
 </style>'''
     script = '''<script>
+function bulkValueText(value){
+  if(value===null)return 'NONE';
+  return String(value).toUpperCase();
+}
 function applyRemaining(path,value){
   const count=rows.length-i;
   if(count<=0)return;
   const pretty=label(path);
-  if(!confirm(`Set ${pretty} = ${value.toUpperCase()} for current frame and all ${count-1} remaining sampled frame(s)?`))return;
+  if(!confirm(`Set ${pretty} = ${bulkValueText(value)} for current frame and all ${count-1} remaining sampled frame(s)?`))return;
   for(let k=i;k<rows.length;k++){
     ensureGT(rows[k]);
     set(rows[k].gt,path,value);
+    if(path==='ego_motion.state'){
+      if(value==='stationary')set(rows[k].gt,'ego_motion.speed_band',null);
+      else if(get(rows[k].gt,'ego_motion.speed_band')===null)set(rows[k].gt,'ego_motion.speed_band','unknown');
+    }
     rows[k].reviewed=true;
   }
   persist();
   render();
 }
-function addBulkYesNoControls(){
+function applyInteractionRemaining(tag,on){
+  const count=rows.length-i;
+  if(count<=0)return;
+  const action=on?'ON':'OFF';
+  if(!confirm(`Set ${tag} = ${action} for current frame and all ${count-1} remaining sampled frame(s)?`))return;
+  for(let k=i;k<rows.length;k++){
+    ensureGT(rows[k]);
+    const a=rows[k].gt.interaction_tags||[];
+    rows[k].gt.interaction_tags=on?[...new Set([...a,tag])]:a.filter(x=>x!==tag);
+    rows[k].reviewed=true;
+  }
+  persist();
+  render();
+}
+function addBulkAllControls(){
   const groups=document.querySelectorAll('#form .group');
   scalarPaths.forEach((path,gidx)=>{
     const values=defs[path]||[];
-    if(!(values.includes('yes')&&values.includes('no')))return;
     const group=groups[gidx];
     if(!group||group.querySelector('.bulk-rest'))return;
-    const h=group.querySelector('h3');
-    if(!h)return;
-    const wrap=document.createElement('span');
+    const wrap=document.createElement('div');
     wrap.className='bulk-rest';
-    const yes=document.createElement('button');
-    yes.type='button'; yes.className='bulk-yes'; yes.textContent='YES → rest';
-    yes.onclick=(e)=>{e.stopPropagation();applyRemaining(path,'yes');};
-    const no=document.createElement('button');
-    no.type='button'; no.className='bulk-no'; no.textContent='NO → rest';
-    no.onclick=(e)=>{e.stopPropagation();applyRemaining(path,'no');};
-    wrap.append(yes,no); h.appendChild(wrap);
+    values.forEach(value=>{
+      const b=document.createElement('button');
+      b.type='button'; b.className='bulk-value';
+      b.textContent=`${bulkValueText(value)} → rest`;
+      b.onclick=(e)=>{e.stopPropagation();applyRemaining(path,value);};
+      wrap.appendChild(b);
+    });
+    group.appendChild(wrap);
   });
+
+  const interactionGroup=groups[scalarPaths.length];
+  if(interactionGroup){
+    const labels=interactionGroup.querySelectorAll('label');
+    labels.forEach((labelNode,idx)=>{
+      if(labelNode.querySelector('.interaction-rest'))return;
+      const tag=interactionTags[idx];
+      if(!tag)return;
+      const wrap=document.createElement('span');
+      wrap.className='interaction-rest';
+      const on=document.createElement('button');
+      on.type='button'; on.className='bulk-on'; on.textContent='ON → rest';
+      on.onclick=(e)=>{e.preventDefault();e.stopPropagation();applyInteractionRemaining(tag,true);};
+      const off=document.createElement('button');
+      off.type='button'; off.className='bulk-off'; off.textContent='OFF → rest';
+      off.onclick=(e)=>{e.preventDefault();e.stopPropagation();applyInteractionRemaining(tag,false);};
+      wrap.append(on,off); labelNode.appendChild(wrap);
+    });
+  }
 }
 const __renderBeforeBulk=render;
-render=function(){__renderBeforeBulk();addBulkYesNoControls();};
+render=function(){__renderBeforeBulk();addBulkAllControls();};
 render();
 </script>'''
     html = html.replace("</head>", css + "</head>", 1)
