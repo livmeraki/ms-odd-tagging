@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from .candidates import generate_candidates
@@ -73,6 +74,13 @@ def _config_from_args(args: argparse.Namespace):
     return load_config(args.config, overrides=overrides)
 
 
+def _run_directory(base_output_root: Path, now: datetime | None = None) -> Path:
+    """Return a unique timestamped directory for one CLI invocation."""
+    generated_at = now or datetime.now()
+    run_id = generated_at.strftime("%Y%m%d_%H%M%S_%f")
+    return base_output_root / run_id
+
+
 def _copy_review_bundle(bundle_path: Path, output_root: Path, reason: str) -> Path:
     safe_reason = "".join(
         char if char.isalnum() or char in {"_", "-"} else "_"
@@ -127,16 +135,19 @@ def main() -> int:
     if not args.candidate_bundle and not args.recording:
         raise SystemExit("--recording is required unless --candidate-bundle is supplied")
 
-    output_root = (
+    strategy_root = (
         config.output_root / "event_driven"
         if args.candidate_strategy == "event-driven"
         else config.output_root
     )
-    output_root.mkdir(parents=True, exist_ok=True)
+    output_root = _run_directory(strategy_root)
+    output_root.mkdir(parents=True, exist_ok=False)
     manifest = {
         "schema_version": "qwen-vlm-poc-run-manifest-v1",
         "candidate_strategy": args.candidate_strategy,
         "effective_output_root": str(output_root),
+        "run_id": output_root.name,
+        "generated_at_local": datetime.now().astimezone().isoformat(timespec="milliseconds"),
         "config": config.to_dict(),
         "candidate_bundles": [],
         "raw_results": [],
@@ -195,6 +206,7 @@ def main() -> int:
         review_path, timing_path = _finalize_outputs(manifest, manifest_path, profiler)
         print(f"Wrote {len(candidate_rows)} candidate bundle(s)")
         print(f"Candidate strategy: {args.candidate_strategy}")
+        print(f"Run directory: {output_root}")
         print(f"Manifest: {manifest_path}")
         print(f"Review HTML: {review_path}")
         _print_timing(profiler, timing_path)
@@ -202,7 +214,7 @@ def main() -> int:
 
     client = VlmClient(
         config,
-        cache_dir=output_root / "cache",
+        cache_dir=strategy_root / "cache",
         raw_dir=output_root / "raw_responses" / args.scenario,
         request_dir=output_root / "request_payloads" / args.scenario,
     )
@@ -287,6 +299,7 @@ def main() -> int:
     print(f"Processed {len(candidate_rows)} candidate(s)")
     print(f"Candidate strategy: {args.candidate_strategy}")
     print(f"Accepted recordings: {len(accepted_by_recording)}")
+    print(f"Run directory: {output_root}")
     print(f"Manifest: {manifest_path}")
     print(f"Review HTML: {review_path}")
     _print_timing(profiler, timing_path)
