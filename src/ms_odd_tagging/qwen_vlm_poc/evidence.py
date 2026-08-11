@@ -73,7 +73,7 @@ def _waiting_bev_debug_context(
     candidate: CandidateWindow,
     frame_index: int,
 ) -> dict[str, Any] | None:
-    """Expose neutral target identity and future-path geometry to the BEV renderer."""
+    """Expose neutral target identity, observed trails, and future-path geometry."""
     if not (
         candidate.scenario == "waiting_for_pedestrian_to_cross"
         and candidate.metadata.get("candidate_strategy") == "event-driven"
@@ -89,6 +89,8 @@ def _waiting_bev_debug_context(
     )
     return {
         "candidate_object_ids": list(candidate.primary_object_ids),
+        "candidate_track_start_frame": candidate.start_frame,
+        "candidate_track_end_frame": candidate.end_frame,
         "ego_future_path": future_path,
         "rule_based_reference": {
             "active_events": [
