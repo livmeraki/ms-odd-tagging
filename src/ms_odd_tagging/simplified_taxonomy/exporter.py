@@ -16,10 +16,11 @@ SCENARIO_KEYS = (
     "tagged_scenarios",
 )
 FRAME_CONTAINER_KEYS = ("frames", "frame_tags", "results")
+EVENT_CONTAINER_KEYS = ("rule_based_events", "events")
 
 
 def _scenario_labels(frame: dict[str, Any]) -> list[str]:
-    """Extract scenario labels from one legacy frame without changing its contents."""
+    """Extract active scenario labels from one frame-level tagging record."""
     for key in SCENARIO_KEYS:
         value = frame.get(key)
         if isinstance(value, list):
@@ -42,22 +43,87 @@ def _convert_frame(frame: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _event_bounds(event: dict[str, Any]) -> tuple[int, int] | None:
+    start = event.get("start_frame")
+    end = event.get("end_frame")
+    if not isinstance(start, int) or not isinstance(end, int):
+        return None
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
+def _convert_event_document(document: dict[str, Any], events: list[Any]) -> dict[str, Any]:
+    """Expand interval scenario events into per-frame simplified predictions.
+
+    This is intended for outputs such as ``rule_based_scenario_events.json`` where
+    each event has ``scenario``, ``start_frame`` and ``end_frame``. The maximum
+    event end frame is used as the recording end for this quick evaluation export.
+    """
+    valid_events: list[dict[str, Any]] = []
+    max_end = -1
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("scenario")
+        bounds = _event_bounds(item)
+        if not isinstance(label, str) or bounds is None:
+            continue
+        start, end = bounds
+        valid_events.append(item)
+        max_end = max(max_end, end)
+
+    if max_end < 0:
+        raise ValueError(
+            "Event JSON contains no usable scenario intervals. Expected scenario, start_frame and end_frame."
+        )
+
+    active: list[list[str]] = [[] for _ in range(max_end + 1)]
+    for event in valid_events:
+        label = event["scenario"]
+        start, end = _event_bounds(event)  # type: ignore[misc]
+        for frame_index in range(start, end + 1):
+            active[frame_index].append(label)
+
+    frames: list[dict[str, Any]] = []
+    for frame_index, labels in enumerate(active):
+        unique_labels = list(dict.fromkeys(labels))
+        frames.append(
+            {
+                "frame_index": frame_index,
+                "scenario_tags": unique_labels,
+                "simplified_tags": map_scenario_labels(unique_labels).to_dict(),
+            }
+        )
+
+    return {
+        "schema_version": "simplified-frame-taxonomy-v1",
+        "recording_id": document.get("recording_id"),
+        "source_schema_version": document.get("schema_version"),
+        "source_rule_config_version": document.get("rule_config_version"),
+        "source_kind": "scenario_events_expanded_to_frames",
+        "frame_count": len(frames),
+        "frames": frames,
+    }
+
+
 def convert_frame_document(document: Any) -> Any:
-    """Add ``simplified_tags`` in parallel to an existing frame-level JSON document.
+    """Convert supported tagging JSON shapes to include simplified per-frame tags.
 
-    Supported legacy shapes are deliberately small and non-destructive:
-    * a top-level list of frame dictionaries;
-    * a dictionary containing ``frames``, ``frame_tags`` or ``results`` as a list;
-    * a single frame dictionary.
+    Supported inputs:
+    * top-level list of frame dictionaries;
+    * dict containing ``frames``, ``frame_tags`` or ``results``;
+    * interval event output containing ``rule_based_events`` or ``events``;
+    * one frame dictionary containing an active scenario-list field.
 
-    Existing fields are preserved byte-for-byte at the value level. Unsupported
-    scenario names are retained inside ``simplified_tags.unmapped_scenarios``.
+    A model-input frame whose ``taxonomy`` is merely the list of *possible* labels
+    is rejected so it cannot be mistaken for tagging output.
     """
     if isinstance(document, list):
         return [_convert_frame(row) if isinstance(row, dict) else deepcopy(row) for row in document]
 
     if not isinstance(document, dict):
-        raise ValueError("frame JSON must be an object or list")
+        raise ValueError("tagging JSON must be an object or list")
 
     for key in FRAME_CONTAINER_KEYS:
         rows = document.get(key)
@@ -66,7 +132,23 @@ def convert_frame_document(document: Any) -> Any:
             out[key] = [_convert_frame(row) if isinstance(row, dict) else deepcopy(row) for row in rows]
             return out
 
-    return _convert_frame(document)
+    for key in EVENT_CONTAINER_KEYS:
+        events = document.get(key)
+        if isinstance(events, list):
+            return _convert_event_document(document, events)
+
+    if any(isinstance(document.get(key), list) for key in SCENARIO_KEYS):
+        return _convert_frame(document)
+
+    if isinstance(document.get("taxonomy"), list):
+        raise ValueError(
+            "This looks like a frame-input/model-input JSON: 'taxonomy' lists possible labels, not active predictions. "
+            "Use a tagging result such as rule_based_scenario_events.json instead."
+        )
+
+    raise ValueError(
+        "No active scenario labels found. Expected a frame tagging list or a rule_based_events/event interval list."
+    )
 
 
 def default_output_path(input_path: Path) -> Path:
@@ -85,9 +167,9 @@ def export_file(input_path: Path, output_path: Path | None = None) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Write a parallel simplified-taxonomy JSON from an existing frame-level tag JSON."
+        description="Write simplified frame-level taxonomy JSON from frame tags or scenario-event intervals."
     )
-    parser.add_argument("input", type=Path, help="Existing frame-level scenario JSON")
+    parser.add_argument("input", type=Path, help="Existing tagging-result JSON")
     parser.add_argument("--output", type=Path, default=None, help="Output path; defaults to *_simplified.json")
     return parser.parse_args()
 
