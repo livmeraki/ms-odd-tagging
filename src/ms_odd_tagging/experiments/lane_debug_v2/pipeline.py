@@ -38,6 +38,8 @@ def run_one(
     config: dict[str, Any],
     lane_change_config: dict[str, Any],
     run_id: str | None = None,
+    *,
+    generate_tuners: bool = True,
 ) -> list[Path]:
     recording = _load(canonical_path)
     rid = recording.get("recording_id") or canonical_path.stem.replace("_canonical_odld_frames", "")
@@ -59,7 +61,7 @@ def run_one(
 
     _write(lane_path, following)
     _write(tag_path, changes)
-    _write(metadata_path, {
+    metadata = {
         "run_id": run_id,
         "run_timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "git_commit_sha": _git_sha(),
@@ -69,15 +71,24 @@ def run_one(
         "lane_debug_config": config,
         "lane_change_config_source": "provided direct_scenarios config",
         "artifact_policy": "fresh_run_no_reuse",
-        "inferred_lane_candidate_tuner": str(tuner_path),
-        "inferred_lane_candidate_tuner_ui": "visual-candidates-v2",
-        "inferred_lane_plotly_tuner": str(plotly_tuner_path),
-        "inferred_lane_plotly_tuner_ui": "plotly-2d-scatter-candidates-v1",
-    })
+        "tuners_generated": generate_tuners,
+    }
+    if generate_tuners:
+        metadata.update({
+            "inferred_lane_candidate_tuner": str(tuner_path),
+            "inferred_lane_candidate_tuner_ui": "visual-candidates-v2",
+            "inferred_lane_plotly_tuner": str(plotly_tuner_path),
+            "inferred_lane_plotly_tuner_ui": "plotly-2d-scatter-candidates-v1",
+        })
+    _write(metadata_path, metadata)
+
     render_plotly_explorer(recording, following, changes, explorer_path, run_id)
-    render_inferred_lane_tuner(following, tuner_path, run_id, config)
-    render_inferred_lane_plotly_tuner(following, plotly_tuner_path, run_id, config)
-    return [metadata_path, lane_path, tag_path, explorer_path, tuner_path, plotly_tuner_path]
+    outputs = [metadata_path, lane_path, tag_path, explorer_path]
+    if generate_tuners:
+        render_inferred_lane_tuner(following, tuner_path, run_id, config)
+        render_inferred_lane_plotly_tuner(following, plotly_tuner_path, run_id, config)
+        outputs.extend([tuner_path, plotly_tuner_path])
+    return outputs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,12 +99,20 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--config", type=Path, default=Path("configs/lane_debug_v2.json"))
     p.add_argument("--lane-change-config", type=Path, default=Path("configs/direct_scenarios.yaml"))
     p.add_argument("--run-id", default=None)
+    p.add_argument("--no-tuners", action="store_true", help="skip both inferred-lane tuner HTML artifacts")
     a = p.parse_args(argv)
 
     canonical = a.canonical_dir / f"{a.recording}_canonical_odld_frames.json"
     if not canonical.is_file():
         p.error(f"missing canonical recording: {canonical}")
-    for output in run_one(canonical, a.output_root, _load(a.config), _load(a.lane_change_config), a.run_id):
+    for output in run_one(
+        canonical,
+        a.output_root,
+        _load(a.config),
+        _load(a.lane_change_config),
+        a.run_id,
+        generate_tuners=not a.no_tuners,
+    ):
         print(f"Wrote {output}")
     return 0
 
