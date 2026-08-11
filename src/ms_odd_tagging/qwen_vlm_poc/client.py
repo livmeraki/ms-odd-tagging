@@ -49,6 +49,11 @@ def _vlm_candidate_input(candidate: CandidateWindow) -> dict[str, Any]:
             "candidate_scene_id": candidate.candidate_id,
             "target_pedestrian_ids": list(candidate.primary_object_ids),
             "bev_frame_indices": list(candidate.selected_frame_indices),
+            "coordinate_convention": {
+                "frame": "ego_centered_heading_up",
+                "longitudinal_m": "positive_ahead_of_ego_negative_behind",
+                "lateral_m": "zero_is_ego_forward_centerline_opposite_signs_are_opposite_sides",
+            },
             "ego_measurements": list(candidate.metadata.get("ego_measurements") or []),
             "pedestrian_measurements": list(candidate.metadata.get("pedestrian_measurements") or []),
             "visual_evidence_id": candidate.metadata.get("visual_evidence_id"),
