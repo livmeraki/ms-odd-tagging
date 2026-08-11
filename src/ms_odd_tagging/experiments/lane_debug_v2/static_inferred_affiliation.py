@@ -11,6 +11,8 @@ import copy
 import math
 from typing import Any
 
+from .lane_geometry import point_in_polygon
+
 
 def _dist(a, b) -> float:
     return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
@@ -52,23 +54,36 @@ def _endpoint_metrics(line: list[list[float]], side: str) -> tuple[list[float], 
     return sample[-1], headings[-1], curvature
 
 
+def _point_at_distance(points: list[list[float]], distance_m: float) -> list[float]:
+    remaining = max(0.0, distance_m)
+    for a, b in zip(points, points[1:]):
+        length = _dist(a, b)
+        if length <= 1e-8:
+            continue
+        if remaining <= length:
+            ratio = remaining / length
+            return [a[0] + ratio * (b[0] - a[0]), a[1] + ratio * (b[1] - a[1])]
+        remaining -= length
+    return list(points[-1])
+
+
 def _inferred_endpoint_state(center: list[list[float]], role: str) -> tuple[list[float], float, float] | None:
-    if len(center) < 2:
+    """Measure road direction across a 6 m window, past short union hooks."""
+    pts = [[float(p[0]), float(p[1])] for p in center if len(p) >= 2]
+    if len(pts) < 2:
         return None
-    side = "start" if role == "back" else "end"
-    metric = _endpoint_metrics(center, side)
-    if metric is None:
-        return None
-    point, outward_heading, curvature = metric
-    if role == "back":
-        # endpoint_metrics(start) points from inferred interior toward the back;
-        # travel direction through the inferred lane is the opposite.
-        travel_heading = _wrap(outward_heading + math.pi)
-        travel_curvature = -curvature
-    else:
-        travel_heading = outward_heading
-        travel_curvature = curvature
-    return point, travel_heading, travel_curvature
+    oriented = pts if role == "back" else list(reversed(pts))
+    endpoint = oriented[0]
+    middle = _point_at_distance(oriented, 3.0)
+    far = _point_at_distance(oriented, 6.0)
+    outward = _heading(endpoint, far)
+    travel_heading = outward if role == "back" else _wrap(outward + math.pi)
+    first_heading = _heading(endpoint, middle)
+    second_heading = _heading(middle, far)
+    curvature = _wrap(second_heading - first_heading) / max(_dist(middle, far), 1e-6)
+    if role == "front":
+        curvature = -curvature
+    return endpoint, travel_heading, curvature
 
 
 def _candidate(
@@ -77,6 +92,7 @@ def _candidate(
     inferred_heading: float,
     inferred_curvature: float,
     inferred_width: float,
+    inferred_polygon: list[list[float]],
     role: str,
     *,
     maximum_endpoint_distance_m: float,
@@ -114,11 +130,14 @@ def _candidate(
             candidate_travel_heading = _wrap(endpoint_outward_heading + math.pi)
             candidate_curvature = -endpoint_curvature
         distance = _dist(endpoint, inferred_point)
+        endpoint_inside_corridor = point_in_polygon(
+            (float(endpoint[0]), float(endpoint[1])), inferred_polygon
+        ) if len(inferred_polygon) >= 3 else False
         heading_diff = _axis_heading_difference_deg(candidate_travel_heading, inferred_heading)
         curvature_diff = abs(abs(candidate_curvature) - abs(inferred_curvature))
         width_diff = abs(width - inferred_width)
         rejections: list[str] = []
-        if longitudinal <= 0.1:
+        if longitudinal <= 0.1 and not endpoint_inside_corridor:
             rejections.append("not_longitudinally_before_or_after")
         if distance > maximum_endpoint_distance_m:
             rejections.append("endpoint_distance")
@@ -126,7 +145,7 @@ def _candidate(
             rejections.append("lateral_error_adjacent_or_parallel")
         if heading_diff > maximum_heading_difference_deg:
             rejections.append("heading_difference")
-        if curvature_diff > maximum_curvature_difference_per_m:
+        if curvature_diff > maximum_curvature_difference_per_m and not endpoint_inside_corridor:
             rejections.append("curvature_difference")
         if width_diff > maximum_width_difference_m:
             rejections.append("width_difference")
@@ -147,6 +166,7 @@ def _candidate(
             "heading_difference_deg": round(heading_diff, 3),
             "curvature_difference_per_m": round(curvature_diff, 5),
             "width_difference_m": round(width_diff, 3),
+            "endpoint_inside_inferred_polygon": endpoint_inside_corridor,
             "score": round(score, 4),
             "rejection_reasons": rejections,
         })
@@ -169,6 +189,7 @@ def assign_static_inferred_affiliations(
     for inferred in resolved:
         center = inferred.get("centerline_lcs_m") or []
         width = float(inferred.get("median_width_m", 3.5))
+        polygon = inferred.get("polygon_lcs_m") or []
         record = {
             "static_inferred_lane_id": inferred.get("static_inferred_lane_id"),
             "route_id": inferred.get("route_id"),
@@ -186,7 +207,7 @@ def assign_static_inferred_affiliations(
             candidates: list[dict[str, Any]] = []
             for track in tracks:
                 candidates.extend(_candidate(
-                    track, point, heading, curvature, width, role,
+                    track, point, heading, curvature, width, polygon, role,
                     maximum_endpoint_distance_m=maximum_endpoint_distance_m,
                     maximum_lateral_error_m=maximum_lateral_error_m,
                     maximum_heading_difference_deg=maximum_heading_difference_deg,

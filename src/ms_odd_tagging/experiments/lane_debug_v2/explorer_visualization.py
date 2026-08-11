@@ -156,7 +156,7 @@ function sideText(s){return s?`${fmt(s.start_index)}→${fmt(s.end_index)}`:'?�
 function laneRangeText(id){const r=laneRange(id);return`L[${sideText(r.left)}] R[${sideText(r.right)}]`;}
 function laneRangeHover(id){const r=laneRange(id),f=(n,v)=>v?`${n}: edge=${v.edge_id} order=${fmt(v.start_order)}→${fmt(v.end_order)} index=${sideText(v)}`:`${n}: unavailable`;return`${f('left',r.left)} · ${f('right',r.right)}`;}
 function anchoredPieces(t){return(t.pieces||[]).filter(p=>p.kind==='anchored_ld_bridge');}
-function smoothFillPieces(t){return(t.pieces||[]).filter(p=>p.kind==='canonical_track_stitch'||p.kind==='topology_supported_curvature_stitch');}
+function smoothFillPieces(t){return(t.pieces||[]).filter(p=>p.kind==='inferred_gap'||p.kind==='canonical_track_stitch'||p.kind==='topology_supported_curvature_stitch');}
 function staticConnectorPieces(t){return(t.pieces||[]).filter(p=>p.kind==='static_inferred_connector');}
 function roleMap(f){return new Map(((((f.lane_roles||{}).roles)||[])).map(x=>[String(x.track_id),x.role]));}
 function roleColor(role){return colors[role]||colors.irrelevant;}

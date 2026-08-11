@@ -19,6 +19,22 @@ DEFAULT_RECORDINGS = [
 ]
 
 SCENARIO_TAXONOMY = [
+    "behind_pedestrian_on_driveable",
+    "near_barrier_on_driveable",
+    "waiting_for_pedestrian_to_cross",
+    "starting_straight_traffic_light_intersection_traversal",
+    "starting_u_turn",
+    "traversing_intersection",
+    "traversing_traffic_light_intersection",
+    "on_carpark",
+    "on_intersection",
+    "on_traffic_light_intersection",
+    "accelerating_at_traffic_light",
+    "stationary_in_traffic",
+    "crossed_by_bike",
+    "crossed_by_vehicle",
+    "crossed_by_motorcycle",
+    "on_stopline_traffic_light",
     "near_multiple_bikes",
     "near_multiple_vehicles",
     "near_multiple_motorcycle",

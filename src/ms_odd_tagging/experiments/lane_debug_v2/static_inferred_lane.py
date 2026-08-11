@@ -86,6 +86,27 @@ def _endpoint_support(track: dict[str, Any], point: list[float], inferred_headin
     return {"side": side, "distance_m": distance, "heading_difference_deg": heading_diff}
 
 
+def _robust_endpoint_heading(line: list[list[float]], side: str, window_m: float = 6.0) -> float | None:
+    points = [[float(p[0]), float(p[1])] for p in line if len(p) >= 2]
+    if len(points) < 2:
+        return None
+    oriented = points if side == "start" else list(reversed(points))
+    endpoint = oriented[0]
+    remaining = window_m
+    target = oriented[-1]
+    for a, b in zip(oriented, oriented[1:]):
+        length = _dist(a, b)
+        if length <= 1e-8:
+            continue
+        if remaining <= length:
+            ratio = remaining / length
+            target = [a[0] + ratio * (b[0] - a[0]), a[1] + ratio * (b[1] - a[1])]
+            break
+        remaining -= length
+    outward = math.atan2(target[1] - endpoint[1], target[0] - endpoint[0])
+    return outward if side == "start" else wrap_angle(outward + math.pi)
+
+
 def _orient_for_exit(track: dict[str, Any], exit_side: str) -> list[list[float]]:
     line = [[float(p[0]), float(p[1])] for p in track.get("centerline_lcs_m") or []]
     return line if exit_side == "end" else list(reversed(line))
@@ -133,8 +154,8 @@ def integrate_static_inferred_lanes(
             debug.append(record)
             continue
 
-        start_h = math.atan2(center[1][1] - center[0][1], center[1][0] - center[0][0])
-        end_h = math.atan2(center[-1][1] - center[-2][1], center[-1][0] - center[-2][0])
+        start_h = _robust_endpoint_heading(center, "start")
+        end_h = _robust_endpoint_heading(center, "end")
         start_support = _endpoint_support(start_track, center[0], start_h)
         end_support = _endpoint_support(end_track, center[-1], end_h)
         record["start_support"] = start_support

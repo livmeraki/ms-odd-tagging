@@ -104,16 +104,34 @@ SCENARIO_GROUPS = [
         ],
     },
     {
-        "id": "future_taxonomy",
-        "label": "Future or unsupported taxonomy",
+        "id": "vlm_intersection_and_traffic_light",
+        "label": "VLM-assisted intersection and traffic light",
         "implemented": False,
+        "support": "qwen_vlm_poc",
         "scenarios": [
+            "starting_straight_traffic_light_intersection_traversal",
+            "starting_u_turn",
+            "on_intersection",
+            "on_traffic_light_intersection",
+            "on_stopline_traffic_light",
+            "accelerating_at_traffic_light",
+            "traversing_traffic_light_intersection",
             "accelerating_at_traffic_light_with_lead",
             "accelerating_at_traffic_light_without_lead",
             "stationary_at_traffic_light_with_lead",
             "stationary_at_traffic_light_without_lead",
             "stopping_at_traffic_light_with_lead",
             "stopping_at_traffic_light_without_lead",
+        ],
+    },
+    {
+        "id": "manual_only_taxonomy",
+        "label": "Manual-only taxonomy",
+        "implemented": False,
+        "support": "manual",
+        "scenarios": [
+            "traversing_intersection",
+            "on_carpark",
             "behind_motorcycle",
         ],
     },
@@ -127,6 +145,12 @@ IMPLEMENTED_SCENARIOS = [
     scenario
     for group in SCENARIO_GROUPS
     if group["implemented"]
+    for scenario in group["scenarios"]
+]
+VLM_ASSISTED_SCENARIOS = [
+    scenario
+    for group in SCENARIO_GROUPS
+    if group.get("support") == "qwen_vlm_poc"
     for scenario in group["scenarios"]
 ]
 MINIMUM_REVIEW_FRAME_INDEX = 5

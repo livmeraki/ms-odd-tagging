@@ -251,10 +251,14 @@ function renderLabels(){{
     if(!shownScenarios.length)continue;
     const details=document.createElement('details');details.className='group';
     const groupKey=definition.label;
-    details.open=Object.prototype.hasOwnProperty.call(groupOpenState,groupKey)?Boolean(groupOpenState[groupKey]):definition.implemented!==false;
+    details.open=scenario!=='all'||(Object.prototype.hasOwnProperty.call(groupOpenState,groupKey)?Boolean(groupOpenState[groupKey]):definition.implemented!==false);
     details.addEventListener('toggle',()=>{{groupOpenState[groupKey]=details.open;saveGroupState()}});
     const summary=document.createElement('summary');
     summary.textContent=definition.label+(definition.implemented===false?' · unavailable rule support':'');
+    if(definition.support==='qwen_vlm_poc')
+      summary.textContent=definition.label+' - VLM-assisted; no deterministic rule support';
+    else if(definition.support==='manual')
+      summary.textContent=definition.label+' - manual review; no automatic support';
     details.appendChild(summary);
     const labels=document.createElement('div');labels.className='labels';
     for(const label of shownScenarios){{

@@ -48,15 +48,19 @@ def assign_point_to_track_strict(
     for track in tracks:
         centerline=track.get("centerline_lcs_m") or []
         if len(centerline)<2: continue
-        track_id=str(track.get("track_id")); lane_heading=nearest_heading(point,centerline)
-        heading_difference=0.0 if heading is None or lane_heading is None else abs(math.degrees(wrap_angle(float(heading)-float(lane_heading))))
-        if heading_difference>maximum_heading_difference_deg:
-            rejected.append({"track_id":track_id,"rejection_reason":"heading_difference","heading_difference_deg":round(heading_difference,2)}); continue
-        matches=[]; near_previous=[]
+        track_id=str(track.get("track_id")); matches=[]; near_previous=[]; piece_heading_rejections=[]
         for piece_index,piece in enumerate(track.get("pieces") or []):
             if piece.get("kind") not in _ALLOWED_PIECE_KINDS: continue
+            piece_centerline=piece.get("centerline_lcs_m") or []
+            lane_heading=nearest_heading(point,piece_centerline)
+            heading_difference=0.0 if heading is None or lane_heading is None else abs(math.degrees(wrap_angle(float(heading)-float(lane_heading))))
             inside,distance_m=_polygon_status(point,piece.get("polygon_lcs_m") or [])
-            record={"piece_index":piece_index,"piece_kind":piece.get("kind"),"lane_id":piece.get("lane_id"),"source_lane_id":piece.get("source_lane_id"),"destination_lane_id":piece.get("destination_lane_id"),"inside_polygon":inside,"polygon_distance_m":distance_m}
+            local_center_distance=polyline_distance(point,piece_centerline) if len(piece_centerline)>=2 else math.inf
+            record={"piece_index":piece_index,"piece_kind":piece.get("kind"),"lane_id":piece.get("lane_id"),"source_lane_id":piece.get("source_lane_id"),"destination_lane_id":piece.get("destination_lane_id"),"inside_polygon":inside,"polygon_distance_m":distance_m,"center_distance_m":local_center_distance,"heading_difference_deg":heading_difference}
+            if heading_difference>maximum_heading_difference_deg:
+                if inside or (track_id==str(previous_track_id) and distance_m<=outside_tolerance_m):
+                    piece_heading_rejections.append({"piece_index":piece_index,"piece_kind":piece.get("kind"),"heading_difference_deg":round(heading_difference,2)})
+                continue
             if inside: matches.append(record)
             elif track_id==str(previous_track_id) and distance_m<=outside_tolerance_m: near_previous.append(record)
         method="inside_actual_lane_polygon"
@@ -64,9 +68,10 @@ def assign_point_to_track_strict(
         elif near_previous: usable=near_previous; method="previous_track_tolerance_hold"
         else:
             near_any=any(_polygon_status(point,piece.get("polygon_lcs_m") or [])[1]<=outside_tolerance_m for piece in track.get("pieces") or [] if piece.get("kind") in _ALLOWED_PIECE_KINDS)
-            rejected.append({"track_id":track_id,"rejection_reason":"outside_polygon_tolerance_cannot_acquire_new_track" if near_any else "ego_center_outside_lane_polygon_tolerance","outside_tolerance_m":outside_tolerance_m,"center_distance_m":round(polyline_distance(point,centerline),3),"heading_difference_deg":round(heading_difference,2)}); continue
-        best_match=min(usable,key=lambda item:(0 if item["inside_polygon"] else 1,item["polygon_distance_m"],item["piece_index"]))
-        center_distance=polyline_distance(point,centerline); score=center_distance+heading_difference*0.04
+            reason="heading_difference" if piece_heading_rejections and not near_any else "outside_polygon_tolerance_cannot_acquire_new_track" if near_any else "ego_center_outside_lane_polygon_tolerance"
+            rejected.append({"track_id":track_id,"rejection_reason":reason,"outside_tolerance_m":outside_tolerance_m,"center_distance_m":round(polyline_distance(point,centerline),3),"piece_heading_rejections":piece_heading_rejections}); continue
+        best_match=min(usable,key=lambda item:(0 if item["inside_polygon"] else 1,item["polygon_distance_m"],item["heading_difference_deg"],item["center_distance_m"],item["piece_index"]))
+        center_distance=best_match["center_distance_m"]; heading_difference=best_match["heading_difference_deg"]; score=center_distance+heading_difference*0.04
         if not best_match["inside_polygon"]: score+=best_match["polygon_distance_m"]*10.0
         if track_id==str(previous_track_id): score-=0.9
         if best_match["piece_kind"] in {"anchored_ld_bridge","canonical_track_stitch","topology_supported_curvature_stitch","ego_supported_inferred_route","static_inferred_corridor","static_inferred_connector"}: score+=0.15

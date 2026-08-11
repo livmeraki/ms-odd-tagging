@@ -79,7 +79,7 @@ def _recompute_frames_piece_local(
                     "static_inferred_connector",
                 },
             }
-            roles = classify_lane_roles(point, track_id, tracks, lane_order)
+            roles = classify_lane_roles(point, track_id, tracks, lane_order, float(heading))
             frame["lane_roles"] = roles
             frame["left_lane"] = _lane_output(roles.get("left") or {}, point, track_by_id, lane_by_id)
             frame["right_lane"] = _lane_output(roles.get("right") or {}, point, track_by_id, lane_by_id)

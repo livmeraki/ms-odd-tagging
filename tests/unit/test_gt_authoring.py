@@ -12,9 +12,11 @@ from ms_odd_tagging.gt_comparison.labels import (
     SCENARIO_GROUPS,
     SPEED_LABELS,
     TAXONOMY,
+    VLM_ASSISTED_SCENARIOS,
     labels_with_frame_speed,
     speed_band_from_frame,
 )
+from ms_odd_tagging.input_generator.canonical import SCENARIO_TAXONOMY
 from ms_odd_tagging.gt_comparison.matching import gt_labels_for_frame
 
 
@@ -53,7 +55,7 @@ def test_review_payload_exports_comparison_ready_frame_gt(tmp_path: Path) -> Non
 
 
 def test_full_requested_taxonomy_is_available_for_review() -> None:
-    assert len(TAXONOMY) == 49
+    assert len(TAXONOMY) == 58
     assert TAXONOMY[0] == "stationary"
     assert TAXONOMY[-1] == "behind_motorcycle"
     assert "accelerating_at_traffic_light_with_lead" in TAXONOMY
@@ -65,7 +67,19 @@ def test_full_requested_taxonomy_is_available_for_review() -> None:
         "following_lane_with_slow_lead",
         "near_barrier_on_driveable",
     }.issubset(IMPLEMENTED_SCENARIOS)
+    assert {
+        "starting_straight_traffic_light_intersection_traversal",
+        "starting_u_turn",
+        "on_intersection",
+        "on_traffic_light_intersection",
+        "on_stopline_traffic_light",
+        "accelerating_at_traffic_light",
+        "traversing_traffic_light_intersection",
+    }.issubset(VLM_ASSISTED_SCENARIOS)
+    assert {"traversing_intersection", "on_carpark"}.issubset(TAXONOMY)
+    assert not ({"traversing_intersection", "on_carpark"} & set(IMPLEMENTED_SCENARIOS))
     assert len(TAXONOMY) == len(set(TAXONOMY))
+    assert set(SCENARIO_TAXONOMY) == set(TAXONOMY)
     assert SCENARIO_GROUPS[-1]["implemented"] is False
 
 
@@ -196,6 +210,10 @@ def test_reviewer_contains_efficient_frame_review_controls(tmp_path: Path) -> No
     assert "scenario-frame-gt-labels-v1" in page
     assert "phase3c_path_crossing" in page
     assert "crossed_by_vehicle" in page
+    assert "starting_straight_traffic_light_intersection_traversal" in page
+    assert "on_carpark" in page
+    assert "VLM-assisted; no deterministic rule support" in page
+    assert "manual review; no automatic support" in page
     assert "Frame debug evidence" in page
     assert "Dynamic objects within 30 m" in page
     assert "Active rule events" in page

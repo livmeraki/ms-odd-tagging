@@ -61,3 +61,19 @@ def test_affiliation_does_not_trust_remembered_temporal_ids():
     assert resolved[0]["end_observed_track_id"] == "front"
     assert debug[0]["remembered_start_track_id"] == "wrong_temporal_track"
     assert debug[0]["remembered_end_track_id"] == "wrong_temporal_track"
+
+
+def test_affiliation_ignores_short_union_endpoint_hooks_when_polygons_overlap():
+    inferred = _inferred()
+    inferred["centerline_lcs_m"] = [[10.0, 1.0], [10.4, 0.0], [14.0, 0.0], [19.6, 0.0], [20.0, 1.0]]
+    inferred["polygon_lcs_m"] = [[8.5, -1.75], [21.5, -1.75], [21.5, 1.75], [8.5, 1.75]]
+    tracks = [_track("back", 0.0, 10.5), _track("front", 19.5, 30.0)]
+    resolved, debug = assign_static_inferred_affiliations(
+        [inferred], tracks, maximum_heading_difference_deg=20.0,
+        maximum_curvature_difference_per_m=0.08,
+    )
+    assert resolved[0]["start_observed_track_id"] == "back"
+    assert resolved[0]["end_observed_track_id"] == "front"
+    assert resolved[0]["bridge_complete"] is True
+    selected = [x for side in ("back_candidates", "front_candidates") for x in debug[0][side] if x.get("selected")]
+    assert selected and all(x["endpoint_inside_inferred_polygon"] for x in selected)
