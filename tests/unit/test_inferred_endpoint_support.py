@@ -114,3 +114,52 @@ def test_affiliation_rejects_boundary_endpoint_mismatch_even_when_center_matches
         or "right_boundary_endpoint_distance" in row["rejection_reasons"]
         for row in front_rows
     )
+
+
+def test_affiliation_ignores_short_inferred_union_endpoint_hooks():
+    back_lane = _lane("back", 0.0, 10.2)
+    front_lane = _lane("front", 19.8, 30.0)
+    tracks = [
+        _track("physical_track_back", back_lane, bogus_median_width=8.0),
+        _track("physical_track_front", front_lane, bogus_median_width=8.0),
+    ]
+
+    # Literal first/last segments hook sideways, but the 3-6 m interior road
+    # direction is straight. This matches the smoothed-union terminal artifact
+    # that caused affiliation to regress after the local-boundary refactor.
+    inferred = {
+        "static_inferred_lane_id": "static_route_hooked",
+        "route_id": "route_hooked",
+        "centerline_lcs_m": [
+            [10.0, 0.8], [10.3, 0.0], [13.0, 0.0], [17.0, 0.0], [19.7, 0.0], [20.0, 0.8]
+        ],
+        "left_boundary_lcs_m": [
+            [10.0, 2.3], [10.3, 1.5], [13.0, 1.5], [17.0, 1.5], [19.7, 1.5], [20.0, 2.3]
+        ],
+        "right_boundary_lcs_m": [
+            [10.0, -0.7], [10.3, -1.5], [13.0, -1.5], [17.0, -1.5], [19.7, -1.5], [20.0, -0.7]
+        ],
+        "polygon_lcs_m": [
+            [9.7, -1.5], [20.3, -1.5], [20.3, 2.3], [9.7, 2.3]
+        ],
+        "median_width_m": 3.0,
+    }
+
+    resolved, debug = assign_static_inferred_affiliations(
+        [inferred], tracks, [back_lane, front_lane],
+        maximum_endpoint_distance_m=5.0,
+        maximum_boundary_endpoint_distance_m=5.0,
+        maximum_lateral_error_m=2.0,
+        maximum_heading_difference_deg=15.0,
+        maximum_curvature_difference_per_m=0.08,
+        maximum_width_difference_m=0.5,
+        minimum_unique_score_margin=0.5,
+    )
+
+    lane = resolved[0]
+    assert lane["bridge_complete"] is True
+    assert lane["start_observed_track_id"] == "physical_track_back"
+    assert lane["end_observed_track_id"] == "physical_track_front"
+    assert lane["back_affiliation"]["inferred_heading_method"] == "robust_3m_6m_interior_window"
+    assert lane["front_affiliation"]["inferred_heading_method"] == "robust_3m_6m_interior_window"
+    assert debug[0]["accepted"] is True
