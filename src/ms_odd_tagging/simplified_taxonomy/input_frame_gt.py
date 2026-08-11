@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -20,11 +21,51 @@ def _frame_index(frame_dir: Path, frame: dict[str, Any]) -> int | None:
 
 
 def _timestamp(frame: dict[str, Any]) -> float | None:
-    for key in ("timestamp", "timestamp_unix_s", "time_since_start_s"):
+    for key in ("time_since_start_s", "timestamp", "timestamp_unix_s"):
         value = frame.get(key)
-        if isinstance(value, (int, float)):
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
             return float(value)
     return None
+
+
+def _sample_rows_by_time(
+    rows: list[dict[str, Any]],
+    *,
+    source_hz: float,
+    sample_hz: float,
+) -> list[dict[str, Any]]:
+    """Sample generated rows on a timestamp grid without assuming frame_index cadence.
+
+    frame_inputs_revised is itself commonly generated at 1 fps using timestamps, so
+    generated frame indices need not be exact multiples of 10 (for example 0, 11,
+    21, ...). Applying ``frame_index % 10`` a second time drops valid frames. This
+    helper keeps every already-generated 1 fps frame, while still allowing an
+    all-frame input tree to be downsampled to the requested rate.
+    """
+    if not rows:
+        return []
+
+    timestamps = [row.get("timestamp") for row in rows]
+    if all(isinstance(value, (int, float)) and math.isfinite(float(value)) for value in timestamps):
+        period_s = 1.0 / sample_hz
+        selected: list[dict[str, Any]] = []
+        next_sample_time: float | None = None
+        for row in rows:
+            timestamp = float(row["timestamp"])
+            if next_sample_time is None:
+                selected.append(row)
+                next_sample_time = timestamp + period_s
+                continue
+            if timestamp + 1e-9 < next_sample_time:
+                continue
+            selected.append(row)
+            while next_sample_time <= timestamp + 1e-9:
+                next_sample_time += period_s
+        return selected
+
+    # Timestamp is normally available. Keep a deterministic fallback for old files.
+    step = max(1, round(source_hz / sample_hz))
+    return [row for pos, row in enumerate(rows) if pos % step == 0]
 
 
 def discover_completed_rows(
@@ -33,18 +74,18 @@ def discover_completed_rows(
     source_hz: float = 10.0,
     sample_hz: float = 1.0,
 ) -> list[dict[str, Any]]:
-    """Snapshot only fully readable input frames without modifying the generator output.
+    """Snapshot fully readable input frames without modifying generator output.
 
     A frame is considered usable only when both frame.json and bev_revised.png exist
-    and frame.json parses successfully. Partially-written/in-progress frame folders are
-    silently skipped so this can be run while frame generation continues.
+    and frame.json parses successfully. Sampling is timestamp-based, not based on
+    ``frame_index % N``, because revised frame inputs may already have been sampled
+    on a timestamp grid and therefore have non-uniform source-frame index gaps.
     """
     if source_hz <= 0 or sample_hz <= 0:
         raise ValueError("source_hz and sample_hz must be positive")
     if not recording_dir.is_dir():
         raise ValueError(f"recording directory does not exist: {recording_dir}")
 
-    step = max(1, round(source_hz / sample_hz))
     rows: list[dict[str, Any]] = []
     for frame_dir in sorted(recording_dir.glob("frame_*")):
         if not frame_dir.is_dir():
@@ -60,7 +101,7 @@ def discover_completed_rows(
         if not isinstance(frame, dict):
             continue
         idx = _frame_index(frame_dir, frame)
-        if idx is None or idx % step != 0:
+        if idx is None:
             continue
         rows.append(
             {
@@ -72,8 +113,9 @@ def discover_completed_rows(
                 "reviewed": False,
             }
         )
+
     rows.sort(key=lambda row: row["frame_index"])
-    return rows
+    return _sample_rows_by_time(rows, source_hz=source_hz, sample_hz=sample_hz)
 
 
 def generate_review_from_input_frames(
