@@ -1,230 +1,88 @@
-"""Choose static inferred-lane affiliations from longitudinal continuation only.
+"""Choose static inferred-lane affiliations from local endpoint continuation.
 
-Adjacency is deliberately not used.  The backward end must connect to a track
-endpoint behind the inferred corridor; the forward end must connect to a track
-endpoint ahead of it.  Candidates are gated by lateral offset, heading,
-curvature magnitude, width, and endpoint distance.
+Adjacency is deliberately not used. BACK and FRONT affiliation is selected from
+physical-track endpoints using center/boundary endpoint distances, local tangent,
+local endpoint width, curvature, lateral position, and uniqueness.
 """
 from __future__ import annotations
 
 import copy
-import math
 from typing import Any
 
-from .lane_geometry import point_in_polygon
-
-
-def _dist(a, b) -> float:
-    return math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1]))
-
-
-def _wrap(value: float) -> float:
-    return (value + math.pi) % (2.0 * math.pi) - math.pi
-
-
-def _heading(a, b) -> float:
-    return math.atan2(float(b[1]) - float(a[1]), float(b[0]) - float(a[0]))
-
-
-def _axis_heading_difference_deg(a: float, b: float) -> float:
-    diff = abs(math.degrees(_wrap(a - b)))
-    return min(diff, abs(180.0 - diff))
-
-
-def _endpoint_metrics(line: list[list[float]], side: str) -> tuple[list[float], float, float] | None:
-    pts = [[float(p[0]), float(p[1])] for p in line if len(p) >= 2]
-    if len(pts) < 2:
-        return None
-    sample = pts[: min(5, len(pts))] if side == "start" else pts[-min(5, len(pts)):]
-    if side == "start":
-        sample = list(reversed(sample))
-    headings: list[float] = []
-    lengths: list[float] = []
-    for a, b in zip(sample, sample[1:]):
-        d = _dist(a, b)
-        if d <= 1e-6:
-            continue
-        headings.append(_heading(a, b))
-        lengths.append(d)
-    if not headings:
-        return None
-    curvature = 0.0
-    if len(headings) >= 2:
-        curvature = sum(_wrap(b - a) for a, b in zip(headings, headings[1:])) / max(sum(lengths), 1e-6)
-    return sample[-1], headings[-1], curvature
-
-
-def _point_at_distance(points: list[list[float]], distance_m: float) -> list[float]:
-    remaining = max(0.0, distance_m)
-    for a, b in zip(points, points[1:]):
-        length = _dist(a, b)
-        if length <= 1e-8:
-            continue
-        if remaining <= length:
-            ratio = remaining / length
-            return [a[0] + ratio * (b[0] - a[0]), a[1] + ratio * (b[1] - a[1])]
-        remaining -= length
-    return list(points[-1])
-
-
-def _inferred_endpoint_state(center: list[list[float]], role: str) -> tuple[list[float], float, float] | None:
-    """Measure road direction across a 6 m window, past short union hooks."""
-    pts = [[float(p[0]), float(p[1])] for p in center if len(p) >= 2]
-    if len(pts) < 2:
-        return None
-    oriented = pts if role == "back" else list(reversed(pts))
-    endpoint = oriented[0]
-    middle = _point_at_distance(oriented, 3.0)
-    far = _point_at_distance(oriented, 6.0)
-    outward = _heading(endpoint, far)
-    travel_heading = outward if role == "back" else _wrap(outward + math.pi)
-    first_heading = _heading(endpoint, middle)
-    second_heading = _heading(middle, far)
-    curvature = _wrap(second_heading - first_heading) / max(_dist(middle, far), 1e-6)
-    if role == "front":
-        curvature = -curvature
-    return endpoint, travel_heading, curvature
-
-
-def _candidate(
-    track: dict[str, Any],
-    inferred_point: list[float],
-    inferred_heading: float,
-    inferred_curvature: float,
-    inferred_width: float,
-    inferred_polygon: list[list[float]],
-    role: str,
-    *,
-    maximum_endpoint_distance_m: float,
-    maximum_lateral_error_m: float,
-    maximum_heading_difference_deg: float,
-    maximum_curvature_difference_per_m: float,
-    maximum_width_difference_m: float,
-) -> list[dict[str, Any]]:
-    line = track.get("centerline_lcs_m") or []
-    if len(line) < 2:
-        return []
-    width = float(track.get("median_width_m", 3.5))
-    out: list[dict[str, Any]] = []
-    ux, uy = math.cos(inferred_heading), math.sin(inferred_heading)
-    nx, ny = -uy, ux
-    for side in ("start", "end"):
-        state = _endpoint_metrics(line, side)
-        if state is None:
-            continue
-        endpoint, endpoint_outward_heading, endpoint_curvature = state
-        if role == "back":
-            # endpoint must lie behind the inferred start; its outward tangent
-            # should point toward the inferred corridor.
-            vx, vy = inferred_point[0] - endpoint[0], inferred_point[1] - endpoint[1]
-            longitudinal = vx * ux + vy * uy
-            lateral = abs(vx * nx + vy * ny)
-            candidate_travel_heading = endpoint_outward_heading
-            candidate_curvature = endpoint_curvature
-        else:
-            # endpoint must lie ahead of inferred end; entering the candidate
-            # track is opposite its outward endpoint tangent.
-            vx, vy = endpoint[0] - inferred_point[0], endpoint[1] - inferred_point[1]
-            longitudinal = vx * ux + vy * uy
-            lateral = abs(vx * nx + vy * ny)
-            candidate_travel_heading = _wrap(endpoint_outward_heading + math.pi)
-            candidate_curvature = -endpoint_curvature
-        distance = _dist(endpoint, inferred_point)
-        endpoint_inside_corridor = point_in_polygon(
-            (float(endpoint[0]), float(endpoint[1])), inferred_polygon
-        ) if len(inferred_polygon) >= 3 else False
-        heading_diff = _axis_heading_difference_deg(candidate_travel_heading, inferred_heading)
-        curvature_diff = abs(abs(candidate_curvature) - abs(inferred_curvature))
-        width_diff = abs(width - inferred_width)
-        rejections: list[str] = []
-        if longitudinal <= 0.1 and not endpoint_inside_corridor:
-            rejections.append("not_longitudinally_before_or_after")
-        if distance > maximum_endpoint_distance_m:
-            rejections.append("endpoint_distance")
-        if lateral > maximum_lateral_error_m:
-            rejections.append("lateral_error_adjacent_or_parallel")
-        if heading_diff > maximum_heading_difference_deg:
-            rejections.append("heading_difference")
-        if curvature_diff > maximum_curvature_difference_per_m and not endpoint_inside_corridor:
-            rejections.append("curvature_difference")
-        if width_diff > maximum_width_difference_m:
-            rejections.append("width_difference")
-        score = (
-            distance
-            + lateral * 5.0
-            + heading_diff * 0.08
-            + curvature_diff * 20.0
-            + width_diff * 2.0
-        )
-        out.append({
-            "track_id": str(track.get("track_id")),
-            "endpoint_side": side,
-            "role": role,
-            "distance_m": round(distance, 3),
-            "longitudinal_m": round(longitudinal, 3),
-            "lateral_error_m": round(lateral, 3),
-            "heading_difference_deg": round(heading_diff, 3),
-            "curvature_difference_per_m": round(curvature_diff, 5),
-            "width_difference_m": round(width_diff, 3),
-            "endpoint_inside_inferred_polygon": endpoint_inside_corridor,
-            "score": round(score, 4),
-            "rejection_reasons": rejections,
-        })
-    return out
+from .inferred_endpoint_support import (
+    evaluate_inferred_endpoint_candidate,
+    select_unique_continuation,
+)
 
 
 def assign_static_inferred_affiliations(
     static_lanes: list[dict[str, Any]],
     tracks: list[dict[str, Any]],
+    lane_geometry: list[dict[str, Any]],
     *,
     maximum_endpoint_distance_m: float = 20.0,
+    maximum_boundary_endpoint_distance_m: float = 20.0,
     maximum_lateral_error_m: float = 2.0,
     maximum_heading_difference_deg: float = 30.0,
     maximum_curvature_difference_per_m: float = 0.08,
     maximum_width_difference_m: float = 1.0,
+    minimum_unique_score_margin: float = 0.5,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Overwrite remembered temporal IDs with geometric before/after tracks."""
+    """Overwrite remembered temporal IDs with unique local endpoint continuations."""
     resolved = copy.deepcopy(static_lanes)
+    lane_by_id = {str(l.get("lane_id")): l for l in lane_geometry}
     debug: list[dict[str, Any]] = []
+
     for inferred in resolved:
-        center = inferred.get("centerline_lcs_m") or []
-        width = float(inferred.get("median_width_m", 3.5))
-        polygon = inferred.get("polygon_lcs_m") or []
-        record = {
+        record: dict[str, Any] = {
             "static_inferred_lane_id": inferred.get("static_inferred_lane_id"),
             "route_id": inferred.get("route_id"),
-            "method": "longitudinal_endpoint_continuation_no_adjacency",
+            "method": "local_boundary_aware_longitudinal_endpoint_continuation_no_adjacency",
             "remembered_start_track_id": inferred.get("start_observed_track_id"),
             "remembered_end_track_id": inferred.get("end_observed_track_id"),
         }
-        chosen: dict[str, str | None] = {"back": None, "front": None}
+        chosen: dict[str, dict[str, Any] | None] = {"back": None, "front": None}
+
         for role in ("back", "front"):
-            state = _inferred_endpoint_state(center, role)
-            if state is None:
-                record[f"{role}_candidates"] = []
-                continue
-            point, heading, curvature = state
             candidates: list[dict[str, Any]] = []
             for track in tracks:
-                candidates.extend(_candidate(
-                    track, point, heading, curvature, width, polygon, role,
+                candidates.extend(evaluate_inferred_endpoint_candidate(
+                    inferred,
+                    track,
+                    lane_by_id,
+                    role,
                     maximum_endpoint_distance_m=maximum_endpoint_distance_m,
+                    maximum_boundary_endpoint_distance_m=maximum_boundary_endpoint_distance_m,
                     maximum_lateral_error_m=maximum_lateral_error_m,
                     maximum_heading_difference_deg=maximum_heading_difference_deg,
                     maximum_curvature_difference_per_m=maximum_curvature_difference_per_m,
                     maximum_width_difference_m=maximum_width_difference_m,
                 ))
-            candidates.sort(key=lambda x: (len(x["rejection_reasons"]) > 0, x["score"], x["track_id"], x["endpoint_side"]))
-            accepted = [c for c in candidates if not c["rejection_reasons"]]
-            if accepted:
-                chosen[role] = accepted[0]["track_id"]
-                accepted[0]["selected"] = True
-            record[f"{role}_candidates"] = candidates[:16]
-            record[f"{role}_selected_track_id"] = chosen[role]
-        inferred["start_observed_track_id"] = chosen["back"]
-        inferred["end_observed_track_id"] = chosen["front"]
+            candidates.sort(key=lambda x: (
+                bool(x.get("rejection_reasons")),
+                float(x.get("score", float("inf"))),
+                str(x.get("track_id")),
+                str(x.get("track_endpoint_side")),
+            ))
+            selected, selection_rejection = select_unique_continuation(
+                candidates,
+                minimum_score_margin=minimum_unique_score_margin,
+            )
+            chosen[role] = selected
+            record[f"{role}_candidates"] = candidates[:24]
+            record[f"{role}_selected_track_id"] = None if selected is None else selected.get("track_id")
+            record[f"{role}_selected_support"] = selected
+            record[f"{role}_selection_rejection_reason"] = selection_rejection
+
+        inferred["tracker_start_observed_track_id"] = inferred.get("start_observed_track_id")
+        inferred["tracker_end_observed_track_id"] = inferred.get("end_observed_track_id")
+        inferred["start_observed_track_id"] = None if chosen["back"] is None else chosen["back"].get("track_id")
+        inferred["end_observed_track_id"] = None if chosen["front"] is None else chosen["front"].get("track_id")
+        inferred["back_affiliation"] = chosen["back"]
+        inferred["front_affiliation"] = chosen["front"]
         inferred["bridge_complete"] = bool(chosen["back"] and chosen["front"])
-        inferred["affiliation_method"] = "longitudinal_endpoint_continuation_no_adjacency"
+        inferred["affiliation_method"] = "local_boundary_aware_longitudinal_endpoint_continuation_no_adjacency"
         record["accepted"] = bool(inferred["bridge_complete"])
         debug.append(record)
+
     return resolved, debug
