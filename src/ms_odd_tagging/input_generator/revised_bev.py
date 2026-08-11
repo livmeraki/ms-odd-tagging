@@ -32,6 +32,22 @@ STOPLINE_COLOR = "#7c3aed"
 FORWARD_ARC_COLOR = "#111827"
 ACTIVE_OBJECT_COLOR = "#facc15"
 PEDESTRIAN_COLOR = "#f97316"
+FUTURE_PATH_COLOR = "#0891b2"
+FUTURE_PATH_CORRIDOR_COLOR = "#67e8f9"
+
+_DIGIT_GLYPHS = {
+    "0": ("111", "101", "101", "101", "111"),
+    "1": ("010", "110", "010", "010", "111"),
+    "2": ("111", "001", "111", "100", "111"),
+    "3": ("111", "001", "111", "001", "111"),
+    "4": ("101", "101", "111", "001", "001"),
+    "5": ("111", "100", "111", "001", "111"),
+    "6": ("111", "100", "111", "101", "111"),
+    "7": ("111", "001", "010", "010", "010"),
+    "8": ("111", "101", "111", "101", "111"),
+    "9": ("111", "101", "111", "001", "111"),
+    "-": ("000", "000", "111", "000", "000"),
+}
 
 
 def _feature_points(feature: dict[str, Any], points_by_id: dict[str, Any]) -> list:
@@ -86,6 +102,66 @@ def _draw_feature(
             continue
         start, end = map(screen, clipped)
         canvas.line(*start, *end, hex_to_rgb(color), width=width, alpha=alpha)
+
+
+def _draw_numeric_label(canvas, text: str, x: float, y: float, *, scale: int = 3) -> None:
+    """Draw a dependency-free numeric ID label next to a candidate object."""
+    glyphs = [(_DIGIT_GLYPHS.get(char), char) for char in str(text)]
+    glyphs = [(glyph, char) for glyph, char in glyphs if glyph is not None]
+    if not glyphs:
+        return
+    char_width = 3 * scale
+    gap = scale
+    width = len(glyphs) * char_width + max(0, len(glyphs) - 1) * gap + 4
+    height = 5 * scale + 4
+    left = max(1, min(canvas.width - width - 1, int(round(x + 8))))
+    top = max(1, min(canvas.height - height - 1, int(round(y - height - 4))))
+    background = [(left, top), (left + width, top), (left + width, top + height), (left, top + height)]
+    canvas.polygon(background, hex_to_rgb("#ffffff"), hex_to_rgb(ACTIVE_OBJECT_COLOR), alpha=0.88, outline_width=1)
+    cursor = left + 2
+    color = hex_to_rgb("#854d0e")
+    for glyph, _char in glyphs:
+        for row_index, row in enumerate(glyph):
+            for col_index, bit in enumerate(row):
+                if bit != "1":
+                    continue
+                for dy in range(scale):
+                    for dx in range(scale):
+                        canvas.set_pixel(
+                            cursor + col_index * scale + dx,
+                            top + 2 + row_index * scale + dy,
+                            color,
+                            alpha=1.0,
+                        )
+        cursor += char_width + gap
+
+
+def _draw_future_path(canvas, debug_context, screen, scale_x: float, scale_y: float) -> None:
+    geometry = (debug_context or {}).get("ego_future_path") or {}
+    points = []
+    for row in geometry.get("points", []):
+        longitudinal = row.get("longitudinal_m")
+        lateral = row.get("lateral_m")
+        if isinstance(longitudinal, (int, float)) and isinstance(lateral, (int, float)):
+            points.append((float(longitudinal), float(lateral)))
+    if len(points) < 2:
+        return
+    screen_points = [screen(point) for point in points]
+    half_width_m = float(geometry.get("corridor_half_width_m") or 1.5)
+    average_scale = (scale_x + scale_y) / 2.0
+    corridor_width_px = max(4, int(round(2.0 * half_width_m * average_scale)))
+    canvas.polyline(
+        screen_points,
+        hex_to_rgb(FUTURE_PATH_CORRIDOR_COLOR),
+        width=corridor_width_px,
+        alpha=0.25,
+    )
+    canvas.polyline(
+        screen_points,
+        hex_to_rgb(FUTURE_PATH_COLOR),
+        width=4,
+        alpha=0.95,
+    )
 
 
 def _object_corners_lcs(obj: dict[str, Any], ego_yaw: float):
@@ -202,20 +278,20 @@ def render_revised_bev_png(
         _, y = screen((longitudinal, 0))
         canvas.line(0, y, width - 1, y, grid, width=1, alpha=0.65)
 
-    proximity = _footprint_buffer_points(4.8, 2.0, proximity_radius_m)
-    proximity_screen = [screen(point) for point in proximity]
-    for start, end in zip(
-        proximity_screen, proximity_screen[1:] + proximity_screen[:1]
-    ):
-        canvas.line(
-            *start,
-            *end,
-            hex_to_rgb("#0891b2"),
-            width=3,
-            alpha=0.82,
-        )
+    if proximity_radius_m > 0.0:
+        proximity = _footprint_buffer_points(4.8, 2.0, proximity_radius_m)
+        proximity_screen = [screen(point) for point in proximity]
+        for start, end in zip(
+            proximity_screen, proximity_screen[1:] + proximity_screen[:1]
+        ):
+            canvas.line(
+                *start,
+                *end,
+                hex_to_rgb("#0891b2"),
+                width=3,
+                alpha=0.82,
+            )
 
-    store = recording.get("ld_feature_store") or {}
     nearby = (frame.get("ld") or {}).get("nearby_feature_ids") or {}
     points_by_id = ld_point_lookup(recording)
     lookups = {
@@ -250,6 +326,8 @@ def render_revised_bev_png(
             color, line_width, alpha = LANE_STYLES.get(pattern, LANE_STYLES["unknown"])
             _draw_feature(canvas, _feature_points(feature, points_by_id), ego_position, ego_yaw, screen, extent, color, line_width, alpha)
 
+    _draw_future_path(canvas, debug_context, screen, scale_x, scale_y)
+
     if crossing_arc is not None:
         arc_points = _forward_arc_points(*crossing_arc)
         arc_screen = [screen(point) for point in arc_points]
@@ -263,7 +341,7 @@ def render_revised_bev_png(
             )
 
     lead_id = str(((lane_context or {}).get("lead") or {}).get("object_id") or "")
-    active_object_ids = set()
+    active_object_ids = {str(value) for value in (debug_context or {}).get("candidate_object_ids", [])}
     for event in (debug_context or {}).get("rule_based_reference", {}).get(
         "active_events", []
     ):
@@ -280,6 +358,7 @@ def render_revised_bev_png(
         if not visible(center_ego):
             continue
         class_name = str(obj.get("class") or "").lower()
+        object_id = str(obj.get("object_id"))
         color = hex_to_rgb(
             PEDESTRIAN_COLOR
             if class_name == "pedestrian"
@@ -290,9 +369,9 @@ def render_revised_bev_png(
             corners = [screen(lcs_to_ego(point, ego_position, ego_yaw)) for point in corners_lcs]
             outline = (
                 hex_to_rgb(ACTIVE_OBJECT_COLOR)
-                if str(obj.get("object_id")) in active_object_ids
+                if object_id in active_object_ids
                 else hex_to_rgb("#dc2626")
-                if str(obj.get("object_id")) == lead_id
+                if object_id == lead_id
                 else color
             )
             canvas.polygon(
@@ -301,12 +380,13 @@ def render_revised_bev_png(
                 outline=outline,
                 alpha=0.18,
                 outline_width=4
-                if str(obj.get("object_id")) == lead_id
-                or str(obj.get("object_id")) in active_object_ids
+                if object_id == lead_id or object_id in active_object_ids
                 else 2,
             )
         sx, sy = screen(center_ego)
         canvas.circle(sx, sy, 5, color, alpha=1.0)
+        if class_name == "pedestrian" and object_id in active_object_ids:
+            _draw_numeric_label(canvas, object_id, sx, sy)
 
     ego_corners = [(2.4, 1.0), (2.4, -1.0), (-2.4, -1.0), (-2.4, 1.0)]
     canvas.polygon([screen(point) for point in ego_corners], hex_to_rgb("#22c55e"), hex_to_rgb("#166534"), alpha=0.34, outline_width=4)
