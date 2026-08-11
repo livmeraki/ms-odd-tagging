@@ -1,9 +1,9 @@
 """Final role pass using piece-local track geometry.
 
 The existing integrated detector owns reconstruction, inferred affiliation,
-connectors, and topology-supported stitching. This wrapper replaces only the
-last static lane-order/role pass so static inferred pieces participate as real
-local ego/left/right lane geometry.
+connectors, and topology-supported stitching. This wrapper adds a conservative
+embedded-observed-fragment absorption pass before final lane ordering, then uses
+piece-local geometry for ego/left/right role classification.
 """
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any
 
 from .detector import _lane_output, _nearest_member
 from .detector_static_order_integrated import run_lane_debug_v2 as run_integrated
+from .embedded_fragment_absorption import absorb_embedded_observed_fragments
 from .static_lane_order_piece_local import (
     build_constructed_lane_network,
     build_static_lane_order,
@@ -120,8 +121,26 @@ def _recompute_frames_piece_local(
 def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = dict(config or {})
     result = run_integrated(recording, cfg)
-    tracks = result.get("continuous_lane_tracks", [])
     settings = {**(result.get("debug_config") or {}), **cfg}
+
+    # Repair duplicate track identities where a standalone observed fragment is
+    # already embedded in one host track's inferred-gap geometry. Preserve the
+    # host track ID and replace only the inferred gap with the observed fragment.
+    tracks, absorption_debug = absorb_embedded_observed_fragments(
+        result.get("continuous_lane_tracks", []),
+        result.get("lane_geometry", []),
+        maximum_endpoint_error_m=float(cfg.get("embedded_fragment_maximum_endpoint_error_m", 0.35)),
+        maximum_heading_difference_deg=float(cfg.get("embedded_fragment_maximum_heading_difference_deg", 12.0)),
+        maximum_centerline_deviation_m=float(cfg.get("embedded_fragment_maximum_centerline_deviation_m", 0.5)),
+        maximum_width_difference_m=float(cfg.get("embedded_fragment_maximum_width_difference_m", 0.75)),
+        require_boundary_continuity=bool(cfg.get("embedded_fragment_require_boundary_continuity", True)),
+    )
+    result["continuous_lane_tracks"] = tracks
+    result["embedded_observed_fragment_absorption_debug"] = absorption_debug
+    result["embedded_observed_fragment_absorption_count"] = sum(
+        1 for row in absorption_debug if row.get("accepted")
+    )
+
     lane_order = build_static_lane_order(
         tracks,
         sample_spacing_m=float(settings.get("lane_order_sample_spacing_m", 2.0)),
@@ -137,6 +156,12 @@ def run_lane_debug_v2(recording: dict[str, Any], config: dict[str, Any] | None =
         "method": "static_cross_section_piece_local_lane_order",
         "candidate_projection": "nearest_valid_track_piece_centerline",
         "static_inferred_corridor_participates": True,
+        "embedded_observed_fragment_absorption_before_final_order": True,
     }
-    result["schema_version"] = "lane-debug-v2-piece-local-final-role-v2"
+    result["embedded_fragment_absorption_policy"] = {
+        "method": "replace_unambiguous_host_inferred_gap_with_standalone_observed_fragment",
+        "preserve_host_track_id": True,
+        "global_zero_gap_relaxation": False,
+    }
+    result["schema_version"] = "lane-debug-v2-piece-local-final-role-v3-embedded-fragment-absorption"
     return result
