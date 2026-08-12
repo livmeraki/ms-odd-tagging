@@ -172,7 +172,7 @@ requestAnimationFrame(__syncTaggingHeight);
 
 
 def _inject_bulk_yes_no(html: str) -> str:
-    """Inject bulk-rest and per-tag copy-from-prediction controls.
+    """Inject bulk-rest and per-tag whole-recording prediction-copy controls.
 
     The historical function name is kept because the workspace imports it.
     """
@@ -223,34 +223,43 @@ function applyInteractionRemaining(tag,on){
   persist();
   render();
 }
-function copyScalarFromPrediction(path){
-  const prediction=rows[i].prediction||{};
-  const value=get(prediction,path);
-  if(value===undefined){
-    alert(`No prediction available for ${label(path)} on this frame.`);
+function copyScalarPredictionWholeRecording(path){
+  const available=rows.reduce((n,row)=>n+(get(row.prediction||{},path)!==undefined?1:0),0);
+  if(!available){
+    alert(`No prediction values are available for ${label(path)} in this recording.`);
     return;
   }
-  ensureGT(rows[i]);
-  set(rows[i].gt,path,value);
-  if(path==='ego_motion.state'){
-    if(value==='stationary')set(rows[i].gt,'ego_motion.speed_band',null);
-    else if(get(rows[i].gt,'ego_motion.speed_band')===null)set(rows[i].gt,'ego_motion.speed_band','unknown');
+  if(!confirm(`Set ${label(path)} to its prediction value for all ${available} frame(s) with predictions in this recording? Other tag types will not be changed.`))return;
+  for(let k=0;k<rows.length;k++){
+    const value=get(rows[k].prediction||{},path);
+    if(value===undefined)continue;
+    ensureGT(rows[k]);
+    set(rows[k].gt,path,value);
+    if(path==='ego_motion.state'){
+      if(value==='stationary')set(rows[k].gt,'ego_motion.speed_band',null);
+      else if(get(rows[k].gt,'ego_motion.speed_band')===null)set(rows[k].gt,'ego_motion.speed_band','unknown');
+    }
+    rows[k].reviewed=true;
   }
-  rows[i].reviewed=true;
   persist();
   render();
 }
-function copyInteractionFromPrediction(tag){
-  const predicted=rows[i].prediction?.interaction_tags;
-  if(!Array.isArray(predicted)){
-    alert(`No interaction-tag prediction available on this frame.`);
+function copyInteractionPredictionWholeRecording(tag){
+  const available=rows.reduce((n,row)=>n+(Array.isArray(row.prediction?.interaction_tags)?1:0),0);
+  if(!available){
+    alert(`No interaction-tag predictions are available in this recording.`);
     return;
   }
-  ensureGT(rows[i]);
-  const on=predicted.includes(tag);
-  const current=rows[i].gt.interaction_tags||[];
-  rows[i].gt.interaction_tags=on?[...new Set([...current,tag])]:current.filter(x=>x!==tag);
-  rows[i].reviewed=true;
+  if(!confirm(`Set ${tag} ON/OFF to match prediction for all ${available} frame(s) with interaction predictions in this recording? Other tags will not be changed.`))return;
+  for(let k=0;k<rows.length;k++){
+    const predicted=rows[k].prediction?.interaction_tags;
+    if(!Array.isArray(predicted))continue;
+    ensureGT(rows[k]);
+    const on=predicted.includes(tag);
+    const current=rows[k].gt.interaction_tags||[];
+    rows[k].gt.interaction_tags=on?[...new Set([...current,tag])]:current.filter(x=>x!==tag);
+    rows[k].reviewed=true;
+  }
   persist();
   render();
 }
@@ -271,8 +280,8 @@ function addBulkAllControls(){
     });
     const copy=document.createElement('button');
     copy.type='button'; copy.className='copy-prediction';
-    copy.textContent='Same as prediction';
-    copy.onclick=(e)=>{e.stopPropagation();copyScalarFromPrediction(path);};
+    copy.textContent='Same as prediction → whole recording';
+    copy.onclick=(e)=>{e.stopPropagation();copyScalarPredictionWholeRecording(path);};
     wrap.appendChild(copy);
     group.appendChild(wrap);
   });
@@ -293,8 +302,8 @@ function addBulkAllControls(){
       off.type='button'; off.className='bulk-off'; off.textContent='OFF → rest';
       off.onclick=(e)=>{e.preventDefault();e.stopPropagation();applyInteractionRemaining(tag,false);};
       const copy=document.createElement('button');
-      copy.type='button'; copy.className='copy-prediction'; copy.textContent='Same as prediction';
-      copy.onclick=(e)=>{e.preventDefault();e.stopPropagation();copyInteractionFromPrediction(tag);};
+      copy.type='button'; copy.className='copy-prediction'; copy.textContent='Same as prediction → whole recording';
+      copy.onclick=(e)=>{e.preventDefault();e.stopPropagation();copyInteractionPredictionWholeRecording(tag);};
       wrap.append(on,off,copy); labelNode.appendChild(wrap);
     });
   }
