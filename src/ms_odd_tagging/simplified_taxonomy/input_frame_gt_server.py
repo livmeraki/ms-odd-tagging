@@ -172,19 +172,20 @@ requestAnimationFrame(__syncTaggingHeight);
 
 
 def _inject_bulk_yes_no(html: str) -> str:
-    """Inject apply-to-rest controls for every scalar value and interaction tag.
+    """Inject bulk-rest and per-tag copy-from-prediction controls.
 
-    The historical function name is kept because the workspace imports it, but
-    the behavior is now generic across the complete simplified taxonomy.
+    The historical function name is kept because the workspace imports it.
     """
     css = '''<style>
 .bulk-rest{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0 2px}
 .bulk-rest button{padding:4px 7px;margin:0;font-size:11px;background:#273449;border-color:#475569}
 .bulk-rest .bulk-value{border-color:#38bdf8}
+.bulk-rest .copy-prediction{border-color:#f59e0b;color:#fde68a}
 .bulk-rest .bulk-on{border-color:#22c55e}
 .bulk-rest .bulk-off{border-color:#ef4444}
 .interaction-rest{display:inline-flex;gap:3px;margin-left:7px;vertical-align:middle}
 .interaction-rest button{padding:2px 5px;margin:0;font-size:10px;background:#273449}
+.interaction-rest .copy-prediction{border-color:#f59e0b;color:#fde68a}
 </style>'''
     script = '''<script>
 function bulkValueText(value){
@@ -222,6 +223,37 @@ function applyInteractionRemaining(tag,on){
   persist();
   render();
 }
+function copyScalarFromPrediction(path){
+  const prediction=rows[i].prediction||{};
+  const value=get(prediction,path);
+  if(value===undefined){
+    alert(`No prediction available for ${label(path)} on this frame.`);
+    return;
+  }
+  ensureGT(rows[i]);
+  set(rows[i].gt,path,value);
+  if(path==='ego_motion.state'){
+    if(value==='stationary')set(rows[i].gt,'ego_motion.speed_band',null);
+    else if(get(rows[i].gt,'ego_motion.speed_band')===null)set(rows[i].gt,'ego_motion.speed_band','unknown');
+  }
+  rows[i].reviewed=true;
+  persist();
+  render();
+}
+function copyInteractionFromPrediction(tag){
+  const predicted=rows[i].prediction?.interaction_tags;
+  if(!Array.isArray(predicted)){
+    alert(`No interaction-tag prediction available on this frame.`);
+    return;
+  }
+  ensureGT(rows[i]);
+  const on=predicted.includes(tag);
+  const current=rows[i].gt.interaction_tags||[];
+  rows[i].gt.interaction_tags=on?[...new Set([...current,tag])]:current.filter(x=>x!==tag);
+  rows[i].reviewed=true;
+  persist();
+  render();
+}
 function addBulkAllControls(){
   const groups=document.querySelectorAll('#form .group');
   scalarPaths.forEach((path,gidx)=>{
@@ -237,6 +269,11 @@ function addBulkAllControls(){
       b.onclick=(e)=>{e.stopPropagation();applyRemaining(path,value);};
       wrap.appendChild(b);
     });
+    const copy=document.createElement('button');
+    copy.type='button'; copy.className='copy-prediction';
+    copy.textContent='Same as prediction';
+    copy.onclick=(e)=>{e.stopPropagation();copyScalarFromPrediction(path);};
+    wrap.appendChild(copy);
     group.appendChild(wrap);
   });
 
@@ -255,7 +292,10 @@ function addBulkAllControls(){
       const off=document.createElement('button');
       off.type='button'; off.className='bulk-off'; off.textContent='OFF → rest';
       off.onclick=(e)=>{e.preventDefault();e.stopPropagation();applyInteractionRemaining(tag,false);};
-      wrap.append(on,off); labelNode.appendChild(wrap);
+      const copy=document.createElement('button');
+      copy.type='button'; copy.className='copy-prediction'; copy.textContent='Same as prediction';
+      copy.onclick=(e)=>{e.preventDefault();e.stopPropagation();copyInteractionFromPrediction(tag);};
+      wrap.append(on,off,copy); labelNode.appendChild(wrap);
     });
   }
 }
