@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
-from .runner import Probe, load_manifest, run_probe, write_outputs
+from .manifest import load_manifest, parse_set_args
+from .runner import Probe, run_probe, write_outputs
 
 
 _COLOR_WORDS = (
@@ -36,12 +36,7 @@ _ORIENTATION_MARKERS = (
 
 
 def _no_color_legend(legend: Any) -> Any:
-    """Remove mappings whose identity depends primarily on color.
-
-    Shape-based ego semantics are retained without the color adjective. A generic
-    mapping such as ``orange object -> pedestrian`` is removed rather than becoming
-    the misleading ``object -> pedestrian``.
-    """
+    """Remove mappings whose identity depends primarily on color."""
     if not isinstance(legend, dict):
         return legend
     reduced: dict[str, Any] = {}
@@ -52,8 +47,6 @@ def _no_color_legend(legend: Any) -> Any:
         if not has_color:
             reduced[key] = value
             continue
-
-        # Preserve a genuinely shape-defined symbol while removing the color cue.
         if "rectangle" in lower or "triangle" in lower or "nose" in lower:
             stripped = key
             for word in _COLOR_WORDS:
@@ -79,12 +72,7 @@ def _no_orientation_legend(legend: Any) -> Any:
 
 
 def expand_legend_ablations(probes: list[Probe]) -> list[Probe]:
-    """Expand each legend-bearing probe into four controlled variants.
-
-    The image, question, expected answer, and all other evidence remain identical.
-    Only the legend changes. ``modality`` is suffixed so summary.csv reports each
-    ablation separately.
-    """
+    """Expand each legend-bearing probe into four controlled variants."""
     expanded: list[Probe] = []
     for probe in probes:
         if probe.legend is None:
@@ -113,14 +101,24 @@ def expand_legend_ablations(probes: list[Probe]) -> list[Probe]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Audit VLM understanding of BEV/evidence inputs.")
-    parser.add_argument("--manifest", type=Path, required=True, help="Probe manifest JSON.")
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/vlm_understanding_poc"))
+    parser.add_argument("--manifest", required=True, help="Probe manifest JSON.")
+    parser.add_argument("--output-dir", default="outputs/vlm_understanding_poc")
     parser.add_argument("--endpoint", default="http://127.0.0.1:8001/v1/chat/completions")
     parser.add_argument("--model", default="Qwen/Qwen3-VL-8B-Instruct")
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-tokens", type=int, default=512)
     parser.add_argument("--timeout-s", type=float, default=60.0)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        help=(
+            "Override a top-level manifest variable. Repeat as needed. "
+            "Example: --set BEV_ROOT=/path/to/recording"
+        ),
+    )
     parser.add_argument(
         "--category",
         action="append",
@@ -145,8 +143,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    from pathlib import Path
+
     args = build_parser().parse_args()
-    probes = load_manifest(args.manifest)
+    overrides = parse_set_args(args.set)
+    probes = load_manifest(Path(args.manifest), overrides=overrides)
     if args.category:
         wanted = set(args.category)
         probes = [probe for probe in probes if probe.category in wanted]
@@ -161,6 +162,8 @@ def main() -> None:
         probes = probes[: args.limit]
 
     print(f"Loaded {len(probes)} probe(s)")
+    if overrides:
+        print("Manifest overrides: " + ", ".join(sorted(overrides)))
     if args.legend_ablation:
         print("Legend ablation: full / no-color / no-orientation / none")
 
@@ -185,12 +188,13 @@ def main() -> None:
         else:
             print(f"  ERROR: {result.get('error')}")
 
-    write_outputs(results, args.output_dir)
+    output_dir = Path(args.output_dir)
+    write_outputs(results, output_dir)
     scored = [result for result in results if result.get("correct") is not None]
     correct = sum(bool(result["correct"]) for result in scored)
     accuracy = correct / len(scored) if scored else 0.0
     print(f"Done. scored={len(scored)} correct={correct} accuracy={accuracy:.3f}")
-    print(f"Results: {args.output_dir.resolve()}")
+    print(f"Results: {output_dir.resolve()}")
 
 
 if __name__ == "__main__":
