@@ -29,6 +29,7 @@ For each probe, produce three explicit stages:
 2. reasoned_answer: the answer after applying only the conventions/rules stated in the prompt or legend.
 3. answer: your final answer to the question.
 
+When answer choices are supplied, perceived_answer, reasoned_answer, and answer MUST each be exactly one of those choices with no explanation or extra words. Put explanations only in observations or ambiguity.
 These three fields should agree unless there is a genuine ambiguity. Never write one answer in your reasoning and a contradictory value in the final answer.
 Return valid JSON with exactly these keys:
 perceived_answer, reasoned_answer, answer, observations, confidence, used_visual_cues, used_structured_fields, ambiguity.
@@ -45,6 +46,7 @@ class Probe:
     modality: str
     question: str
     expected_answer: Any
+    answer_choices: tuple[Any, ...]
     images: tuple[Path, ...]
     structured_evidence: Any | None
     legend: Any | None
@@ -75,6 +77,7 @@ def load_manifest(path: Path) -> list[Probe]:
                 modality=str(raw["modality"]),
                 question=str(raw["question"]),
                 expected_answer=raw.get("expected_answer"),
+                answer_choices=tuple(raw.get("answer_choices") or ()),
                 images=images,
                 structured_evidence=_resolve_value(raw.get("structured_evidence"), base_dir),
                 legend=_resolve_value(raw.get("legend"), base_dir),
@@ -94,6 +97,11 @@ def _request_payload(probe: Probe, model: str, temperature: float, max_tokens: i
         f"Input modality: {probe.modality}",
         f"Question: {probe.question}",
     ]
+    if probe.answer_choices:
+        user_text.append(
+            "Allowed answers for perceived_answer, reasoned_answer, and answer: "
+            + json.dumps(list(probe.answer_choices), ensure_ascii=False)
+        )
     if probe.legend is not None:
         user_text.append("BEV legend:\n" + json.dumps(probe.legend, ensure_ascii=False, sort_keys=True))
     if probe.structured_evidence is not None:
@@ -102,8 +110,8 @@ def _request_payload(probe: Probe, model: str, temperature: float, max_tokens: i
             + json.dumps(probe.structured_evidence, ensure_ascii=False, sort_keys=True)
         )
     user_text.append(
-        "Important: report literal observations first internally, then keep perceived_answer, "
-        "reasoned_answer, and answer mutually consistent. The expected answer is not provided to you."
+        "Important: keep perceived_answer, reasoned_answer, and answer concise and mutually consistent. "
+        "The expected answer is not provided to you."
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": "\n\n".join(user_text)}]
     for image in probe.images:
@@ -145,6 +153,25 @@ def _normalize(value: Any) -> str:
     return str(value).strip().lower()
 
 
+def _canonicalize(answer: Any, choices: tuple[Any, ...]) -> Any:
+    """Map verbose model text back to a unique allowed answer when possible."""
+    if answer is None or not choices:
+        return answer
+    answer_norm = _normalize(answer)
+    exact = [choice for choice in choices if _normalize(choice) == answer_norm]
+    if len(exact) == 1:
+        return exact[0]
+    contained = [choice for choice in choices if _normalize(choice) in answer_norm]
+    # Prefer a unique non-unknown match. This repairs harmless prose such as
+    # "the symbol represents the ego vehicle" without hiding ambiguous outputs.
+    non_unknown = [choice for choice in contained if _normalize(choice) != "unknown"]
+    if len(non_unknown) == 1:
+        return non_unknown[0]
+    if len(contained) == 1:
+        return contained[0]
+    return answer
+
+
 def _score(expected: Any, answer: Any) -> bool | None:
     if expected is None:
         return None
@@ -181,9 +208,12 @@ def run_probe(
             raw_response = json.loads(response.read().decode("utf-8"))
         text = _extract_text(raw_response)
         parsed = json.loads(text)
-        perceived = parsed.get("perceived_answer")
-        reasoned = parsed.get("reasoned_answer")
-        final_answer = parsed.get("answer")
+        perceived_raw = parsed.get("perceived_answer")
+        reasoned_raw = parsed.get("reasoned_answer")
+        final_raw = parsed.get("answer")
+        perceived = _canonicalize(perceived_raw, probe.answer_choices)
+        reasoned = _canonicalize(reasoned_raw, probe.answer_choices)
+        final_answer = _canonicalize(final_raw, probe.answer_choices)
         perception_correct = _score(probe.expected_answer, perceived)
         reasoning_correct = _score(probe.expected_answer, reasoned)
         final_answer_correct = _score(probe.expected_answer, final_answer)
@@ -195,6 +225,7 @@ def run_probe(
             "modality": probe.modality,
             "question": probe.question,
             "expected_answer": probe.expected_answer,
+            "answer_choices": list(probe.answer_choices),
             "images": [str(path) for path in probe.images],
             "notes": probe.notes,
             "ok": True,
@@ -203,8 +234,12 @@ def run_probe(
             "reasoning_correct": reasoning_correct,
             "final_answer_correct": final_answer_correct,
             "response_consistent": response_consistent,
-            # Backward-compatible alias. Summary now uses final_answer_correct.
             "correct": final_answer_correct,
+            "canonical_answers": {
+                "perceived_answer": perceived,
+                "reasoned_answer": reasoned,
+                "answer": final_answer,
+            },
             "model_output": parsed,
         }
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
@@ -215,6 +250,7 @@ def run_probe(
             "modality": probe.modality,
             "question": probe.question,
             "expected_answer": probe.expected_answer,
+            "answer_choices": list(probe.answer_choices),
             "images": [str(path) for path in probe.images],
             "notes": probe.notes,
             "ok": False,
@@ -296,6 +332,7 @@ def write_outputs(results: list[dict[str, Any]], output_dir: Path) -> None:
         )
         writer.writeheader()
         for result in results:
+            canonical = result.get("canonical_answers") or {}
             output = result.get("model_output") or {}
             writer.writerow(
                 {
@@ -305,9 +342,9 @@ def write_outputs(results: list[dict[str, Any]], output_dir: Path) -> None:
                     "modality": result["modality"],
                     "question": result["question"],
                     "expected_answer": json.dumps(result.get("expected_answer"), ensure_ascii=False),
-                    "perceived_answer": json.dumps(output.get("perceived_answer"), ensure_ascii=False),
-                    "reasoned_answer": json.dumps(output.get("reasoned_answer"), ensure_ascii=False),
-                    "final_answer": json.dumps(output.get("answer"), ensure_ascii=False),
+                    "perceived_answer": json.dumps(canonical.get("perceived_answer"), ensure_ascii=False),
+                    "reasoned_answer": json.dumps(canonical.get("reasoned_answer"), ensure_ascii=False),
+                    "final_answer": json.dumps(canonical.get("answer"), ensure_ascii=False),
                     "perception_correct": result.get("perception_correct"),
                     "reasoning_correct": result.get("reasoning_correct"),
                     "final_answer_correct": result.get("final_answer_correct"),
