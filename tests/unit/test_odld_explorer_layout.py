@@ -13,6 +13,7 @@ import add_gt_authoring_to_tagged_explorers as gt_authoring_explorer  # noqa: E4
 import add_bev_lane_poc_overlay_to_explorer as bev_lane_overlay  # noqa: E402
 import add_lanelet2_poc_overlay_to_explorer as lanelet2_overlay  # noqa: E402
 import generate_odld_dataset_explorers_w_scenario_tag as odld_explorer  # noqa: E402
+import generate_odld_dataset_explorers_w_frame_scenario_tag as frame_odld_explorer  # noqa: E402
 
 
 def minimal_explorer_data() -> dict:
@@ -26,6 +27,8 @@ def minimal_explorer_data() -> dict:
             "classCounts": {},
         },
         "trajectory": {
+            "x": [0.0, 1.0, 2.0],
+            "y": [0.0, 0.0, 0.0],
             "rel_t": [0.0, 0.1, 0.2],
             "speed": [0.0, 0.0, 0.0],
         },
@@ -80,6 +83,7 @@ def test_gt_authoring_index_uses_odld_card_filter_layout(tmp_path: Path) -> None
         "tagScenarios": 1,
         "tagEvents": 2,
         "tagScenarioList": ["stationary"],
+        "objectTagList": [],
         "topClasses": "none",
         "thumbnail": "<svg></svg>",
     }
@@ -100,6 +104,54 @@ def test_gt_authoring_index_uses_odld_card_filter_layout(tmp_path: Path) -> None
     assert 'id="scenarioFilter"' in page
     assert 'class="card"' in page
     assert f"{recording}_animated_odld_explorer_w_gt_authoring.html" in page
+
+
+def test_frame_odld_index_exports_current_filtered_recordings() -> None:
+    rows = [
+        {
+            "recording": "Rec_A",
+            "file": "Rec_A.html",
+            "frames": 3,
+            "duration": 0.2,
+            "objects": 1,
+            "lines": 1,
+            "boundaries": 2,
+            "roadmarks": 3,
+            "tagScenarios": 1,
+            "tagEvents": 2,
+            "tagScenarioList": ["stationary"],
+            "objectTagList": ["pedestrian"],
+            "topClasses": "pedestrian:1",
+            "thumbnail": "<svg></svg>",
+        },
+        {
+            "recording": "Rec_B",
+            "file": "Rec_B.html",
+            "frames": 4,
+            "duration": 0.3,
+            "objects": 2,
+            "lines": 1,
+            "boundaries": 2,
+            "roadmarks": 3,
+            "tagScenarios": 1,
+            "tagEvents": 1,
+            "tagScenarioList": ["changing_lane"],
+            "objectTagList": ["vehicle"],
+            "topClasses": "vehicle:1",
+            "thumbnail": "<svg></svg>",
+        },
+    ]
+
+    page = frame_odld_explorer.index_html(rows)
+
+    assert 'id="exportRecordings"' in page
+    assert page.index('id="resultCount"') < page.index('id="exportRecordings"')
+    assert "function filteredIndexRows()" in page
+    assert "function exportFilteredRecordings()" in page
+    assert "filteredIndexRows().map(row => String(row.recording))" in page
+    assert "new Blob([text], {type: 'text/plain;charset=utf-8'})" in page
+    assert "recordings.join('\\n')" in page
+    assert "link.download = `${safeName}.txt`;" in page
 
 
 def test_gt_authoring_selective_regeneration_keeps_full_existing_index(
@@ -134,6 +186,7 @@ def test_gt_authoring_selective_regeneration_keeps_full_existing_index(
                 "tagScenarios": 1,
                 "tagEvents": 1,
                 "tagScenarioList": ["stationary"],
+                "objectTagList": [],
                 "topClasses": "none",
                 "thumbnail": "<svg></svg>",
             }

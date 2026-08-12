@@ -2490,7 +2490,7 @@ def index_html(rows: list[dict]) -> str:
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>OD + LD + Ego Trajectory Explorers</title>
 <style>
-body{{margin:0;font-family:Arial,sans-serif;background:#eef2f6;color:#17202a}}header{{padding:20px 28px 18px;background:#17324d;color:white}}header h1{{margin:0 0 5px;font-size:22px;font-weight:700}}header p{{margin:0;opacity:.84;font-size:13px}}.toolbar{{position:sticky;top:0;z-index:5;background:#f8fafc;border-bottom:1px solid #cbd5e1;padding:14px 22px 12px;box-shadow:0 6px 18px rgba(15,23,42,.06)}}.controlRow{{display:grid;grid-template-columns:minmax(260px,2fr) minmax(110px,.7fr) minmax(130px,.8fr) minmax(150px,1fr) minmax(130px,.8fr) auto auto;gap:10px;align-items:end}}label{{display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase}}input,select{{height:34px;border:1px solid #cbd5e1;border-radius:6px;background:white;color:#17202a;padding:0 9px;font-size:13px}}button{{height:34px;border:1px solid #94a3b8;border-radius:6px;background:#ffffff;color:#334155;padding:0 12px;font-size:13px;cursor:pointer}}button:hover{{border-color:#2563eb;color:#1d4ed8}}.count{{font-size:13px;color:#334155;white-space:nowrap;padding-bottom:9px}}.scenarioPanel{{margin-top:11px;border:1px solid #d7dee8;border-radius:8px;background:white}}.scenarioHeader{{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-bottom:1px solid #e2e8f0;color:#475569;font-size:12px}}.scenarioHeader strong{{color:#334155}}.scenarioChoices{{max-height:82px;overflow:auto;padding:8px;display:flex;gap:6px;flex-wrap:wrap;align-content:flex-start}}.scenarioChoice{{display:flex;align-items:center;gap:5px;border:1px solid #cbd5e1;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:400;color:#17202a;text-transform:none;white-space:nowrap;background:#f8fafc}}.scenarioChoice:has(input:checked){{background:#dbeafe;border-color:#60a5fa;color:#1e3a8a}}.scenarioChoice input{{width:13px;height:13px;padding:0;margin:0}}main{{padding:18px 22px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}}.card{{display:block;background:white;border:1px solid #d7dee8;border-radius:8px;padding:12px;text-decoration:none;color:inherit;box-shadow:0 1px 4px rgba(15,23,42,.05)}}.card:hover{{border-color:#2563eb;box-shadow:0 5px 16px rgba(37,99,235,.12)}}h2{{font-size:15px;margin:9px 0 8px;overflow-wrap:anywhere;line-height:1.25}}.route{{height:96px;background:#f8fafc;border-radius:6px;overflow:hidden;border:1px solid #eef2f7}}.route svg{{width:100%;height:100%}}.metrics{{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}}.metrics span{{background:#edf2f7;border-radius:999px;padding:3px 7px;font-size:11px;color:#334155}}p{{font-size:12px;color:#64748b;line-height:1.4;margin:8px 0 0}}.empty{{padding:28px;color:#64748b}}@media (max-width:1060px){{.controlRow{{grid-template-columns:1fr 1fr 1fr}}.count{{padding-bottom:0}}}}@media (max-width:680px){{header{{padding:16px}}.toolbar{{padding:12px}}.controlRow{{grid-template-columns:1fr}}main{{grid-template-columns:1fr;padding:12px}}}}
+body{{margin:0;font-family:Arial,sans-serif;background:#eef2f6;color:#17202a}}header{{padding:20px 28px 18px;background:#17324d;color:white}}header h1{{margin:0 0 5px;font-size:22px;font-weight:700}}header p{{margin:0;opacity:.84;font-size:13px}}.toolbar{{position:sticky;top:0;z-index:5;background:#f8fafc;border-bottom:1px solid #cbd5e1;padding:14px 22px 12px;box-shadow:0 6px 18px rgba(15,23,42,.06)}}.controlRow{{display:grid;grid-template-columns:minmax(260px,2fr) minmax(110px,.7fr) minmax(130px,.8fr) minmax(150px,1fr) minmax(130px,.8fr) minmax(128px,auto) auto auto;gap:10px;align-items:end}}label{{display:grid;gap:5px;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase}}input,select{{height:34px;border:1px solid #cbd5e1;border-radius:6px;background:white;color:#17202a;padding:0 9px;font-size:13px}}button{{height:34px;border:1px solid #94a3b8;border-radius:6px;background:#ffffff;color:#334155;padding:0 12px;font-size:13px;cursor:pointer;white-space:nowrap}}button:hover{{border-color:#2563eb;color:#1d4ed8}}.count{{height:34px;display:flex;align-items:center;font-size:13px;color:#334155;white-space:nowrap}}.scenarioPanel{{margin-top:11px;border:1px solid #d7dee8;border-radius:8px;background:white}}.scenarioHeader{{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-bottom:1px solid #e2e8f0;color:#475569;font-size:12px}}.scenarioHeader strong{{color:#334155}}.scenarioChoices{{max-height:82px;overflow:auto;padding:8px;display:flex;gap:6px;flex-wrap:wrap;align-content:flex-start}}.scenarioChoice{{display:flex;align-items:center;gap:5px;border:1px solid #cbd5e1;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:400;color:#17202a;text-transform:none;white-space:nowrap;background:#f8fafc}}.scenarioChoice:has(input:checked){{background:#dbeafe;border-color:#60a5fa;color:#1e3a8a}}.scenarioChoice input{{width:13px;height:13px;padding:0;margin:0}}main{{padding:18px 22px 24px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}}.card{{display:block;background:white;border:1px solid #d7dee8;border-radius:8px;padding:12px;text-decoration:none;color:inherit;box-shadow:0 1px 4px rgba(15,23,42,.05)}}.card:hover{{border-color:#2563eb;box-shadow:0 5px 16px rgba(37,99,235,.12)}}h2{{font-size:15px;margin:9px 0 8px;overflow-wrap:anywhere;line-height:1.25}}.route{{height:96px;background:#f8fafc;border-radius:6px;overflow:hidden;border:1px solid #eef2f7}}.route svg{{width:100%;height:100%}}.metrics{{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}}.metrics span{{background:#edf2f7;border-radius:999px;padding:3px 7px;font-size:11px;color:#334155}}p{{font-size:12px;color:#64748b;line-height:1.4;margin:8px 0 0}}.empty{{padding:28px;color:#64748b}}@media (max-width:1180px){{.controlRow{{grid-template-columns:1fr 1fr 1fr 1fr}}}}@media (max-width:680px){{header{{padding:16px}}.toolbar{{padding:12px}}.controlRow{{grid-template-columns:1fr}}main{{grid-template-columns:1fr;padding:12px}}}}
 </style></head><body><header><h1>OD + LD + Ego Trajectory Explorers</h1><p>Synchronized scene viewers with OD tracks, complete LD map layers, scenario-tag intervals, frame-local context, playback, timelines, and notes.</p></header>
 <section class="toolbar">
   <div class="controlRow">
@@ -2499,8 +2499,9 @@ body{{margin:0;font-family:Arial,sans-serif;background:#eef2f6;color:#17202a}}he
     <label>Min tag events<input id="minTagEventsFilter" type="number" min="0" step="1"></label>
     <label>Sort<select id="sortField"><option value="recording">Recording</option><option value="frames">Frames</option><option value="duration">Duration</option><option value="objects">Objects</option><option value="tagEvents">Tag intervals</option><option value="tagScenarios">Tagged scenarios</option></select></label>
     <label>Order<select id="sortDirection"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
-    <button id="clearFilters" type="button">Clear</button>
     <div id="resultCount" class="count"></div>
+    <button id="clearFilters" type="button">Clear</button>
+    <button id="exportRecordings" type="button">Export recordings</button>
   </div>
   <div class="scenarioPanel">
     <div class="scenarioHeader"><strong>Scenario tags</strong><span>matches all selected</span></div>
@@ -2534,7 +2535,7 @@ function cardHtml(row) {{
   <p>${{escapeHtml(row.topClasses)}}</p>
 </a>`;
 }}
-function applyIndexFilters() {{
+function filteredIndexRows() {{
   const query = document.getElementById('recordingSearch').value.trim().toLowerCase();
   const selectedScenarios = [...document.querySelectorAll('#scenarioFilter input:checked')].map(input => input.value);
   const selectedObjects = [...document.querySelectorAll('#objectFilter input:checked')].map(input => input.value);
@@ -2555,11 +2556,33 @@ function applyIndexFilters() {{
     if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * direction;
     return String(av).localeCompare(String(bv), undefined, {{numeric: true}}) * direction;
   }});
+}}
+function applyIndexFilters() {{
+  const filtered = filteredIndexRows();
   grid.innerHTML = filtered.length ? filtered.map(cardHtml).join('') : '<div class="empty">No matching recordings</div>';
   count.textContent = `${{filtered.length}} / ${{INDEX_ROWS.length}} recordings`;
 }}
+function exportFilteredRecordings() {{
+  const recordings = [...new Set(filteredIndexRows().map(row => String(row.recording)).filter(Boolean))];
+  const text = recordings.join('\\n') + (recordings.length ? '\\n' : '');
+  const selectedScenarios = [...document.querySelectorAll('#scenarioFilter input:checked')].map(input => input.value);
+  const selectedObjects = [...document.querySelectorAll('#objectFilter input:checked')].map(input => input.value);
+  const parts = ['recordings'];
+  if (selectedScenarios.length) parts.push(selectedScenarios.join('_'));
+  if (selectedObjects.length) parts.push(selectedObjects.join('_'));
+  const safeName = parts.join('_').replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^_+|_+$/g, '') || 'recordings';
+  const url = URL.createObjectURL(new Blob([text], {{type: 'text/plain;charset=utf-8'}}));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${{safeName}}.txt`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}}
 for (const control of controls) control.addEventListener('input', applyIndexFilters);
 for (const control of controls) control.addEventListener('change', applyIndexFilters);
+document.getElementById('exportRecordings').addEventListener('click', exportFilteredRecordings);
 document.getElementById('clearFilters').addEventListener('click', () => {{
   document.getElementById('recordingSearch').value = '';
   document.getElementById('minObjectsFilter').value = '';
