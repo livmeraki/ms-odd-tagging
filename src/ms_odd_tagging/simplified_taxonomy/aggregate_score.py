@@ -28,8 +28,13 @@ def _get(data: dict[str, Any], *parts: str) -> Any:
     return cur
 
 
-def _scenario_set(tags: dict[str, Any]) -> set[str]:
-    """Convert the simplified taxonomy into positive, human-readable scenario labels."""
+def _simplified_scenario_set(tags: dict[str, Any]) -> set[str]:
+    """Flatten simplified-taxonomy tags into comparable scenario labels.
+
+    This intentionally accepts only the simplified tag object. Raw detector
+    scenario_tags are never used for F1 comparison, so prediction and GT are
+    evaluated in the same simplified scenario space.
+    """
     if not isinstance(tags, dict):
         return set()
 
@@ -116,17 +121,19 @@ def _scenario_and_frame_review(rows: list[dict[str, Any]]) -> tuple[dict[str, An
     for row in rows:
         gt = row.get("gt") if isinstance(row.get("gt"), dict) else {}
         pred = row.get("prediction") if isinstance(row.get("prediction"), dict) else {}
-        gt_scenarios = _scenario_set(gt)
-        detected = _scenario_set(pred)
-        both = gt_scenarios & detected
-        fp = detected - gt_scenarios
-        fn = gt_scenarios - detected
 
-        all_scenarios = gt_scenarios | detected
+        # Both sides are flattened from the same simplified taxonomy.
+        gt_scenarios = _simplified_scenario_set(gt)
+        detected_scenarios = _simplified_scenario_set(pred)
+        both = gt_scenarios & detected_scenarios
+        fp = detected_scenarios - gt_scenarios
+        fn = gt_scenarios - detected_scenarios
+
+        all_scenarios = gt_scenarios | detected_scenarios
         for scenario in all_scenarios:
             counts = scenario_counts.setdefault(scenario, Counter())
             in_gt = scenario in gt_scenarios
-            in_pred = scenario in detected
+            in_pred = scenario in detected_scenarios
             if in_gt and in_pred:
                 counts["tp"] += 1
             elif in_pred:
@@ -147,8 +154,8 @@ def _scenario_and_frame_review(rows: list[dict[str, Any]]) -> tuple[dict[str, An
             "recording_id": row.get("recording_id"),
             "frame_index": row.get("frame_index"),
             "timestamp": row.get("timestamp"),
-            "gt_scenarios": sorted(gt_scenarios),
-            "detected_scenarios": sorted(detected),
+            "gt_simplified_scenarios": sorted(gt_scenarios),
+            "detected_simplified_scenarios": sorted(detected_scenarios),
             "overlap_tp": sorted(both),
             "detected_only_fp": sorted(fp),
             "gt_only_fn": sorted(fn),
@@ -161,6 +168,7 @@ def _scenario_and_frame_review(rows: list[dict[str, Any]]) -> tuple[dict[str, An
         for name, counts in sorted(scenario_counts.items())
     }
     summary = {
+        "comparison_space": "simplified taxonomy scenarios on both GT and detection",
         "frames": len(frame_review),
         "exact_match_frames": exact,
         "frames_with_any_overlap": overlap,
@@ -185,15 +193,21 @@ def _write_review_csvs(review_dir: Path, scenario_report: dict[str, Any], frame_
             writer.writerow({"scenario": scenario, **metric})
 
     fields = [
-        "recording_id", "frame_index", "timestamp", "gt_scenarios", "detected_scenarios",
-        "overlap_tp", "detected_only_fp", "gt_only_fn", "exact_match", "has_overlap",
+        "recording_id", "frame_index", "timestamp", "gt_simplified_scenarios",
+        "detected_simplified_scenarios", "overlap_tp", "detected_only_fp", "gt_only_fn",
+        "exact_match", "has_overlap",
     ]
+    list_fields = (
+        "gt_simplified_scenarios", "detected_simplified_scenarios", "overlap_tp",
+        "detected_only_fp", "gt_only_fn",
+    )
+
     with (review_dir / "frame_review.csv").open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=fields)
         writer.writeheader()
         for row in frame_review:
             out = dict(row)
-            for key in ("gt_scenarios", "detected_scenarios", "overlap_tp", "detected_only_fp", "gt_only_fn"):
+            for key in list_fields:
                 out[key] = " | ".join(out[key])
             writer.writerow(out)
 
@@ -204,7 +218,7 @@ def _write_review_csvs(review_dir: Path, scenario_report: dict[str, Any], frame_
             if not row["has_overlap"]:
                 continue
             out = dict(row)
-            for key in ("gt_scenarios", "detected_scenarios", "overlap_tp", "detected_only_fp", "gt_only_fn"):
+            for key in list_fields:
                 out[key] = " | ".join(out[key])
             writer.writerow(out)
 
@@ -215,7 +229,7 @@ def _write_review_csvs(review_dir: Path, scenario_report: dict[str, Any], frame_
             if row["exact_match"]:
                 continue
             out = dict(row)
-            for key in ("gt_scenarios", "detected_scenarios", "overlap_tp", "detected_only_fp", "gt_only_fn"):
+            for key in list_fields:
                 out[key] = " | ".join(out[key])
             writer.writerow(out)
 
@@ -283,6 +297,7 @@ def aggregate_finished_gt(
     scored_recordings = sum(1 for item in recordings if item.get("status") == "scored")
     report.update({
         "aggregation": "all reviewed frames pooled before metric computation",
+        "scenario_comparison_space": "simplified taxonomy on both GT and detection; raw scenario_tags excluded",
         "finished_only": finished_only,
         "gt_files_found": len(gt_files),
         "scored_recordings": scored_recordings,
@@ -309,7 +324,7 @@ def parse_args() -> argparse.Namespace:
         "--review-dir",
         type=Path,
         default=Path("outputs/06_gt_comparison/f1_review"),
-        help="Write scenario_f1.csv, frame_review.csv, overlap_frames.csv, and error_frames.csv.",
+        help="Write simplified scenario_f1.csv, frame_review.csv, overlap_frames.csv, and error_frames.csv.",
     )
     parser.add_argument("--include-unfinished", action="store_true", help="Also score GT files not explicitly marked gt_finished=true.")
     return parser.parse_args()
@@ -335,6 +350,7 @@ def main() -> int:
     print(f"Micro recall: {micro['recall']:.4f}")
     print(f"Micro F1: {micro['f1']:.4f}")
     print(f"Macro F1: {report['macro_f1']:.4f}")
+    print(f"Scenario F1 comparison: simplified GT vs simplified detection")
     print(f"Scenario classes: {len(report['scenario_f1'])}")
     print(f"Exact-match frames: {review['exact_match_frames']}/{review['frames']} ({review['exact_match_rate']:.4f})")
     print(f"Frames with detected/GT overlap: {review['frames_with_any_overlap']}/{review['frames']} ({review['any_overlap_rate']:.4f})")
