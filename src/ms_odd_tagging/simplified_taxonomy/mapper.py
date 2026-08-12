@@ -17,11 +17,11 @@ INTERACTION_TAGS = {
 }
 
 LANE_FOLLOW_SCENARIOS = {
-    # Current rule-based detector output.
-    "following_lane_with_slow_lead",
-    # Legacy/compatibility labels accepted by older exports.
+    # Direct following-lane detector outputs.
     "following_lane_with_lead",
     "following_lane_without_lead",
+    # Traffic-interaction label that also establishes lane following.
+    "following_lane_with_slow_lead",
 }
 
 LANE_CHANGE_SCENARIOS = {
@@ -31,16 +31,6 @@ LANE_CHANGE_SCENARIOS = {
 }
 
 TURN_SCENARIOS = {"starting_left_turn", "starting_right_turn"}
-
-DRIVING_EVIDENCE_SCENARIOS = {
-    "stationary",
-    "low_magnitude_speed",
-    "medium_magnitude_speed",
-    "high_magnitude_speed",
-    "stopping_with_lead",
-    "stopping_without_lead",
-    *LANE_FOLLOW_SCENARIOS,
-}
 
 KNOWN_SCENARIOS = {
     "stationary",
@@ -64,10 +54,9 @@ KNOWN_SCENARIOS = {
 def map_scenario_labels(labels: Iterable[str]) -> SimplifiedFrameTags:
     """Map detector labels into the simplified frame taxonomy.
 
-    Maneuver mapping is intentionally closed and priority-based:
-    U-turn > turn > lane change > lane keeping. Lane keeping is the normal
-    road-driving fallback whenever the ego has motion/driving evidence and no
-    explicit lateral maneuver is active.
+    Maneuver priority is U-turn > turn > lane change > lane keeping.
+    Lane keeping is emitted only when an explicit following-lane label is
+    present; ordinary motion/speed labels are not treated as lane evidence.
 
     The trail relation is intentionally not mapped because no supported trail
     detector is currently part of the simplified evaluation.
@@ -115,13 +104,11 @@ def map_scenario_labels(labels: Iterable[str]) -> SimplifiedFrameTags:
             out.ego_maneuver.direction = "left"
         elif "changing_lane_to_right" in label_set:
             out.ego_maneuver.direction = "right"
-    elif label_set & DRIVING_EVIDENCE_SCENARIOS:
-        # Simplified semantics: ordinary road driving with no active lateral
-        # maneuver is lane keeping, even when a physical lane ID is unavailable.
+    elif label_set & LANE_FOLLOW_SCENARIOS:
         out.ego_maneuver.type = "lane_keeping"
         out.ego_maneuver.direction = "straight"
 
-    # Lead relation. The current detector emits following_lane_with_slow_lead.
+    # Lead relation.
     if label_set & {
         "following_lane_with_slow_lead",
         "following_lane_with_lead",
