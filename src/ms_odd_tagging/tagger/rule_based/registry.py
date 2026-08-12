@@ -93,6 +93,14 @@ def validate_config(config: dict[str, Any]) -> None:
         "maximum_missing_gap_s",
         "maximum_temporary_lane_id_inconsistency_s",
         "minimum_event_duration_s",
+        "minimum_center_motion_m",
+        "minimum_boundary_crossing_angle_deg",
+        "boundary_endpoint_margin_m",
+        "maximum_crossing_to_lane_transition_s",
+        "crossing_confirmation_s",
+        "minimum_post_crossing_distance_m",
+        "pre_crossing_event_s",
+        "minimum_crossing_separation_s",
         "minimum_topology_confidence",
         "minimum_geometry_confidence",
         "topology_entry_tolerance_m",
@@ -544,6 +552,71 @@ def detect_recording_events(
         from ms_odd_tagging.scenarios.following_lane.detector import run_following_lane
 
         following = run_following_lane(recording)
+        lane_geometry_by_id = {
+            lane.get("lane_id"): lane
+            for lane in following.get("lane_geometry", [])
+            if lane.get("lane_id") is not None
+        }
+        source_frame_by_index = {
+            frame.get("frame_index"): frame
+            for frame in recording.get("frames", [])
+            if frame.get("frame_index") is not None
+        }
+
+        def lane_boundary_context(frame: dict[str, Any]) -> dict[str, Any]:
+            ego_lane = frame.get("ego_lane") or {}
+            geometry = lane_geometry_by_id.get(ego_lane.get("lane_id")) or {}
+            source = source_frame_by_index.get(frame["frame_index"], {})
+            nearby_ids = (
+                ((source.get("ld") or {}).get("nearby_feature_ids") or {}).get(
+                    "lanes", []
+                )
+                or []
+            )
+            candidate_ids = list(dict.fromkeys([
+                ego_lane.get("lane_id"),
+                (frame.get("left_lane") or {}).get("lane_id"),
+                (frame.get("right_lane") or {}).get("lane_id"),
+                *nearby_ids,
+            ]))
+            candidate_boundaries = []
+            seen = set()
+            for lane_id in candidate_ids:
+                lane = lane_geometry_by_id.get(str(lane_id))
+                if not lane:
+                    continue
+                for side in ("left", "right"):
+                    boundary = {
+                        "lane_id": lane.get("lane_id"),
+                        "side": side,
+                        "edge_id": lane.get(f"{side}_edge_id"),
+                        "points_lcs_m": lane.get(f"{side}_boundary_lcs_m") or [],
+                        "attributes": lane.get(f"{side}_boundary_attributes") or {},
+                    }
+                    key = (
+                        boundary["edge_id"],
+                        tuple(tuple(point[:2]) for point in boundary["points_lcs_m"]),
+                    )
+                    if key not in seen:
+                        seen.add(key)
+                        candidate_boundaries.append(boundary)
+            return {
+                "physical_lane_id": ego_lane.get("lane_id"),
+                "left_physical_lane_id": (frame.get("left_lane") or {}).get("lane_id"),
+                "right_physical_lane_id": (frame.get("right_lane") or {}).get("lane_id"),
+                "left_boundary": {
+                    "edge_id": geometry.get("left_edge_id"),
+                    "points_lcs_m": geometry.get("left_boundary_lcs_m") or [],
+                    "attributes": geometry.get("left_boundary_attributes") or {},
+                },
+                "right_boundary": {
+                    "edge_id": geometry.get("right_edge_id"),
+                    "points_lcs_m": geometry.get("right_boundary_lcs_m") or [],
+                    "attributes": geometry.get("right_boundary_attributes") or {},
+                },
+                "candidate_boundaries": candidate_boundaries,
+            }
+
         frame_context = {
             frame["frame_index"]: {
                 "logical_lane_id": (frame.get("ego_lane") or {}).get("logical_lane_id"),
@@ -553,6 +626,7 @@ def detect_recording_events(
                 "right_logical_lane_id": (frame.get("right_lane") or {}).get(
                     "logical_lane_id"
                 ),
+                **lane_boundary_context(frame),
             }
             for frame in following.get("frames", [])
         }

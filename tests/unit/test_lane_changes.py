@@ -10,7 +10,12 @@ from ms_odd_tagging.tagger.rule_based.registry import (
 )
 
 
-def motion_frames(count: int) -> list[dict]:
+def motion_frames(
+    count: int,
+    crossing_frame: int | None = None,
+    direction: str = "left",
+    return_frame: int | None = None,
+) -> list[dict]:
     return [
         {
             "frame_index": index,
@@ -21,6 +26,17 @@ def motion_frames(count: int) -> list[dict]:
                 "yaw_rate_radps": 0.0,
                 "velocity_lcs_mps": [10.0, 0.0, 0.0],
                 "acceleration_mps2": 0.0,
+                "position_lcs_m": [
+                    float(index),
+                    (4.0 if direction == "left" else -4.0)
+                    if (
+                        crossing_frame is not None
+                        and index >= crossing_frame
+                        and (return_frame is None or index < return_frame)
+                    )
+                    else 0.0,
+                    0.0,
+                ],
             },
         }
         for index in range(count)
@@ -66,6 +82,16 @@ def lane_context(
             "active_topology_subtype": topology_class if index in topology_active_frames else "normal",
             "component_geometry_confidence": topology_confidence if index in topology_active_frames else 0.0,
         }
+        boundary_y = 2.0 if direction == "left" else -2.0
+        item[f"{direction}_boundary"] = {
+            "edge_id": f"{source}-{direction}",
+            "points_lcs_m": [[-100.0, boundary_y], [100.0, boundary_y]],
+            "attributes": {
+                "source_kind": "lane_line",
+                "intersection": index in topology_active_frames,
+                "pattern": "dashed",
+            },
+        }
         if adjacent and lane_id == source:
             item[f"{direction}_logical_lane_id"] = target
         if adjacent and lane_id == target:
@@ -84,6 +110,8 @@ def lane_change_events(
     adjacent: bool = True,
     topology_active_frames: set[int] | None = None,
     topology_class: str = "x-intersection",
+    with_crossing: bool = True,
+    return_frame: int | None = None,
 ) -> list:
     config = deepcopy(load_config())
     config["enabled_scenarios"] = [
@@ -91,8 +119,21 @@ def lane_change_events(
         "changing_lane_to_left",
         "changing_lane_to_right",
     ]
+    target_start = (
+        next(
+            (index for index, lane_id in enumerate(lane_ids) if lane_id == target),
+            None,
+        )
+        if with_crossing
+        else None
+    )
     events, _ = detect_events(
-        motion_frames(len(lane_ids)),
+        motion_frames(
+            len(lane_ids),
+            crossing_frame=target_start,
+            direction=direction,
+            return_frame=return_frame,
+        ),
         config,
         frame_context=lane_context(
             lane_ids,
@@ -126,7 +167,12 @@ def test_stable_lane_following_has_no_lane_change() -> None:
 def test_clean_left_lane_change() -> None:
     events = lane_change_events(["lane-a"] * 15 + ["lane-b"] * 15)
     assert_one_physical_change(events, "left")
-    assert {(event.start_frame, event.end_frame) for event in events} == {(14, 24)}
+    assert {(event.start_frame, event.end_frame) for event in events} == {(10, 20)}
+    evidence = events[0].evidence
+    assert evidence["ultimate_trigger"] == "ego_center_crossed_non_intersection_lane_boundary"
+    assert evidence["crossing_frame"] == 15
+    assert evidence["boundary_edge_id"] == "lane-a-left"
+    assert evidence["crossing_point_lcs_m"] == [14.5, 2.0]
 
 
 def test_clean_right_lane_change() -> None:
@@ -136,9 +182,47 @@ def test_clean_right_lane_change() -> None:
     assert_one_physical_change(events, "right")
 
 
+
+def test_lane_id_switch_without_center_boundary_crossing_is_rejected() -> None:
+    lane_ids = ["lane-a"] * 15 + ["lane-b"] * 15
+    config = deepcopy(load_config())
+    config["enabled_scenarios"] = ["changing_lane"]
+    events, _ = detect_events(
+        motion_frames(len(lane_ids)), config, frame_context=lane_context(lane_ids)
+    )
+    assert events == []
+
+
+def test_intersection_boundary_crossing_is_rejected() -> None:
+    lane_ids = ["lane-a"] * 15 + ["lane-b"] * 15
+    context = lane_context(lane_ids)
+    for item in context.values():
+        item["left_boundary"]["attributes"]["intersection"] = True
+    config = deepcopy(load_config())
+    config["enabled_scenarios"] = ["changing_lane"]
+    events, _ = detect_events(
+        motion_frames(len(lane_ids), crossing_frame=15), config, frame_context=context
+    )
+    assert events == []
+
+
+def test_normalized_road_boundary_crossing_is_rejected() -> None:
+    lane_ids = ["lane-a"] * 15 + ["lane-b"] * 15
+    context = lane_context(lane_ids)
+    for item in context.values():
+        item["left_boundary"]["attributes"]["source_kind"] = "road_boundary"
+    config = deepcopy(load_config())
+    config["enabled_scenarios"] = ["changing_lane"]
+    events, _ = detect_events(
+        motion_frames(len(lane_ids), crossing_frame=15), config, frame_context=context
+    )
+    assert events == []
 def test_one_frame_false_switch_is_rejected() -> None:
     assert (
-        lane_change_events(["lane-a"] * 15 + ["lane-b"] + ["lane-a"] * 15)
+        lane_change_events(
+            ["lane-a"] * 15 + ["lane-b"] + ["lane-a"] * 15,
+            with_crossing=False,
+        )
         == []
     )
 
@@ -150,22 +234,41 @@ def test_missing_lane_detection_frame_does_not_break_valid_change() -> None:
     assert_one_physical_change(events, "left")
 
 
-def test_boundary_crossing_then_return_is_rejected() -> None:
-    assert (
-        lane_change_events(
-            ["lane-a"] * 15 + ["lane-b"] * 5 + ["lane-a"] * 15
-        )
-        == []
+def test_boundary_crossing_then_return_rejects_unconfirmed_direction() -> None:
+    events = lane_change_events(
+        ["lane-a"] * 15 + ["lane-b"] * 5 + ["lane-a"] * 15,
+        return_frame=18,
     )
+    assert "changing_lane_to_left" not in {event.scenario for event in events}
+    assert_one_physical_change(events, "right")
 
 
-def test_non_adjacent_lane_jump_is_rejected() -> None:
-    assert (
-        lane_change_events(
-            ["lane-a"] * 15 + ["lane-b"] * 15, adjacent=False
-        )
-        == []
+def test_center_crossing_does_not_require_adjacent_lane_id() -> None:
+    events = lane_change_events(
+        ["lane-a"] * 15 + ["lane-b"] * 15, adjacent=False
     )
+    assert_one_physical_change(events, "left")
+
+
+def test_duplicate_boundary_candidates_are_deterministic() -> None:
+    lane_ids = ["lane-a"] * 15 + ["lane-b"] * 15
+    context = lane_context(lane_ids)
+    for index, item in context.items():
+        item["physical_lane_id"] = lane_ids[index]
+        boundary = {
+            **deepcopy(item["left_boundary"]),
+            "lane_id": lane_ids[index],
+            "side": "left",
+        }
+        item["candidate_boundaries"] = [boundary, deepcopy(boundary)]
+    config = deepcopy(load_config())
+    config["enabled_scenarios"] = ["changing_lane", "changing_lane_to_left"]
+    events, _ = detect_events(
+        motion_frames(len(lane_ids), crossing_frame=15),
+        config,
+        frame_context=context,
+    )
+    assert_one_physical_change(events, "left")
 
 
 def test_overlapping_windows_do_not_duplicate_recording_event() -> None:
@@ -223,7 +326,7 @@ def test_genuine_lane_change_before_intersection_remains_detectable() -> None:
         topology_active_frames=set(range(32, 40)),
     )
     assert_one_physical_change(events, "left")
-    assert {(event.start_frame, event.end_frame) for event in events} == {(14, 24)}
+    assert {(event.start_frame, event.end_frame) for event in events} == {(10, 20)}
     assert all(event.evidence["lane_change_applicable"] is True for event in events)
 
 
@@ -255,7 +358,7 @@ def test_after_intersection_lane_change_waits_for_lane_stability() -> None:
     assert early_events == []
 
     late_events, _ = detect_events(
-        motion_frames(len(lane_ids)),
+        motion_frames(len(lane_ids), crossing_frame=30),
         config,
         frame_context=lane_context(
             lane_ids,
@@ -266,7 +369,7 @@ def test_after_intersection_lane_change_waits_for_lane_stability() -> None:
         ),
     )
     assert_one_physical_change(late_events, "left")
-    assert {(event.start_frame, event.end_frame) for event in late_events} == {(29, 39)}
+    assert {(event.start_frame, event.end_frame) for event in late_events} == {(25, 35)}
 
 
 def test_suppressed_lane_change_debug_fields_are_reported() -> None:

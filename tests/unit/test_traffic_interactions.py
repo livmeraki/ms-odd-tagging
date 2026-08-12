@@ -43,7 +43,7 @@ def _object(
     }
 
 
-def _frames(speeds, objects_by_frame, *, accelerations=None):
+def _frames(speeds, objects_by_frame, *, accelerations=None, crossing_frame=None):
     accelerations = accelerations or [0.0] * len(speeds)
     frames = []
     for index, speed in enumerate(speeds):
@@ -52,7 +52,7 @@ def _frames(speeds, objects_by_frame, *, accelerations=None):
                 "frame_index": index,
                 "time_since_start_s": round(index * 0.1, 6),
                 "ego": {
-                    "position_lcs_m": [0.0, 0.0, 0.0],
+                    "position_lcs_m": [0.0, 0.3 if crossing_frame is not None and index >= crossing_frame else 0.0, 0.0],
                     "heading_lcs_rad": 0.0,
                     "speed_mps": speed,
                     "acceleration_mps2": accelerations[index],
@@ -107,6 +107,11 @@ def _lane_context(lanes, *, direction="left"):
             "distance_to_topology_polygon_m": 5.0,
             "topology_confidence": 0.0,
             "active_is_intersection": False,
+            "left_boundary": {
+                "edge_id": "lane-a-left",
+                "points_lcs_m": [[-100.0, 0.1], [100.0, 0.1]],
+                "attributes": {"source_kind": "lane_line", "intersection": False},
+            },
             "component_geometry_confidence": 0.0,
         }
         result[index] = item
@@ -191,11 +196,11 @@ def test_lane_change_with_lead_uses_target_lane_not_current_lane():
     target_lead = _object("lead", "car", 12.0, 3.5, velocity=(9.0, 0.0))
     current_lead = _object("current", "car", 10.0, 0.0, velocity=(9.0, 0.0))
     lane_ids = ["lane-a"] * 15 + ["lane-b"] * 15
-    frames = _frames([10.0] * 30, _repeat([target_lead], 30))
+    frames = _frames([10.0] * 30, _repeat([target_lead], 30), crossing_frame=15)
     events = _events(frames, frame_context=_lane_context(lane_ids))
     assert _scenario(events, "changing_lane_with_lead")
 
-    frames = _frames([10.0] * 30, _repeat([current_lead], 30))
+    frames = _frames([10.0] * 30, _repeat([current_lead], 30), crossing_frame=15)
     assert not _scenario(_events(frames, frame_context=_lane_context(lane_ids)), "changing_lane_with_lead")
 
 
@@ -203,9 +208,9 @@ def test_lane_change_with_trail_distinguishes_rear_target_lane_from_side_vehicle
     trail = _object("trail", "car", -8.0, 3.5, velocity=(12.0, 0.0))
     side = _object("side", "car", 0.0, 3.5, velocity=(10.0, 0.0))
     lane_ids = ["lane-a"] * 15 + ["lane-b"] * 15
-    events = _events(_frames([10.0] * 30, _repeat([trail], 30)), frame_context=_lane_context(lane_ids))
+    events = _events(_frames([10.0] * 30, _repeat([trail], 30), crossing_frame=15), frame_context=_lane_context(lane_ids))
     assert _scenario(events, "changing_lane_with_trail")
-    assert not _scenario(_events(_frames([10.0] * 30, _repeat([side], 30)), frame_context=_lane_context(lane_ids)), "changing_lane_with_trail")
+    assert not _scenario(_events(_frames([10.0] * 30, _repeat([side], 30), crossing_frame=15), frame_context=_lane_context(lane_ids)), "changing_lane_with_trail")
 
 
 def test_stopping_with_lead_and_without_lead_are_mutually_exclusive():

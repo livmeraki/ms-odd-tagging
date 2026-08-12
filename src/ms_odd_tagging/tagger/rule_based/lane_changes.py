@@ -16,6 +16,100 @@ INTERSECTION_TOPOLOGY_CLASSES = frozenset(
 )
 
 
+def _finite_point(value: Any) -> tuple[float, float] | None:
+    if (
+        not isinstance(value, (list, tuple))
+        or len(value) < 2
+        or not all(
+            isinstance(item, (int, float)) and math.isfinite(item)
+            for item in value[:2]
+        )
+    ):
+        return None
+    return float(value[0]), float(value[1])
+
+
+def _cross(a: tuple[float, float], b: tuple[float, float]) -> float:
+    return a[0] * b[1] - a[1] * b[0]
+
+
+def _boundary_crossing(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    boundary: dict[str, Any],
+    rule: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a proper ego-center/path intersection with an eligible boundary."""
+    attributes = boundary.get("attributes") or {}
+    if attributes.get("intersection") is True:
+        return None
+    # A road edge normalized for lane assignment must not become the ultimate
+    # trigger for an ordinary lane change.
+    if attributes.get("source_kind", "lane_line") != "lane_line":
+        return None
+    points = [_finite_point(point) for point in boundary.get("points_lcs_m") or []]
+    points = [point for point in points if point is not None]
+    if len(points) < 2:
+        return None
+
+    motion = (end[0] - start[0], end[1] - start[1])
+    motion_length = math.hypot(*motion)
+    if motion_length + 1e-9 < float(rule["minimum_center_motion_m"]):
+        return None
+    minimum_angle = float(rule["minimum_boundary_crossing_angle_deg"])
+    endpoint_margin = float(rule["boundary_endpoint_margin_m"])
+
+    for segment_index, (first, second) in enumerate(zip(points, points[1:])):
+        edge = (second[0] - first[0], second[1] - first[1])
+        edge_length = math.hypot(*edge)
+        denominator = _cross(motion, edge)
+        if edge_length <= 1e-9 or abs(denominator) <= 1e-9:
+            continue
+        offset = (first[0] - start[0], first[1] - start[1])
+        path_ratio = _cross(offset, edge) / denominator
+        edge_ratio = _cross(offset, motion) / denominator
+        if not (
+            -1e-9 <= path_ratio <= 1.0 + 1e-9
+            and -1e-9 <= edge_ratio <= 1.0 + 1e-9
+        ):
+            continue
+        cosine = max(
+            -1.0,
+            min(
+                1.0,
+                (motion[0] * edge[0] + motion[1] * edge[1])
+                / (motion_length * edge_length),
+            ),
+        )
+        angle = math.degrees(math.acos(cosine))
+        crossing_angle = min(angle, 180.0 - angle)
+        if crossing_angle + 1e-9 < minimum_angle:
+            continue
+        intersection = (
+            start[0] + path_ratio * motion[0],
+            start[1] + path_ratio * motion[1],
+        )
+        if min(
+            math.hypot(intersection[0] - points[0][0], intersection[1] - points[0][1]),
+            math.hypot(intersection[0] - points[-1][0], intersection[1] - points[-1][1]),
+        ) + 1e-9 < endpoint_margin:
+            continue
+        return {
+            "boundary_edge_id": boundary.get("edge_id"),
+            "boundary_segment_index": segment_index,
+            "crossing_point_lcs_m": [round(intersection[0], 3), round(intersection[1], 3)],
+            "crossing_angle_deg": round(crossing_angle, 2),
+            "boundary_attributes": dict(attributes),
+            "geometric_direction": (
+                "left" if _cross(edge, motion) > 0 else "right"
+            ),
+            "boundary_segment_lcs_m": [
+                [first[0], first[1]], [second[0], second[1]]
+            ],
+        }
+    return None
+
+
 class LaneChangeDetector:
     """Confirm stable transitions between adjacent logical route lanes."""
 
@@ -30,6 +124,183 @@ class LaneChangeDetector:
     )
 
     def detect(
+        self,
+        frames: list[dict[str, Any]],
+        features: EgoMotionFeatures,
+        config: dict[str, Any],
+        frame_context: dict[int, dict[str, Any]] | None = None,
+    ) -> list[ScenarioEvent]:
+        """Detect lane changes from center crossings, independent of lane-ID switches."""
+        if not frames or not frame_context:
+            self.debug_evaluations = []
+            return []
+
+        rule = config["lane_change_detection"]
+        timestamps = features.timestamp_s
+        frame_indexes = features.frame_index
+        contexts = [
+            {**frames[index], **frame_context.get(frame_index, {})}
+            for index, frame_index in enumerate(frame_indexes)
+        ]
+        logical_lanes = [context.get("logical_lane_id") for context in contexts]
+        applicability = self._lane_change_applicability(
+            contexts, logical_lanes, rule, features
+        )
+        self.debug_evaluations = [
+            {"frame_index": frame_index, **item, "boundary_crossing_candidates": []}
+            for frame_index, item in zip(frame_indexes, applicability)
+        ]
+
+        def ego_position(index: int) -> tuple[float, float] | None:
+            return _finite_point(
+                (contexts[index].get("ego") or {}).get("position_lcs_m")
+            )
+
+        def signed_line_distance(
+            point: tuple[float, float], segment: list[list[float]]
+        ) -> float | None:
+            if len(segment) != 2:
+                return None
+            first, second = segment
+            edge = (second[0] - first[0], second[1] - first[1])
+            length = math.hypot(*edge)
+            if length <= 1e-9:
+                return None
+            offset = (point[0] - first[0], point[1] - first[1])
+            return _cross(edge, offset) / length
+
+        def confirmation_end(
+            crossing_index: int, crossing: dict[str, Any]
+        ) -> tuple[int, float] | None:
+            target_time = timestamps[crossing_index] + float(
+                rule["crossing_confirmation_s"]
+            )
+            end = crossing_index
+            while end < len(contexts) and timestamps[end] + 1e-9 < target_time:
+                if not applicability[end]["lane_change_applicable"]:
+                    return None
+                end += 1
+            if end >= len(contexts) or not applicability[end]["lane_change_applicable"]:
+                return None
+            target = ego_position(end)
+            if target is None:
+                return None
+            distance = signed_line_distance(
+                target, crossing.get("boundary_segment_lcs_m") or []
+            )
+            if distance is None:
+                return None
+            expected_sign = 1.0 if crossing["geometric_direction"] == "left" else -1.0
+            progress = distance * expected_sign
+            if progress + 1e-9 < float(rule["minimum_post_crossing_distance_m"]):
+                return None
+            return end, progress
+
+        events: list[ScenarioEvent] = []
+        physical_id = 0
+        last_event_end = -1
+        last_edge_time: dict[str, float] = {}
+        for index in range(1, len(contexts)):
+            if index <= last_event_end:
+                continue
+            if not all(
+                applicability[item]["lane_change_applicable"]
+                for item in (index - 1, index)
+            ):
+                continue
+            previous = ego_position(index - 1)
+            current = ego_position(index)
+            if previous is None or current is None:
+                continue
+            boundaries = list(contexts[index - 1].get("candidate_boundaries") or [])
+            if not boundaries:
+                for side in ("left", "right"):
+                    boundary = dict(contexts[index - 1].get(f"{side}_boundary") or {})
+                    if boundary:
+                        boundary["side"] = side
+                        boundary["lane_id"] = contexts[index - 1].get("physical_lane_id")
+                        boundaries.append(boundary)
+
+            candidates = []
+            for boundary_index, boundary in enumerate(boundaries):
+                crossing = _boundary_crossing(previous, current, boundary, rule)
+                if crossing is None:
+                    continue
+                edge_key = str(crossing.get("boundary_edge_id") or crossing.get("boundary_segment_lcs_m"))
+                if timestamps[index] - last_edge_time.get(edge_key, -math.inf) < float(rule["minimum_crossing_separation_s"]):
+                    continue
+                confirmed = confirmation_end(index, crossing)
+                self.debug_evaluations[index]["boundary_crossing_candidates"].append({
+                    "boundary_edge_id": crossing.get("boundary_edge_id"),
+                    "boundary_lane_id": boundary.get("lane_id"),
+                    "boundary_side": boundary.get("side"),
+                    "geometric_direction": crossing["geometric_direction"],
+                    "crossing_angle_deg": crossing["crossing_angle_deg"],
+                    "confirmed": confirmed is not None,
+                })
+                if confirmed is None:
+                    continue
+                end, progress = confirmed
+                active_source = boundary.get("lane_id") == contexts[index - 1].get("physical_lane_id")
+                candidates.append(
+                    (
+                        not active_source,
+                        -progress,
+                        edge_key,
+                        boundary_index,
+                        boundary,
+                        crossing,
+                        end,
+                        progress,
+                    )
+                )
+            if not candidates:
+                continue
+            _, _, edge_key, _, boundary, crossing, end, progress = min(candidates)
+            start = index - 1
+            pre_time = timestamps[index] - float(rule["pre_crossing_event_s"])
+            while start > 0 and timestamps[start - 1] + 1e-9 >= pre_time:
+                start -= 1
+
+            direction = crossing["geometric_direction"]
+            physical_id += 1
+            last_event_end = end
+            last_edge_time[edge_key] = timestamps[index]
+            physical_event_id = f"lane-change-{physical_id:04d}"
+            evidence = {
+                "physical_lane_change_event_id": physical_event_id,
+                "ultimate_trigger": "ego_center_crossed_non_intersection_lane_boundary",
+                "direction": direction,
+                "direction_evidence": "signed_motion_across_oriented_boundary",
+                "crossing_frame": frame_indexes[index],
+                "crossing_previous_frame": frame_indexes[index - 1],
+                "boundary_lane_id": boundary.get("lane_id"),
+                "boundary_side": boundary.get("side"),
+                "source_physical_lane_id": contexts[index - 1].get("physical_lane_id"),
+                "target_physical_lane_id": contexts[end].get("physical_lane_id"),
+                "source_logical_lane_id": contexts[index - 1].get("logical_lane_id"),
+                "target_logical_lane_id": contexts[end].get("logical_lane_id"),
+                "post_crossing_distance_m": round(progress, 3),
+                "target_confirmation_frame": frame_indexes[end],
+                "lane_identity_is_confirmation_only": True,
+                "lane_change_applicable": True,
+                "final_decision_reason": "center_boundary_crossing_with_target_side_persistence",
+                **crossing,
+            }
+            for label in ("changing_lane", f"changing_lane_to_{direction}"):
+                events.append(ScenarioEvent(
+                    scenario=label,
+                    start_frame=frame_indexes[start],
+                    end_frame=frame_indexes[end],
+                    start_timestamp_s=timestamps[start],
+                    end_timestamp_s=timestamps[end],
+                    duration_s=round(timestamps[end] - timestamps[start], 6),
+                    detector_version=rule["detector_version"],
+                    evidence=dict(evidence),
+                ))
+        return events
+
+    def _detect_lane_transitions_legacy(
         self,
         frames: list[dict[str, Any]],
         features: EgoMotionFeatures,
@@ -169,6 +440,43 @@ class LaneChangeDetector:
                     return index
             return None
 
+        def find_boundary_crossing(
+            source_start: int,
+            source_end: int,
+            target_start: int,
+            direction: str,
+        ) -> dict[str, Any] | None:
+            boundary = contexts[source_end].get(f"{direction}_boundary") or {}
+            earliest_time = timestamps[target_start] - float(
+                rule["maximum_crossing_to_lane_transition_s"]
+            )
+            first = source_start
+            while first < target_start and timestamps[first] < earliest_time:
+                first += 1
+            for index in range(max(1, first), target_start + 1):
+                if not all(
+                    applicability[item]["lane_change_applicable"]
+                    for item in (index - 1, index)
+                ):
+                    continue
+                previous = _finite_point(
+                    (contexts[index - 1].get("ego") or {}).get("position_lcs_m")
+                )
+                current = _finite_point(
+                    (contexts[index].get("ego") or {}).get("position_lcs_m")
+                )
+                if previous is None or current is None:
+                    continue
+                crossing = _boundary_crossing(previous, current, boundary, rule)
+                if crossing is not None:
+                    return {
+                        **crossing,
+                        "boundary_side": direction,
+                        "crossing_frame": frame_indexes[index],
+                        "crossing_previous_frame": frame_indexes[index - 1],
+                    }
+            return None
+
         events: list[ScenarioEvent] = []
         physical_id = 0
         last_confirmed_end = -1
@@ -212,6 +520,11 @@ class LaneChangeDetector:
             )
             if direction is None:
                 continue
+            crossing = find_boundary_crossing(
+                source_start, source_end, target_start, direction
+            )
+            if crossing is None:
+                continue
             target_end = confirm_target(
                 target_start, source_lane, target_lane, source_end
             )
@@ -227,6 +540,8 @@ class LaneChangeDetector:
                 "target_logical_lane_id": target_lane,
                 "direction": direction,
                 "direction_evidence": f"target_is_source_{direction}_adjacent_lane",
+                "ultimate_trigger": "ego_center_crossed_non_intersection_source_boundary",
+                **crossing,
                 "transition_frame": frame_indexes[target_start],
                 "source_stable_start_frame": frame_indexes[source_start],
                 "target_stable_end_frame": frame_indexes[target_end],
@@ -252,7 +567,7 @@ class LaneChangeDetector:
                 ],
                 "turn_candidate": None,
                 "accumulated_yaw_change_deg": None,
-                "final_decision_reason": "stable_adjacent_lane_transition_on_continuing_road",
+                "final_decision_reason": "ego_center_boundary_crossing_confirmed_by_stable_adjacent_lane_transition",
                 "stable_source_duration_s": rule["stable_source_duration_s"],
                 "stable_target_duration_s": rule["stable_target_duration_s"],
                 "maximum_missing_gap_s": rule["maximum_missing_gap_s"],
@@ -260,6 +575,9 @@ class LaneChangeDetector:
                     "maximum_temporary_lane_id_inconsistency_s"
                 ],
                 "minimum_event_duration_s": rule["minimum_event_duration_s"],
+                "maximum_crossing_to_lane_transition_s": rule[
+                    "maximum_crossing_to_lane_transition_s"
+                ],
                 "boundary_convention": "inclusive_observed_frames",
                 "threshold_provenance": rule["provenance"],
             }
