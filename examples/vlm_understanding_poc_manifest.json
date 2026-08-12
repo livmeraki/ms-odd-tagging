@@ -1,4 +1,7 @@
 {
+  "variables": {
+    "BEV_ROOT": "/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data/outputs/frame_input_tmp/Rec_Drv_GER_MACHET18_20260422_101126"
+  },
   "probes": [
     {
       "probe_id": "bev-symbol-ego-001",
@@ -8,11 +11,10 @@
       "question": "What does the green rectangle with the triangular nose represent?",
       "expected_answer": "ego vehicle",
       "answer_choices": ["ego vehicle", "unknown"],
-      "images": ["/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data/outputs/frame_input_tmp/Rec_Drv_GER_MACHET18_20260422_101126/frame_000401/bev_revised.png"],
+      "images": ["${BEV_ROOT}/frame_000401/bev_revised.png"],
       "legend": {
         "green filled rectangle with nose triangle": "ego vehicle"
-      },
-      "notes": "Replace the image path with a real generated BEV."
+      }
     },
     {
       "probe_id": "bev-color-pedestrian-001",
@@ -22,7 +24,7 @@
       "question": "According to the supplied legend, what semantic class does the orange object color represent?",
       "expected_answer": "pedestrian",
       "answer_choices": ["pedestrian", "unknown"],
-      "images": ["/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data/outputs/frame_input_tmp/Rec_Drv_GER_MACHET18_20260422_101126/frame_000401/bev_revised.png"],
+      "images": ["${BEV_ROOT}/frame_000401/bev_revised.png"],
       "legend": {
         "orange object": "pedestrian",
         "green filled rectangle with nose triangle": "ego vehicle"
@@ -36,7 +38,7 @@
       "question": "Using ego heading as reference, which best describes the orange pedestrian nearest to the ego vehicle: ahead, behind, left, right, or unknown?",
       "expected_answer": "ahead",
       "answer_choices": ["ahead", "behind", "left", "right", "unknown"],
-      "images": ["/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data/outputs/frame_input_tmp/Rec_Drv_GER_MACHET18_20260422_101126/frame_000401/bev_revised.png"],
+      "images": ["${BEV_ROOT}/frame_000401/bev_revised.png"],
       "legend": {
         "orange object": "pedestrian",
         "green filled rectangle with nose triangle": "ego vehicle",
@@ -46,7 +48,7 @@
         "image left": "left relative to ego",
         "image right": "right relative to ego"
       },
-      "notes": "Do not score this probe until the nearest pedestrian's ego-relative geometry is verified from source data."
+      "notes": "Verify expected_answer from source geometry when changing the BEV scene."
     },
     {
       "probe_id": "structured-count-001",
@@ -72,7 +74,7 @@
       "question": "Do the BEV and structured neutral evidence agree that a pedestrian is ahead of the ego vehicle?",
       "expected_answer": "yes",
       "answer_choices": ["yes", "no", "unknown"],
-      "images": ["/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data/outputs/frame_input_tmp/Rec_Drv_GER_MACHET18_20260422_101126/frame_000401/bev_revised.png"],
+      "images": ["${BEV_ROOT}/frame_000401/bev_revised.png"],
       "structured_evidence": {
         "objects": [
           {"object_id": "p1", "class": "pedestrian", "longitudinal_m": 8.2, "lateral_m": 0.7}
@@ -94,9 +96,9 @@
       "expected_answer": "toward the ego path",
       "answer_choices": ["toward the ego path", "away from the ego path", "approximately stationary", "unknown"],
       "images": [
-        "/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data/outputs/frame_input_tmp/Rec_Drv_GER_MACHET18_20260422_101126/frame_000401/bev_revised.png",
-        "/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data/outputs/frame_input_tmp/Rec_Drv_GER_MACHET18_20260422_101126/frame_000410/bev_revised.png",
-        "/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data/outputs/frame_input_tmp/Rec_Drv_GER_MACHET18_20260422_101126/frame_000421/bev_revised.png"
+        "${BEV_ROOT}/frame_000401/bev_revised.png",
+        "${BEV_ROOT}/frame_000410/bev_revised.png",
+        "${BEV_ROOT}/frame_000421/bev_revised.png"
       ],
       "legend": {
         "orange object": "pedestrian",
