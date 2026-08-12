@@ -51,6 +51,32 @@ def _gt_document_meta(path: Path) -> dict:
     return {"gt_finished": document.get("gt_finished") is True}
 
 
+def _prediction_tags(path: Path) -> list[str]:
+    """Collect recording-level scenario/object-related tags from prediction output."""
+    if not path.is_file():
+        return []
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    frames = document.get("frames") if isinstance(document, dict) else None
+    if not isinstance(frames, list):
+        return []
+    tags: set[str] = set()
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        scenario_tags = frame.get("scenario_tags")
+        if isinstance(scenario_tags, list):
+            tags.update(str(tag) for tag in scenario_tags if isinstance(tag, str) and tag)
+        simplified = frame.get("simplified_tags")
+        if isinstance(simplified, dict):
+            interactions = simplified.get("interaction_tags")
+            if isinstance(interactions, list):
+                tags.update(str(tag) for tag in interactions if isinstance(tag, str) and tag)
+    return sorted(tags)
+
+
 def _recording_summary(
     recording_dir: Path,
     prediction_root: Path,
@@ -61,6 +87,7 @@ def _recording_summary(
     recording = recording_dir.name
     sampled = _sampled_frame_indices(recording_dir, source_hz, sample_hz)
     gt_path = _gt_path(gt_root, recording)
+    prediction_path = _prediction_path(prediction_root, recording)
     gt_by_frame = _existing_gt_by_frame(gt_path)
     gt_meta = _gt_document_meta(gt_path)
     reviewed = sum(1 for idx in sampled if idx in gt_by_frame)
@@ -79,7 +106,8 @@ def _recording_summary(
         "percent": round(100.0 * reviewed / total, 1) if total else 0.0,
         "status": status,
         "gt_finished": gt_meta["gt_finished"],
-        "prediction": _prediction_path(prediction_root, recording).is_file(),
+        "prediction": prediction_path.is_file(),
+        "object_tags": _prediction_tags(prediction_path),
     }
 
 
@@ -92,26 +120,27 @@ def _dashboard_html() -> str:
 aside{height:100%;min-height:0;background:#111827;border-right:1px solid #334155;display:flex;flex-direction:column;min-width:0;overflow:hidden}
 .brand{flex:0 0 auto;padding:16px;border-bottom:1px solid #334155}.brand h2{margin:0 0 5px}.muted{color:#94a3b8;font-size:12px}
 .controls{flex:0 0 auto;padding:10px;border-bottom:1px solid #334155;display:grid;gap:8px}input,select{width:100%;padding:8px;border-radius:7px;border:1px solid #475569;background:#1f2937;color:#e5e7eb}
-#summary{font-size:12px;color:#cbd5e1}.list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:6px;scrollbar-gutter:stable}.list::-webkit-scrollbar{width:11px}.list::-webkit-scrollbar-track{background:#0f172a}.list::-webkit-scrollbar-thumb{background:#475569;border-radius:8px;border:2px solid #0f172a}.list::-webkit-scrollbar-thumb:hover{background:#64748b}.rec{width:100%;text-align:left;background:#182235;color:#e5e7eb;border:1px solid transparent;border-radius:8px;padding:9px;margin:3px 0;cursor:pointer}.rec:hover{border-color:#475569}.rec.active{border-color:#38bdf8;background:#172033}.rec.missing{opacity:.55}.top{display:flex;justify-content:space-between;gap:8px}.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600}.pct{font-size:11px;color:#cbd5e1}.bar{height:5px;background:#334155;border-radius:4px;overflow:hidden;margin-top:6px}.fill{height:100%;background:#38bdf8}.meta{margin-top:5px;font-size:11px;color:#94a3b8}.dot{font-weight:bold}.done .dot{color:#22c55e}.in_progress .dot{color:#f59e0b}.not_started .dot{color:#64748b}
+#summary{font-size:12px;color:#cbd5e1}.list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:6px;scrollbar-gutter:stable}.list::-webkit-scrollbar{width:11px}.list::-webkit-scrollbar-track{background:#0f172a}.list::-webkit-scrollbar-thumb{background:#475569;border-radius:8px;border:2px solid #0f172a}.list::-webkit-scrollbar-thumb:hover{background:#64748b}.rec{width:100%;text-align:left;background:#182235;color:#e5e7eb;border:1px solid transparent;border-radius:8px;padding:9px;margin:3px 0;cursor:pointer}.rec:hover{border-color:#475569}.rec.active{border-color:#38bdf8;background:#172033}.rec.missing{opacity:.55}.top{display:flex;justify-content:space-between;gap:8px}.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600}.pct{font-size:11px;color:#cbd5e1}.bar{height:5px;background:#334155;border-radius:4px;overflow:hidden;margin-top:6px}.fill{height:100%;background:#38bdf8}.meta{margin-top:5px;font-size:11px;color:#94a3b8}.tags{margin-top:5px;font-size:10px;color:#7dd3fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dot{font-weight:bold}.done .dot{color:#22c55e}.in_progress .dot{color:#f59e0b}.not_started .dot{color:#64748b}
 main{height:100%;min-width:0;display:flex;flex-direction:column}.mainbar{height:48px;flex:0 0 48px;padding:8px 14px;background:#0f172a;border-bottom:1px solid #334155;display:flex;align-items:center;justify-content:space-between;gap:12px}.mainbar-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}.mainbar button{padding:7px 10px;background:#334155;color:white;border:1px solid #475569;border-radius:7px;cursor:pointer}.finish-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:#cbd5e1;white-space:nowrap}.finish-toggle input{width:auto;margin:0;accent-color:#22c55e}.finish-mark{color:#22c55e;font-weight:800;margin-right:4px}.rec.gt-finished{border-color:#166534}.rec.gt-finished .name{color:#dcfce7}#current{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.frame{flex:1;width:100%;border:0;background:#111827}.empty{flex:1;display:flex;align-items:center;justify-content:center;color:#64748b}
 @media(max-width:900px){#app{grid-template-columns:240px 1fr}}
 </style></head><body><div id="app">
 <aside><div class="brand"><h2>GT Workspace</h2><div class="muted">All recordings · one autosave server</div></div>
-<div class="controls"><input id="search" placeholder="Filter recordings"><select id="filter"><option value="all">All</option><option value="unfinished" selected>Unfinished</option><option value="gt_unfinished">GT not finished</option><option value="gt_finished">GT finished ✓</option><option value="not_started">Not started</option><option value="in_progress">In progress</option><option value="done">Done</option><option value="missing_prediction">Missing prediction</option></select><div id="summary"></div></div>
+<div class="controls"><input id="search" placeholder="Search file / recording name"><select id="objectFilter"><option value="">All object/scenario tags</option></select><select id="filter"><option value="all">All</option><option value="unfinished" selected>Unfinished</option><option value="gt_unfinished">GT not finished</option><option value="gt_finished">GT finished ✓</option><option value="not_started">Not started</option><option value="in_progress">In progress</option><option value="done">Done</option><option value="missing_prediction">Missing prediction</option></select><div id="summary"></div></div>
 <div id="list" class="list"></div></aside>
 <main><div class="mainbar"><div id="current">Choose a recording</div><div class="mainbar-actions"><label class="finish-toggle"><input id="finishToggle" type="checkbox" disabled onchange="setGtFinished(this.checked)"> GT finished</label><button onclick="refresh()">Refresh</button><button onclick="nextUnfinished()">Next unfinished →</button></div></div><div id="empty" class="empty">Select a recording from the left.</div><iframe id="editor" class="frame" style="display:none"></iframe></main>
 </div><script>
 let recordings=[], selected=null;
 async function refresh(){
-  recordings=await fetch('/api/recordings').then(r=>r.json()); renderList();
+  recordings=await fetch('/api/recordings').then(r=>r.json()); populateObjectFilter(); renderList();
   if(selected && recordings.some(r=>r.recording===selected)){selectRecording(selected,false);}
 }
-function visible(r){const q=document.getElementById('search').value.trim().toLowerCase(),f=document.getElementById('filter').value;if(q&&!r.recording.toLowerCase().includes(q))return false;if(f==='unfinished'&&r.status==='done')return false;if(f==='gt_unfinished'&&r.gt_finished)return false;if(f==='gt_finished'&&!r.gt_finished)return false;if(f==='missing_prediction'&&r.prediction)return false;if(['not_started','in_progress','done'].includes(f)&&r.status!==f)return false;return true;}
-function renderList(){const list=document.getElementById('list');list.innerHTML='';const shown=recordings.filter(visible);for(const r of shown){const b=document.createElement('button');b.className=`rec ${r.status} ${r.prediction?'':'missing'} ${r.gt_finished?'gt-finished':''} ${selected===r.recording?'active':''}`;b.onclick=()=>selectRecording(r.recording,true);const mark=r.gt_finished?'<span class="finish-mark">✓</span>':'';b.innerHTML=`<div class="top"><span class="name">${mark}<span class="dot">●</span> ${r.recording}</span><span class="pct">${r.percent}%</span></div><div class="bar"><div class="fill" style="width:${r.percent}%"></div></div><div class="meta">${r.reviewed}/${r.total} reviewed${r.gt_finished?' · GT finished ✓':''}${r.prediction?'':' · no prediction'}</div>`;list.appendChild(b);}const done=recordings.filter(r=>r.status==='done').length, finished=recordings.filter(r=>r.gt_finished).length;const reviewed=recordings.reduce((a,r)=>a+r.reviewed,0), total=recordings.reduce((a,r)=>a+r.total,0);document.getElementById('summary').textContent=`${finished}/${recordings.length} GT finished · ${done}/${recordings.length} frame-complete · ${reviewed}/${total} frames`;}
+function populateObjectFilter(){const select=document.getElementById('objectFilter');const previous=select.value;const tags=[...new Set(recordings.flatMap(r=>Array.isArray(r.object_tags)?r.object_tags:[]))].sort();select.innerHTML='<option value="">All object/scenario tags</option>';for(const tag of tags){const option=document.createElement('option');option.value=tag;option.textContent=tag;select.appendChild(option);}if(tags.includes(previous))select.value=previous;}
+function visible(r){const q=document.getElementById('search').value.trim().toLowerCase(),f=document.getElementById('filter').value,tag=document.getElementById('objectFilter').value;if(q&&!r.recording.toLowerCase().includes(q))return false;if(tag&&!(r.object_tags||[]).includes(tag))return false;if(f==='unfinished'&&r.status==='done')return false;if(f==='gt_unfinished'&&r.gt_finished)return false;if(f==='gt_finished'&&!r.gt_finished)return false;if(f==='missing_prediction'&&r.prediction)return false;if(['not_started','in_progress','done'].includes(f)&&r.status!==f)return false;return true;}
+function renderList(){const list=document.getElementById('list');list.innerHTML='';const shown=recordings.filter(visible);for(const r of shown){const b=document.createElement('button');b.className=`rec ${r.status} ${r.prediction?'':'missing'} ${r.gt_finished?'gt-finished':''} ${selected===r.recording?'active':''}`;b.onclick=()=>selectRecording(r.recording,true);const mark=r.gt_finished?'<span class="finish-mark">✓</span>':'';const activeTag=document.getElementById('objectFilter').value;const tagLine=activeTag?`<div class="tags">tag: ${activeTag}</div>`:'';b.innerHTML=`<div class="top"><span class="name">${mark}<span class="dot">●</span> ${r.recording}</span><span class="pct">${r.percent}%</span></div><div class="bar"><div class="fill" style="width:${r.percent}%"></div></div><div class="meta">${r.reviewed}/${r.total} reviewed${r.gt_finished?' · GT finished ✓':''}${r.prediction?'':' · no prediction'}</div>${tagLine}`;list.appendChild(b);}const done=recordings.filter(r=>r.status==='done').length, finished=recordings.filter(r=>r.gt_finished).length;const reviewed=recordings.reduce((a,r)=>a+r.reviewed,0), total=recordings.reduce((a,r)=>a+r.total,0);document.getElementById('summary').textContent=`showing ${shown.length}/${recordings.length} · ${finished}/${recordings.length} GT finished · ${done}/${recordings.length} frame-complete · ${reviewed}/${total} frames`;}
 function selectRecording(name,reload){selected=name;const r=recordings.find(x=>x.recording===name);document.getElementById('current').textContent=r?`${r.gt_finished?'✓ ':''}${name} · ${r.reviewed}/${r.total}`:name;const toggle=document.getElementById('finishToggle');toggle.disabled=!r;toggle.checked=!!r?.gt_finished;document.getElementById('empty').style.display='none';const f=document.getElementById('editor');f.style.display='block';const url='/editor/'+encodeURIComponent(name);if(reload||!f.src.endsWith(url))f.src=url;renderList();}
 async function setGtFinished(value){if(!selected)return;const response=await fetch('/finish/'+encodeURIComponent(selected),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gt_finished:!!value})});if(!response.ok){alert('Failed to save GT finished status.');const r=recordings.find(x=>x.recording===selected);document.getElementById('finishToggle').checked=!!r?.gt_finished;return;}const r=recordings.find(x=>x.recording===selected);if(r)r.gt_finished=!!value;selectRecording(selected,false);}
-function nextUnfinished(){const unfinished=recordings.filter(r=>!r.gt_finished&&r.total>0);if(!unfinished.length)return;let idx=selected?unfinished.findIndex(r=>r.recording===selected):-1;selectRecording(unfinished[(idx+1+unfinished.length)%unfinished.length].recording,true);}
-document.getElementById('search').addEventListener('input',renderList);document.getElementById('filter').addEventListener('change',renderList);
+function nextUnfinished(){const unfinished=recordings.filter(r=>!r.gt_finished&&r.total>0&&visible(r));if(!unfinished.length)return;let idx=selected?unfinished.findIndex(r=>r.recording===selected):-1;selectRecording(unfinished[(idx+1+unfinished.length)%unfinished.length].recording,true);}
+document.getElementById('search').addEventListener('input',renderList);document.getElementById('objectFilter').addEventListener('change',renderList);document.getElementById('filter').addEventListener('change',renderList);
 window.addEventListener('message',async e=>{if(!e.data||!['gt-saved','gt-complete'].includes(e.data.type))return;await refresh();});
 refresh().then(()=>{const first=recordings.find(r=>!r.gt_finished&&r.total>0)||recordings[0];if(first)selectRecording(first.recording,true);});
 </script></body></html>'''
