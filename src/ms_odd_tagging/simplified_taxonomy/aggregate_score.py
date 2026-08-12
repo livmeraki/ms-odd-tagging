@@ -108,9 +108,10 @@ def _simplified_scenario_set(tags: dict[str, Any]) -> set[str]:
     elif maneuver == "lane_change":
         suffix = direction if direction in {"left", "right"} else "unknown_direction"
         scenarios.add(f"lane_changing_{suffix}")
-    elif maneuver == "turn":
-        suffix = direction if direction in {"left", "right"} else "unknown_direction"
-        scenarios.add(f"turn_{suffix}")
+    elif maneuver == "turn" and direction in {"left", "right"}:
+        # Do not create a synthetic turn_unknown_direction scenario. If turn
+        # direction is unavailable, the direction-specific scenario F1 skips it.
+        scenarios.add(f"turn_{direction}")
     elif maneuver == "u_turn":
         scenarios.add("u_turn")
 
