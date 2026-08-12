@@ -10,16 +10,8 @@ from typing import Any
 from .score_prediction import combine_gt_and_prediction
 
 # F1 policy: score only dimensions that have actually been manually GT'd.
-# Explicitly excluded for now:
-# - traffic_relation.trail
-# - road_context.intersection
-# - road_context.traffic_light_relevant
-# - road_context.on_stopline_crosswalk
-# - all interaction_tags
-# traffic_light_intersection remains active because it is a separately reviewed field.
 SCALAR_FIELDS = {
     "ego_motion.state": ["stationary", "moving", "starting", "stopping", "unknown"],
-    "ego_motion.speed_band": ["low", "medium", "high", "unknown"],
     "ego_maneuver.type": ["lane_keeping", "lane_change", "turn", "u_turn", "unknown"],
     "ego_maneuver.direction": ["left", "right", "straight", None],
     "traffic_relation.lead": ["present", "absent", "unknown"],
@@ -27,6 +19,7 @@ SCALAR_FIELDS = {
 }
 
 EXCLUDED_F1_FIELDS = [
+    "ego_motion.speed_band",
     "traffic_relation.trail",
     "road_context.intersection",
     "road_context.traffic_light_relevant",
@@ -62,7 +55,6 @@ def _metric(counts: Counter) -> dict[str, Any]:
 
 def _field_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     scalar_counts = {path: Counter() for path in SCALAR_FIELDS}
-
     for row in rows:
         gt = row.get("gt") if isinstance(row.get("gt"), dict) else {}
         pred = row.get("prediction") if isinstance(row.get("prediction"), dict) else {}
@@ -78,18 +70,17 @@ def _field_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 scalar_counts[path]["fn"] += 1
 
     scalar = {name: _metric(counts) for name, counts in scalar_counts.items()}
-    all_metrics = list(scalar.values())
     total = Counter()
     for counts in scalar_counts.values():
         total["tp"] += counts["tp"]
         total["fp"] += counts["fp"]
         total["fn"] += counts["fn"]
-
+    metrics = list(scalar.values())
     return {
         "reviewed_frames": len(rows),
         "scalar_fields": scalar,
         "interaction_tags": {},
-        "macro_f1": sum(m["f1"] for m in all_metrics) / len(all_metrics) if all_metrics else 0.0,
+        "macro_f1": sum(m["f1"] for m in metrics) / len(metrics) if metrics else 0.0,
         "micro": _metric(total),
     }
 
@@ -98,7 +89,6 @@ def _simplified_scenario_set(tags: dict[str, Any]) -> set[str]:
     """Flatten only GT-reviewed simplified dimensions into scenario labels."""
     if not isinstance(tags, dict):
         return set()
-
     scenarios: set[str] = set()
 
     state = _get_path(tags, "ego_motion.state")
@@ -110,10 +100,6 @@ def _simplified_scenario_set(tags: dict[str, Any]) -> set[str]:
         scenarios.add("stop")
     elif state == "moving":
         scenarios.add("moving")
-
-    speed = _get_path(tags, "ego_motion.speed_band")
-    if speed in {"low", "medium", "high"}:
-        scenarios.add(f"{speed}_magnitude_speed")
 
     maneuver = _get_path(tags, "ego_maneuver.type")
     direction = _get_path(tags, "ego_maneuver.direction")
@@ -136,7 +122,6 @@ def _simplified_scenario_set(tags: dict[str, Any]) -> set[str]:
 
     if _get_path(tags, "road_context.traffic_light_intersection") == "yes":
         scenarios.add("on_traffic_light_intersection")
-
     return scenarios
 
 
@@ -144,16 +129,12 @@ def _frame_review(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict
     counts: dict[str, Counter] = defaultdict(Counter)
     review_rows: list[dict[str, Any]] = []
     exact = overlap = 0
-
     for row in rows:
         gt = row.get("gt") if isinstance(row.get("gt"), dict) else {}
         pred = row.get("prediction") if isinstance(row.get("prediction"), dict) else {}
         gt_s = _simplified_scenario_set(gt)
         pred_s = _simplified_scenario_set(pred)
-        both = gt_s & pred_s
-        fp = pred_s - gt_s
-        fn = gt_s - pred_s
-
+        both, fp, fn = gt_s & pred_s, pred_s - gt_s, gt_s - pred_s
         for scenario in gt_s | pred_s:
             if scenario in gt_s and scenario in pred_s:
                 counts[scenario]["tp"] += 1
@@ -161,7 +142,6 @@ def _frame_review(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict
                 counts[scenario]["fp"] += 1
             else:
                 counts[scenario]["fn"] += 1
-
         exact_match = not fp and not fn
         exact += int(exact_match)
         overlap += int(bool(both))
@@ -178,14 +158,14 @@ def _frame_review(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict
             "has_overlap": bool(both),
         })
 
-    report = {}
-    for scenario, c in sorted(counts.items()):
-        report[scenario] = {
+    report = {
+        scenario: {
             **_metric(c),
             "gt_positive_frames": c["tp"] + c["fn"],
             "detected_positive_frames": c["tp"] + c["fp"],
         }
-
+        for scenario, c in sorted(counts.items())
+    }
     total = len(review_rows)
     summary = {
         "comparison_space": "GT-reviewed simplified taxonomy only",
@@ -204,12 +184,10 @@ def _build_ranges(rows: list[dict[str, Any]], side: str) -> dict[tuple[str, str]
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         grouped[str(row.get("recording_id"))].append(row)
-
     ranges: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for recording, rec_rows in grouped.items():
         rec_rows.sort(key=lambda r: (r.get("timestamp") is None, r.get("timestamp"), r.get("frame_index")))
         active: dict[str, dict[str, Any]] = {}
-
         for position, row in enumerate(rec_rows):
             tags = row.get(side) if isinstance(row.get(side), dict) else {}
             scenarios = _simplified_scenario_set(tags)
@@ -240,11 +218,9 @@ def _build_ranges(rows: list[dict[str, Any]], side: str) -> dict[tuple[str, str]
 def _range_review(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     gt_ranges = _build_ranges(rows, "gt")
     pred_ranges = _build_ranges(rows, "prediction")
-    keys = sorted(set(gt_ranges) | set(pred_ranges))
     scenario_counts: dict[str, Counter] = defaultdict(Counter)
     review: list[dict[str, Any]] = []
-
-    for recording, scenario in keys:
+    for recording, scenario in sorted(set(gt_ranges) | set(pred_ranges)):
         gt_events = gt_ranges.get((recording, scenario), [])
         pred_events = pred_ranges.get((recording, scenario), [])
         candidates: list[tuple[int, float, int, int]] = []
@@ -254,7 +230,6 @@ def _range_review(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict
                 if overlap:
                     union = len(gt_event["sample_positions"] | pred_event["sample_positions"])
                     candidates.append((overlap, overlap / union if union else 0.0, gi, pi))
-
         candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
         matched_gt: set[int] = set()
         matched_pred: set[int] = set()
@@ -271,7 +246,6 @@ def _range_review(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict
                 "detected_start_frame": p["start_frame"], "detected_end_frame": p["end_frame"],
                 "overlap_sampled_frames": overlap, "range_iou": iou,
             })
-
         for gi, g in enumerate(gt_events):
             if gi not in matched_gt:
                 scenario_counts[scenario]["fn"] += 1
@@ -290,14 +264,14 @@ def _range_review(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], list[dict
                     "detected_start_frame": p["start_frame"], "detected_end_frame": p["end_frame"],
                     "overlap_sampled_frames": 0, "range_iou": 0.0,
                 })
-
-    report = {}
-    for scenario, counts in sorted(scenario_counts.items()):
-        report[scenario] = {
+    report = {
+        scenario: {
             **_metric(counts),
             "gt_events": counts["tp"] + counts["fn"],
             "detected_events": counts["tp"] + counts["fp"],
         }
+        for scenario, counts in sorted(scenario_counts.items())
+    }
     return report, review
 
 
@@ -305,13 +279,7 @@ def _csv_list(value: list[str]) -> str:
     return " | ".join(value)
 
 
-def _write_review_csvs(
-    review_dir: Path,
-    scenario_report: dict[str, Any],
-    frame_report: dict[str, Any],
-    frame_rows: list[dict[str, Any]],
-    range_rows: list[dict[str, Any]],
-) -> None:
+def _write_review_csvs(review_dir: Path, scenario_report: dict[str, Any], frame_report: dict[str, Any], frame_rows: list[dict[str, Any]], range_rows: list[dict[str, Any]]) -> None:
     review_dir.mkdir(parents=True, exist_ok=True)
     with (review_dir / "scenario_f1.csv").open("w", newline="", encoding="utf-8-sig") as f:
         fields = ["scenario", "tp", "fp", "fn", "gt_events", "detected_events", "precision", "recall", "f1"]
@@ -319,7 +287,6 @@ def _write_review_csvs(
         writer.writeheader()
         for scenario, metric in scenario_report.items():
             writer.writerow({"scenario": scenario, **metric})
-
     with (review_dir / "frame_scenario_f1.csv").open("w", newline="", encoding="utf-8-sig") as f:
         fields = ["scenario", "tp", "fp", "fn", "gt_positive_frames", "detected_positive_frames", "precision", "recall", "f1"]
         writer = csv.DictWriter(f, fieldnames=fields)
@@ -327,11 +294,7 @@ def _write_review_csvs(
         for scenario, metric in frame_report.items():
             writer.writerow({"scenario": scenario, **metric})
 
-    frame_fields = [
-        "recording_id", "frame_index", "timestamp", "gt_simplified_scenarios",
-        "detected_simplified_scenarios", "overlap_tp", "detected_only_fp", "gt_only_fn",
-        "exact_match", "has_overlap",
-    ]
+    frame_fields = ["recording_id", "frame_index", "timestamp", "gt_simplified_scenarios", "detected_simplified_scenarios", "overlap_tp", "detected_only_fp", "gt_only_fn", "exact_match", "has_overlap"]
     for filename, predicate in (
         ("frame_review.csv", lambda row: True),
         ("overlap_frames.csv", lambda row: row["has_overlap"]),
@@ -348,10 +311,7 @@ def _write_review_csvs(
                     out[key] = _csv_list(out[key])
                 writer.writerow(out)
 
-    range_fields = [
-        "recording_id", "scenario", "result", "gt_start_frame", "gt_end_frame",
-        "detected_start_frame", "detected_end_frame", "overlap_sampled_frames", "range_iou",
-    ]
+    range_fields = ["recording_id", "scenario", "result", "gt_start_frame", "gt_end_frame", "detected_start_frame", "detected_end_frame", "overlap_sampled_frames", "range_iou"]
     with (review_dir / "range_review.csv").open("w", newline="", encoding="utf-8-sig") as f:
         writer = csv.DictWriter(f, fieldnames=range_fields)
         writer.writeheader()
@@ -375,14 +335,12 @@ def aggregate_finished_gt(gt_root: Path, prediction_root: Path, *, finished_only
         if not isinstance(gt_doc, dict):
             recordings.append({"recording_id": gt_path.stem, "status": "invalid_gt", "error": "GT JSON must be an object"})
             continue
-
         recording = gt_doc.get("recording_id")
         if not isinstance(recording, str) or not recording:
             recording = gt_path.name.removesuffix("_manual_gt.json")
         if finished_only and gt_doc.get("gt_finished") is not True:
             skipped_unfinished.append(recording)
             continue
-
         prediction_path = _prediction_path(prediction_root, recording)
         if not prediction_path.is_file():
             missing_predictions.append(recording)
@@ -393,18 +351,12 @@ def aggregate_finished_gt(gt_root: Path, prediction_root: Path, *, finished_only
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             recordings.append({"recording_id": recording, "status": "score_error", "error": str(exc)})
             continue
-
         for row in combined["frames"]:
             combined_rows.append({**row, "recording_id": recording})
         missing = combined["missing_prediction_frames"]
         if missing:
             missing_prediction_frames[recording] = missing
-        recordings.append({
-            "recording_id": recording, "status": "scored",
-            "gt_finished": gt_doc.get("gt_finished") is True,
-            "reviewed_frames": len(combined["frames"]),
-            "missing_prediction_frames": len(missing),
-        })
+        recordings.append({"recording_id": recording, "status": "scored", "gt_finished": gt_doc.get("gt_finished") is True, "reviewed_frames": len(combined["frames"]), "missing_prediction_frames": len(missing)})
 
     report = _field_metrics(combined_rows)
     frame_scenario_f1, frame_review, frame_summary = _frame_review(combined_rows)
@@ -451,7 +403,6 @@ def main() -> int:
         raise SystemExit(f"GT root does not exist: {args.gt_root}")
     if not args.prediction_root.is_dir():
         raise SystemExit(f"Prediction root does not exist: {args.prediction_root}")
-
     report = aggregate_finished_gt(args.gt_root, args.prediction_root, finished_only=not args.include_unfinished)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
