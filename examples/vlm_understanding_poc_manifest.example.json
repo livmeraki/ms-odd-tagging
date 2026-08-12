@@ -5,7 +5,7 @@
       "sample_id": "scene_001",
       "category": "bev_symbol_literacy",
       "modality": "bev_only",
-      "question": "What object is located at the center of the BEV and what is its role?",
+      "question": "What does the green rectangle with the triangular nose represent?",
       "expected_answer": "ego vehicle",
       "images": ["../PATH_TO_BEV/frame_000100.png"],
       "legend": {
@@ -31,14 +31,19 @@
       "sample_id": "scene_001",
       "category": "spatial_understanding",
       "modality": "bev_only",
-      "question": "Is the highlighted pedestrian ahead of, behind, left of, or right of the ego vehicle? Answer with one of: ahead, behind, left, right, unknown.",
-      "expected_answer": "ahead",
+      "question": "Using ego heading as reference, which best describes the highlighted pedestrian's dominant relative position: ahead, behind, left, right, or unknown?",
+      "expected_answer": "REPLACE_AFTER_GEOMETRY_CHECK",
       "images": ["../PATH_TO_BEV/frame_000100.png"],
       "legend": {
         "orange object": "pedestrian",
         "green filled rectangle with nose triangle": "ego vehicle",
-        "ego nose triangle": "forward direction"
-      }
+        "ego nose triangle": "forward direction",
+        "image up": "ahead relative to ego",
+        "image down": "behind relative to ego",
+        "image left": "left relative to ego",
+        "image right": "right relative to ego"
+      },
+      "notes": "Set expected_answer only after verifying this object's ego-relative geometry."
     },
     {
       "probe_id": "structured-count-001",
@@ -71,7 +76,8 @@
       "legend": {
         "orange object": "pedestrian",
         "green filled rectangle with nose triangle": "ego vehicle",
-        "ego nose triangle": "forward direction"
+        "ego nose triangle": "forward direction",
+        "image up": "ahead relative to ego"
       }
     },
     {
