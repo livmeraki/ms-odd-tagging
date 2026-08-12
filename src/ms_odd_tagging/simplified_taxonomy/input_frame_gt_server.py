@@ -105,7 +105,6 @@ def _prepare_rows(
             row["gt"] = existing_gt[idx]
             row["reviewed"] = True
         else:
-            # Keep GT independent from the displayed prediction.
             row["gt"] = _blank_gt()
             row["reviewed"] = False
 
@@ -172,10 +171,7 @@ requestAnimationFrame(__syncTaggingHeight);
 
 
 def _inject_bulk_yes_no(html: str) -> str:
-    """Inject bulk-rest and per-tag whole-recording prediction-copy controls.
-
-    The historical function name is kept because the workspace imports it.
-    """
+    """Inject bulk-rest, prediction-copy, and unknown-to-no controls."""
     css = '''<style>
 .bulk-rest{display:flex;flex-wrap:wrap;gap:4px;margin:5px 0 2px}
 .bulk-rest button{padding:4px 7px;margin:0;font-size:11px;background:#273449;border-color:#475569}
@@ -186,6 +182,7 @@ def _inject_bulk_yes_no(html: str) -> str:
 .interaction-rest{display:inline-flex;gap:3px;margin-left:7px;vertical-align:middle}
 .interaction-rest button{padding:2px 5px;margin:0;font-size:10px;background:#273449}
 .interaction-rest .copy-prediction{border-color:#f59e0b;color:#fde68a}
+.fill-unknown-no{border-color:#ef4444!important;color:#fecaca!important;background:#3b1f2a!important}
 </style>'''
     script = '''<script>
 function bulkValueText(value){
@@ -219,6 +216,36 @@ function applyInteractionRemaining(tag,on){
     const a=rows[k].gt.interaction_tags||[];
     rows[k].gt.interaction_tags=on?[...new Set([...a,tag])]:a.filter(x=>x!==tag);
     rows[k].reviewed=true;
+  }
+  persist();
+  render();
+}
+function fillUnknownYesNoRemaining(){
+  const binaryPaths=scalarPaths.filter(path=>{
+    const values=defs[path]||[];
+    return values.includes('yes')&&values.includes('no');
+  });
+  let candidates=0;
+  for(let k=i;k<rows.length;k++){
+    for(const path of binaryPaths){
+      if(get(rows[k].gt||{},path)==='unknown')candidates++;
+    }
+  }
+  if(!candidates){
+    alert('No UNKNOWN yes/no scenario values remain from this frame onward.');
+    return;
+  }
+  if(!confirm(`Change ${candidates} UNKNOWN yes/no scenario value(s) to NO from the current frame through the end of this recording? Existing YES/NO values will not be changed.`))return;
+  for(let k=i;k<rows.length;k++){
+    ensureGT(rows[k]);
+    let changed=false;
+    for(const path of binaryPaths){
+      if(get(rows[k].gt,path)==='unknown'){
+        set(rows[k].gt,path,'no');
+        changed=true;
+      }
+    }
+    if(changed)rows[k].reviewed=true;
   }
   persist();
   render();
@@ -307,6 +334,17 @@ function addBulkAllControls(){
       wrap.append(on,off,copy); labelNode.appendChild(wrap);
     });
   }
+
+  const toolbar=document.querySelector('#taggingCard>.toolbar')||document.querySelector('.toolbar');
+  if(toolbar&&!toolbar.querySelector('.fill-unknown-no')){
+    const b=document.createElement('button');
+    b.type='button';
+    b.className='fill-unknown-no';
+    b.textContent='UNKNOWN yes/no → NO (rest)';
+    b.title='Only changes UNKNOWN values in yes/no scenario fields from the current frame onward.';
+    b.onclick=(e)=>{e.preventDefault();e.stopPropagation();fillUnknownYesNoRemaining();};
+    toolbar.appendChild(b);
+  }
 }
 const __renderBeforeBulk=render;
 render=function(){__renderBeforeBulk();addBulkAllControls();};
@@ -390,7 +428,6 @@ def main() -> int:
 
     endpoint = f"http://127.0.0.1:{args.port}/save"
     html = _html(rows, recording, args.sample_hz)
-    # Avoid stale browser rows when the generation snapshot gains new frames.
     old_key = f"simplified-gt-v3:{recording}"
     snapshot_key = f"simplified-gt-server-v1:{recording}:{len(rows)}:{rows[-1]['frame_index']}"
     html = html.replace(old_key, snapshot_key)
