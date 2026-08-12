@@ -7,6 +7,7 @@
       "modality": "bev_only",
       "question": "What does the green rectangle with the triangular nose represent?",
       "expected_answer": "ego vehicle",
+      "answer_choices": ["ego vehicle", "unknown"],
       "images": ["../PATH_TO_BEV/frame_000100.png"],
       "legend": {
         "green filled rectangle with nose triangle": "ego vehicle"
@@ -20,6 +21,7 @@
       "modality": "bev_only",
       "question": "According to the supplied legend, what semantic class does the orange object color represent?",
       "expected_answer": "pedestrian",
+      "answer_choices": ["pedestrian", "unknown"],
       "images": ["../PATH_TO_BEV/frame_000100.png"],
       "legend": {
         "orange object": "pedestrian",
@@ -31,8 +33,9 @@
       "sample_id": "scene_001",
       "category": "spatial_understanding",
       "modality": "bev_only",
-      "question": "Using ego heading as reference, which best describes the highlighted pedestrian's dominant relative position: ahead, behind, left, right, or unknown?",
-      "expected_answer": "REPLACE_AFTER_GEOMETRY_CHECK",
+      "question": "Using ego heading as reference, which best describes the orange pedestrian nearest to the ego vehicle: ahead, behind, left, right, or unknown?",
+      "expected_answer": null,
+      "answer_choices": ["ahead", "behind", "left", "right", "unknown"],
       "images": ["../PATH_TO_BEV/frame_000100.png"],
       "legend": {
         "orange object": "pedestrian",
@@ -43,15 +46,16 @@
         "image left": "left relative to ego",
         "image right": "right relative to ego"
       },
-      "notes": "Set expected_answer only after verifying this object's ego-relative geometry."
+      "notes": "Do not score this probe until the nearest pedestrian's ego-relative geometry is verified from source data."
     },
     {
       "probe_id": "structured-count-001",
       "sample_id": "scene_001",
       "category": "structured_comprehension",
       "modality": "structured_only",
-      "question": "How many pedestrians are reported in the neutral evidence? Return an integer.",
+      "question": "How many pedestrians are reported in the neutral evidence?",
       "expected_answer": 1,
+      "answer_choices": [0, 1, 2, 3, "unknown"],
       "images": [],
       "structured_evidence": {
         "ego_speed_mps": 0.0,
@@ -65,8 +69,9 @@
       "sample_id": "scene_001",
       "category": "fusion_consistency",
       "modality": "fusion",
-      "question": "Do the BEV and structured neutral evidence agree that a pedestrian is ahead of the ego vehicle? Answer yes, no, or unknown.",
+      "question": "Do the BEV and structured neutral evidence agree that a pedestrian is ahead of the ego vehicle?",
       "expected_answer": "yes",
+      "answer_choices": ["yes", "no", "unknown"],
       "images": ["../PATH_TO_BEV/frame_000100.png"],
       "structured_evidence": {
         "objects": [
@@ -87,6 +92,7 @@
       "modality": "bev_sequence",
       "question": "Across these images in chronological order, is the pedestrian moving toward the ego path, away from it, approximately stationary, or unknown?",
       "expected_answer": "toward the ego path",
+      "answer_choices": ["toward the ego path", "away from the ego path", "approximately stationary", "unknown"],
       "images": [
         "../PATH_TO_BEV/frame_000100.png",
         "../PATH_TO_BEV/frame_000110.png",
