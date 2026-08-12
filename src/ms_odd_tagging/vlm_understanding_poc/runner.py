@@ -22,10 +22,18 @@ SYSTEM_PROMPT = """You are auditing your perception of autonomous-driving diagno
 Answer only from the supplied BEV image(s) and/or structured neutral evidence.
 Do not infer a motional-scenario label unless the question explicitly asks for one.
 Do not assume the meaning of a color, line, or symbol unless a legend is supplied or the visual itself makes it unambiguous.
-If the evidence is insufficient, say unknown.
+If the evidence is insufficient, use unknown.
+
+For each probe, produce three explicit stages:
+1. perceived_answer: the literal answer supported directly by what you perceive in the input.
+2. reasoned_answer: the answer after applying only the conventions/rules stated in the prompt or legend.
+3. answer: your final answer to the question.
+
+These three fields should agree unless there is a genuine ambiguity. Never write one answer in your reasoning and a contradictory value in the final answer.
 Return valid JSON with exactly these keys:
-answer, observations, confidence, used_visual_cues, used_structured_fields, ambiguity.
+perceived_answer, reasoned_answer, answer, observations, confidence, used_visual_cues, used_structured_fields, ambiguity.
 confidence must be a number from 0 to 1. observations, used_visual_cues, and used_structured_fields must be arrays of strings.
+ambiguity must be either an empty string or a short string.
 """
 
 
@@ -94,8 +102,8 @@ def _request_payload(probe: Probe, model: str, temperature: float, max_tokens: i
             + json.dumps(probe.structured_evidence, ensure_ascii=False, sort_keys=True)
         )
     user_text.append(
-        "Important: first report literal observations, then answer the question. "
-        "Do not use the expected answer because it is not provided to you."
+        "Important: report literal observations first internally, then keep perceived_answer, "
+        "reasoned_answer, and answer mutually consistent. The expected answer is not provided to you."
     )
     content: list[dict[str, Any]] = [{"type": "text", "text": "\n\n".join(user_text)}]
     for image in probe.images:
@@ -146,6 +154,11 @@ def _score(expected: Any, answer: Any) -> bool | None:
     return _normalize(expected) == _normalize(answer)
 
 
+def _consistent(*values: Any) -> bool:
+    normalized = [_normalize(value) for value in values if value is not None]
+    return bool(normalized) and len(set(normalized)) == 1
+
+
 def run_probe(
     probe: Probe,
     *,
@@ -168,7 +181,13 @@ def run_probe(
             raw_response = json.loads(response.read().decode("utf-8"))
         text = _extract_text(raw_response)
         parsed = json.loads(text)
-        correct = _score(probe.expected_answer, parsed.get("answer"))
+        perceived = parsed.get("perceived_answer")
+        reasoned = parsed.get("reasoned_answer")
+        final_answer = parsed.get("answer")
+        perception_correct = _score(probe.expected_answer, perceived)
+        reasoning_correct = _score(probe.expected_answer, reasoned)
+        final_answer_correct = _score(probe.expected_answer, final_answer)
+        response_consistent = _consistent(perceived, reasoned, final_answer)
         return {
             "probe_id": probe.probe_id,
             "sample_id": probe.sample_id,
@@ -180,7 +199,12 @@ def run_probe(
             "notes": probe.notes,
             "ok": True,
             "elapsed_s": round(time.monotonic() - started, 4),
-            "correct": correct,
+            "perception_correct": perception_correct,
+            "reasoning_correct": reasoning_correct,
+            "final_answer_correct": final_answer_correct,
+            "response_consistent": response_consistent,
+            # Backward-compatible alias. Summary now uses final_answer_correct.
+            "correct": final_answer_correct,
             "model_output": parsed,
         }
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
@@ -195,6 +219,10 @@ def run_probe(
             "notes": probe.notes,
             "ok": False,
             "elapsed_s": round(time.monotonic() - started, 4),
+            "perception_correct": None,
+            "reasoning_correct": None,
+            "final_answer_correct": None,
+            "response_consistent": None,
             "correct": None,
             "error": str(exc),
         }
@@ -208,23 +236,39 @@ def write_outputs(results: list[dict[str, Any]], output_dir: Path) -> None:
             stream.write(json.dumps(result, ensure_ascii=False) + "\n")
 
     rows = []
-    buckets: dict[tuple[str, str], list[bool]] = {}
+    buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for result in results:
         key = (str(result["category"]), str(result["modality"]))
-        if result.get("correct") is not None:
-            buckets.setdefault(key, []).append(bool(result["correct"]))
+        if result.get("final_answer_correct") is not None:
+            buckets.setdefault(key, []).append(result)
     for (category, modality), values in sorted(buckets.items()):
+        n = len(values)
+        perception = [bool(v["perception_correct"]) for v in values]
+        reasoning = [bool(v["reasoning_correct"]) for v in values]
+        final = [bool(v["final_answer_correct"]) for v in values]
+        consistent = [bool(v["response_consistent"]) for v in values]
         rows.append(
             {
                 "category": category,
                 "modality": modality,
-                "scored_probes": len(values),
-                "correct": sum(values),
-                "accuracy": round(sum(values) / len(values), 4) if values else "",
+                "scored_probes": n,
+                "perception_accuracy": round(sum(perception) / n, 4),
+                "reasoning_accuracy": round(sum(reasoning) / n, 4),
+                "final_answer_accuracy": round(sum(final) / n, 4),
+                "response_consistency": round(sum(consistent) / n, 4),
             }
         )
+    summary_fields = [
+        "category",
+        "modality",
+        "scored_probes",
+        "perception_accuracy",
+        "reasoning_accuracy",
+        "final_answer_accuracy",
+        "response_consistency",
+    ]
     with (output_dir / "summary.csv").open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=["category", "modality", "scored_probes", "correct", "accuracy"])
+        writer = csv.DictWriter(stream, fieldnames=summary_fields)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -238,8 +282,13 @@ def write_outputs(results: list[dict[str, Any]], output_dir: Path) -> None:
                 "modality",
                 "question",
                 "expected_answer",
-                "model_answer",
-                "correct",
+                "perceived_answer",
+                "reasoned_answer",
+                "final_answer",
+                "perception_correct",
+                "reasoning_correct",
+                "final_answer_correct",
+                "response_consistent",
                 "confidence",
                 "ambiguity",
                 "elapsed_s",
@@ -256,8 +305,13 @@ def write_outputs(results: list[dict[str, Any]], output_dir: Path) -> None:
                     "modality": result["modality"],
                     "question": result["question"],
                     "expected_answer": json.dumps(result.get("expected_answer"), ensure_ascii=False),
-                    "model_answer": json.dumps(output.get("answer"), ensure_ascii=False),
-                    "correct": result.get("correct"),
+                    "perceived_answer": json.dumps(output.get("perceived_answer"), ensure_ascii=False),
+                    "reasoned_answer": json.dumps(output.get("reasoned_answer"), ensure_ascii=False),
+                    "final_answer": json.dumps(output.get("answer"), ensure_ascii=False),
+                    "perception_correct": result.get("perception_correct"),
+                    "reasoning_correct": result.get("reasoning_correct"),
+                    "final_answer_correct": result.get("final_answer_correct"),
+                    "response_consistent": result.get("response_consistent"),
                     "confidence": output.get("confidence"),
                     "ambiguity": output.get("ambiguity"),
                     "elapsed_s": result.get("elapsed_s"),
