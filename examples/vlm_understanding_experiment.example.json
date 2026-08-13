@@ -1,0 +1,38 @@
+{
+  "variables": {
+    "BEV_ROOT": "/path/to/recording"
+  },
+  "legend": {
+    "orange object": "pedestrian",
+    "green filled rectangle with nose triangle": "ego vehicle",
+    "ego nose triangle": "forward direction",
+    "image up": "ahead relative to ego",
+    "image down": "behind relative to ego",
+    "image left": "left relative to ego",
+    "image right": "right relative to ego"
+  },
+  "scenes": [
+    {
+      "scene_id": "ahead_clear_01",
+      "recording": "REPLACE_RECORDING",
+      "frame": 401,
+      "bev": "${BEV_ROOT}/frame_000401/bev_revised.png",
+      "marked_bev": null,
+      "target_description": "orange pedestrian nearest to the ego vehicle",
+      "expected_relation": "ahead",
+      "difficulty": "clear",
+      "notes": "Verify GT from source geometry before running."
+    },
+    {
+      "scene_id": "left_clear_01",
+      "recording": "REPLACE_RECORDING",
+      "frame": 201,
+      "bev": "${BEV_ROOT}/frame_000201/bev_revised.png",
+      "marked_bev": null,
+      "target_description": "orange pedestrian nearest to the ego vehicle",
+      "expected_relation": "left",
+      "difficulty": "clear",
+      "notes": "Example only; replace expected_relation with verified GT."
+    }
+  ]
+}
