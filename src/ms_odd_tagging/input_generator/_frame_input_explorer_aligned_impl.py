@@ -257,8 +257,10 @@ def parse_args() -> argparse.Namespace:
     sampling.add_argument("--frames-per-second", type=float, default=DEFAULT_FRAMES_PER_SECOND)
     sampling.add_argument("--all-frames", action="store_true")
     parser.add_argument("--max-objects", type=int, default=80)
-    parser.add_argument("--width", type=int, default=1000)
-    parser.add_argument("--height", type=int, default=900)
+    # The centered default extent is 90 m wide by 120 m long (3:4).
+    # Match the canvas to that ratio so metric-preserving rendering fills it.
+    parser.add_argument("--width", type=int, default=900)
+    parser.add_argument("--height", type=int, default=1200)
     parser.add_argument("--left-m", type=float, default=45.0)
     parser.add_argument("--right-m", type=float, default=45.0)
     parser.add_argument("--back-m", type=float, default=25.0)
