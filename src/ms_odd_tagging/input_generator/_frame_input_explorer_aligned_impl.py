@@ -19,6 +19,13 @@ from ms_odd_tagging.input_generator.generation_profile import (
     GenerationProfiler,
     finalize_profile,
 )
+from ms_odd_tagging.input_generator.frame_generation_policy import (
+    build_generation_signature,
+    choose_existing_output_action,
+    completed_frame_matches,
+    frame_fingerprint,
+    recording_has_existing_outputs,
+)
 from ms_odd_tagging.input_generator.frame_tags import (
     export_frame_tag_files,
     scenario_key_set,
@@ -44,6 +51,26 @@ DEFAULT_INPUT_DIR = CANONICAL
 DEFAULT_OUTPUT_DIR = FRAME_INPUTS_REVISED
 
 
+def _frame_row(
+    *,
+    output_dir: Path,
+    recording_id: str,
+    frame_dir: Path,
+    payload: dict,
+) -> dict:
+    bev_path = frame_dir / "bev.png"
+    frame_path = frame_dir / "frame.json"
+    return {
+        "recording_id": recording_id,
+        "frame_id": payload["frame_id"],
+        "frame_index": payload["frame_index"],
+        "time_since_start_s": payload["time_since_start_s"],
+        "frame_json": str(frame_path),
+        "bev": str(bev_path),
+        "relative_bev": bev_path.relative_to(output_dir).as_posix(),
+    }
+
+
 def build_recording(
     canonical_path: Path,
     output_dir: Path,
@@ -55,6 +82,7 @@ def build_recording(
     frame_limit: int | None = None,
     profiler: GenerationProfiler | None = None,
     refresh_analysis: bool = False,
+    existing_output: str = "regenerate",
 ) -> tuple[dict, int]:
     recording = json.loads(canonical_path.read_text(encoding="utf-8"))
     recording_id = recording["recording_id"]
@@ -67,6 +95,16 @@ def build_recording(
     recording_dir = output_dir / safe_name(recording_id)
     ensure_dir(recording_dir)
     config = load_config()
+    generation_signature = build_generation_signature(
+        canonical_path=canonical_path,
+        config=config,
+        extent=extent,
+        size=size,
+        max_objects=max_objects,
+        render_callable=render_revised_bev_png,
+        frame_json_callable=build_frame_json,
+    )
+
     from ms_odd_tagging.scenarios.following_lane.detector import run_following_lane
 
     events, quality, lane_result, analysis_cache_hit = get_recording_analysis(
@@ -129,6 +167,8 @@ def build_recording(
         )
 
     rows = []
+    generated_count = 0
+    skipped_count = 0
     progress = ProgressReporter(
         f"frame-input {recording_id}", len(selected_frames), "frame"
     )
@@ -137,6 +177,26 @@ def build_recording(
         sample_start = profiler.sample_start() if profiler is not None else 0.0
         index = frame["frame_index"]
         final_frame_dir = recording_dir / f"frame_{index:06d}"
+        expected_fingerprint = frame_fingerprint(generation_signature, index)
+
+        if existing_output == "resume" and completed_frame_matches(
+            final_frame_dir, expected_fingerprint
+        ):
+            payload = json.loads(
+                (final_frame_dir / "frame.json").read_text(encoding="utf-8")
+            )
+            rows.append(
+                _frame_row(
+                    output_dir=output_dir,
+                    recording_id=recording_id,
+                    frame_dir=final_frame_dir,
+                    payload=payload,
+                )
+            )
+            skipped_count += 1
+            progress.advance(f"frame {index} (up-to-date, skipped)")
+            continue
+
         lane_frame = lane_frames.get(index)
         derivation_context = build_direct_derivation_context(
             index,
@@ -200,6 +260,10 @@ def build_recording(
                     },
                 }
             )
+            payload["generation"] = {
+                "fingerprint": expected_fingerprint,
+                "signature": generation_signature,
+            }
             frame_path = frame_dir / "frame.json"
             frame_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2),
@@ -221,16 +285,14 @@ def build_recording(
                 [final_bev_path, final_frame_path, final_gt_reference_path],
             )
         rows.append(
-            {
-                "recording_id": recording_id,
-                "frame_id": payload["frame_id"],
-                "frame_index": index,
-                "time_since_start_s": payload["time_since_start_s"],
-                "frame_json": str(final_frame_path),
-                "bev": str(final_bev_path),
-                "relative_bev": final_bev_path.relative_to(output_dir).as_posix(),
-            }
+            _frame_row(
+                output_dir=output_dir,
+                recording_id=recording_id,
+                frame_dir=final_frame_dir,
+                payload=payload,
+            )
         )
+        generated_count += 1
         progress.advance(f"frame {index}")
 
     if profiler is not None:
@@ -240,6 +302,8 @@ def build_recording(
         "recording_id": recording_id,
         "canonical_frame_count": len(recording.get("frames", [])),
         "generated_frame_count": len(rows),
+        "generated_this_run": generated_count,
+        "skipped_up_to_date": skipped_count,
         "frames_per_second": frames_per_second,
         "analysis_cache_hit": analysis_cache_hit,
         "recording_frame_tags": str(frame_tags_dir),
@@ -293,6 +357,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--back-m", type=float, default=25.0)
     parser.add_argument("--forward-m", type=float, default=95.0)
     parser.add_argument(
+        "--existing-output",
+        choices=("ask", "resume", "regenerate", "cancel"),
+        default="ask",
+        help=(
+            "What to do when frame outputs already exist. Default 'ask' prompts "
+            "interactively; batch jobs should pass resume/regenerate/cancel explicitly."
+        ),
+    )
+    parser.add_argument(
         "--refresh-analysis",
         action="store_true",
         help="Ignore cached recording-wide rule/lane analysis and recompute it.",
@@ -313,11 +386,31 @@ def main() -> int:
         path for path in select_canonical_files(args.input_dir)
         if not requested or canonical_recording_id(path) in requested
     ]
+
+    has_existing = any(
+        recording_has_existing_outputs(
+            args.output_dir / safe_name(canonical_recording_id(path))
+        )
+        for path in files
+    )
+    try:
+        existing_output = choose_existing_output_action(
+            args.existing_output,
+            has_existing=has_existing,
+        )
+    except RuntimeError as exc:
+        print(f"ERROR: {exc}", flush=True)
+        return 2
+    if existing_output == "cancel":
+        print("Frame-input generation cancelled; existing outputs were not changed.", flush=True)
+        return 0
+
     manifest = {
         "schema_version": "odld-per-frame-input-manifest-v1",
         "renderer": "explorer-aligned-revised-v1",
         "orientation": "ego-heading-up",
         "frames_per_second": None if args.all_frames else args.frames_per_second,
+        "existing_output_policy": existing_output,
         "recordings": [],
     }
     review_rows = []
@@ -337,18 +430,22 @@ def main() -> int:
             frame_limit=args.frame_limit,
             profiler=profiler,
             refresh_analysis=args.refresh_analysis,
+            existing_output=existing_output,
         )
         manifest["recordings"].append(summary)
         review_rows.extend(summary["frames"])
         recording_progress.advance(
-            f"{summary['recording_id']}: {summary['generated_frame_count']} frames"
+            f"{summary['recording_id']}: {summary['generated_this_run']} generated, "
+            f"{summary['skipped_up_to_date']} skipped"
         )
     atomic_write_text(
         args.output_dir / "manifest.json",
         json.dumps(manifest, ensure_ascii=False, indent=2),
     )
     review_path = write_review_html(args.output_dir, review_rows)
-    print(f"Generated {len(review_rows)} BEV(s).")
+    generated = sum(item["generated_this_run"] for item in manifest["recordings"])
+    skipped = sum(item["skipped_up_to_date"] for item in manifest["recordings"])
+    print(f"Frame inputs complete: {generated} generated, {skipped} skipped as up-to-date.")
     print(f"Review: {review_path}")
     finalize_profile(profiler)
     return 0
