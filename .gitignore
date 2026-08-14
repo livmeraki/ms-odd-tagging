@@ -50,6 +50,8 @@ outputs/*/*
 bev_*.png
 bev_*.svg
 bev_model_*.png
+preview.png
+speed_plot_*.png
 model_output.json
 validation.json
 gt_evaluation.json
