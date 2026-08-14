@@ -14,9 +14,10 @@ from typing import Any, Callable, Iterable
 Clock = Callable[[], float]
 FRAME_STAGE_FIELDS = (
     "bev_render_time_s",
-    "frame_json_time_s",
-    "sidecar_write_time_s",
-    "publish_time_s",
+    "bev_static_context_time_s",
+    "bev_draw_time_s",
+    "png_encode_write_time_s",
+    "frame_postprocess_time_s",
 )
 
 
@@ -27,7 +28,7 @@ def finalize_profile(profiler: "GenerationProfiler | None") -> None:
         paths = profiler.save()
         print(profiler.terminal_summary())
         print(f"Profiling artifacts: {paths['summary_json'].parent}")
-    except Exception as exc:  # pragma: no cover - defensive by design.
+    except Exception as exc:  # pragma: no cover
         print(f"Warning: generation profiling failed and was skipped: {exc}")
 
 
@@ -99,16 +100,12 @@ class GenerationProfiler:
         )
 
     def add_output_files(self, paths: Iterable[Path]) -> None:
-        if self.current is None:
-            return
-        self.current.output_size_bytes += files_size(paths)
+        if self.current is not None:
+            self.current.output_size_bytes += files_size(paths)
 
     def record_recording_stage(self, name: str, elapsed_s: float) -> None:
-        if self.current is None:
-            return
-        self.current.setup_stage_times_s[name] = (
-            self.current.setup_stage_times_s.get(name, 0.0) + max(float(elapsed_s), 0.0)
-        )
+        if self.current is not None:
+            self.current.setup_stage_times_s[name] = self.current.setup_stage_times_s.get(name, 0.0) + max(float(elapsed_s), 0.0)
 
     def sample_start(self) -> float:
         return self.clock()
@@ -123,18 +120,45 @@ class GenerationProfiler:
     ) -> None:
         if self.current is None:
             return
+        paths = list(output_paths)
         now = self.clock()
-        output_size = files_size(output_paths)
+        output_size = files_size(paths)
         self.current.output_size_bytes += output_size
         self.current.processed_frames += 1
         elapsed = max(now - self.current.start_time_s, 0.0)
         frame_time = max(now - sample_start_s, 0.0)
         processing_fps = self.current.processed_frames / elapsed if elapsed > 0 else 0.0
         increase = self.current.output_size_bytes - self.current.input_size_bytes
+
         stages = {field: 0.0 for field in FRAME_STAGE_FIELDS}
+        # The renderer keeps a tiny in-memory timing record keyed by the temporary
+        # output path. Profiling consumes it here without changing the renderer's
+        # historical return type.
+        try:
+            from .revised_bev import pop_render_timings
+
+            bev_path = next((path for path in paths if path.name == "bev.png"), None)
+            if bev_path is not None:
+                render_timings = pop_render_timings(bev_path)
+                # Transactional generation renders under .frame_x.tmp but this
+                # method receives the published frame path. Try the staging path
+                # as well when the final path has no timing entry.
+                if not render_timings and bev_path.parent.name.startswith("frame_"):
+                    staged = bev_path.parent.with_name(f".{bev_path.parent.name}.tmp") / bev_path.name
+                    render_timings = pop_render_timings(staged)
+                for key, value in render_timings.items():
+                    if key in stages:
+                        stages[key] = max(float(value), 0.0)
+        except Exception:
+            pass
+
         for key, value in (stage_times or {}).items():
             if key in stages:
                 stages[key] = max(float(value), 0.0)
+        stages["frame_postprocess_time_s"] = max(
+            frame_time - stages["bev_render_time_s"], 0.0
+        )
+
         self.rows.append(
             {
                 "recording_id": self.current.recording_id,
@@ -168,11 +192,7 @@ class GenerationProfiler:
                 "processed_frames": self.current.processed_frames,
                 "elapsed_time_s": elapsed,
                 "processing_fps": self.current.processed_frames / elapsed if elapsed > 0 else 0.0,
-                "storage_expansion_ratio": (
-                    self.current.output_size_bytes / self.current.input_size_bytes
-                    if self.current.input_size_bytes
-                    else None
-                ),
+                "storage_expansion_ratio": self.current.output_size_bytes / self.current.input_size_bytes if self.current.input_size_bytes else None,
                 "setup_stage_times_s": dict(self.current.setup_stage_times_s),
             }
         )
@@ -218,8 +238,7 @@ class GenerationProfiler:
         graph_fps = profiling_dir / "processing_fps_graph.png"
         graph_size = profiling_dir / "cumulative_output_size_graph.png"
         self._write_csv(csv_path)
-        summary = self.summary()
-        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        summary_path.write_text(json.dumps(self.summary(), ensure_ascii=False, indent=2), encoding="utf-8")
         self._write_graph(graph_time, "Generation time per frame/sample", "frame_generation_time_s")
         self._write_graph(graph_fps, "Processing FPS over generation", "processing_fps")
         self._write_graph(graph_size, "Cumulative output size (MB)", "cumulative_output_size_mb")
