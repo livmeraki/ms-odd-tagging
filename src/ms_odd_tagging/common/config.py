@@ -31,20 +31,29 @@ load_local_env()
 
 DATA_ROOT = env_path("MS_ODD_DATA_ROOT", Path("data"))
 OUTPUT_ROOT = env_path("MS_ODD_OUTPUT_ROOT", Path("outputs"))
-MODEL_INPUT_ROOT = env_path("MS_ODD_MODEL_INPUT_ROOT", OUTPUT_ROOT / "03_model_inputs")
 
 DATA_RAW = DATA_ROOT / "01_raw"
 DATA_GT = DATA_ROOT / "02_gt"
+
+# Active pipeline stages.
 CANONICAL = OUTPUT_ROOT / "01_canonical"
-WINDOWS = OUTPUT_ROOT / "02_windows"
-MODEL_INPUTS = MODEL_INPUT_ROOT
 FRAME_INPUTS = OUTPUT_ROOT / "02_frame_inputs"
-# Transitional compatibility alias. Explorer-aligned frame generation now owns
+TAGGING = OUTPUT_ROOT / "03_tagging"
+VALIDATION = OUTPUT_ROOT / "04_validation"
+GT_COMPARISON = OUTPUT_ROOT / "05_gt_comparison"
+SCENARIO_EXPLORERS = OUTPUT_ROOT / "06_scenario_explorers"
+
+# Transitional compatibility aliases. Explorer-aligned frame generation owns
 # the canonical 02_frame_inputs directory.
 FRAME_INPUTS_REVISED = FRAME_INPUTS
-TAGGING = OUTPUT_ROOT / "04_tagging"
-VALIDATION = OUTPUT_ROOT / "05_validation"
-GT_COMPARISON = OUTPUT_ROOT / "06_gt_comparison"
-SCENARIO_EXPLORERS = OUTPUT_ROOT / "07_scenario_explorers"
+
+# Legacy window/model-input pipeline locations. These are no longer numbered
+# active stages; keep them isolated so they cannot be confused with 03_tagging.
+WINDOWS = OUTPUT_ROOT / "legacy" / "windows"
+MODEL_INPUT_ROOT = env_path(
+    "MS_ODD_MODEL_INPUT_ROOT", OUTPUT_ROOT / "legacy" / "model_inputs"
+)
+MODEL_INPUTS = MODEL_INPUT_ROOT
+
 FRAME_GT_AUTHORING = OUTPUT_ROOT / "frame_gt_authoring"
 FOLLOWING_LANE = OUTPUT_ROOT / "scenarios" / "following_lane"
