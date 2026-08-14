@@ -24,7 +24,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build canonical OD/trajectory or OD+LD/trajectory recordings."
     )
-    parser.add_argument("--mode", choices=CANONICAL_MODES, default="odld")
+    parser.add_argument(
+        "--mode",
+        choices=CANONICAL_MODES,
+        default="od",
+        help="Canonical source mode (default: od, preserving the legacy CLI).",
+    )
     parser.add_argument("--source-root", type=Path, default=DATA_RAW)
     parser.add_argument("--output-root", type=Path, default=CANONICAL)
     parser.add_argument("--ld-radius-m", type=float, default=100.0)
