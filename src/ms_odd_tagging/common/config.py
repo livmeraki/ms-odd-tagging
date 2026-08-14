@@ -39,7 +39,9 @@ CANONICAL = OUTPUT_ROOT / "01_canonical"
 WINDOWS = OUTPUT_ROOT / "02_windows"
 MODEL_INPUTS = MODEL_INPUT_ROOT
 FRAME_INPUTS = OUTPUT_ROOT / "02_frame_inputs"
-FRAME_INPUTS_REVISED = OUTPUT_ROOT / "02_frame_inputs_revised"
+# Transitional compatibility alias. Explorer-aligned frame generation now owns
+# the canonical 02_frame_inputs directory.
+FRAME_INPUTS_REVISED = FRAME_INPUTS
 TAGGING = OUTPUT_ROOT / "04_tagging"
 VALIDATION = OUTPUT_ROOT / "05_validation"
 GT_COMPARISON = OUTPUT_ROOT / "06_gt_comparison"
