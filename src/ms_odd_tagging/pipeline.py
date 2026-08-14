@@ -65,6 +65,11 @@ def parse_args() -> argparse.Namespace:
         help="Generate a BEV and model input for every canonical frame.",
     )
     parser.add_argument(
+        "--refresh-analysis",
+        action="store_true",
+        help="Ignore cached recording-wide rule/lane analysis and recompute it.",
+    )
+    parser.add_argument(
         "--stop-after", choices=("canonical", "frame-inputs"), default="frame-inputs"
     )
     parser.add_argument(
@@ -110,6 +115,8 @@ def main() -> int:
         model_args.append("--all-frames")
     else:
         model_args.extend(["--frames-per-second", str(args.frames_per_second)])
+    if args.refresh_analysis:
+        model_args.append("--refresh-analysis")
     if args.profile_generation:
         model_args.append("--profile-generation")
     run_stage(
