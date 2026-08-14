@@ -60,6 +60,8 @@ def test_frame_input_builder_dispatches_standard(monkeypatch, tmp_path) -> None:
     assert result == 0
     assert captured["module_main"] is frame_input_builder.frame_input.main
     assert "--ld-line-patterns" in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--width") + 1] == "1000"
+    assert captured["argv"][captured["argv"].index("--height") + 1] == "900"
 
 
 def test_frame_input_builder_dispatches_explorer_aligned(monkeypatch, tmp_path) -> None:
@@ -84,3 +86,20 @@ def test_frame_input_builder_dispatches_explorer_aligned(monkeypatch, tmp_path) 
     assert result == 0
     assert captured["module_main"] is frame_input_builder.frame_input_revised.main
     assert "--ld-line-patterns" not in captured["argv"]
+    assert captured["argv"][captured["argv"].index("--width") + 1] == "900"
+    assert captured["argv"][captured["argv"].index("--height") + 1] == "1200"
+
+
+def test_frame_input_builder_preserves_explicit_explorer_size() -> None:
+    args = frame_input_builder.parse_args(
+        [
+            "--bev-style",
+            "explorer_aligned",
+            "--width",
+            "750",
+            "--height",
+            "1000",
+        ]
+    )
+    assert args.width == 750
+    assert args.height == 1000
