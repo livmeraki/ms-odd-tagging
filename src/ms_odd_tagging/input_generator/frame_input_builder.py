@@ -34,6 +34,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--back-m", type=float, default=25.0)
     parser.add_argument("--forward-m", type=float, default=95.0)
     parser.add_argument(
+        "--existing-output",
+        choices=("ask", "resume", "regenerate", "cancel"),
+        default="ask",
+        help=(
+            "Existing-output policy. Default ask prompts when outputs exist; "
+            "use resume/regenerate/cancel explicitly for batch runs."
+        ),
+    )
+    parser.add_argument(
         "--refresh-analysis",
         action="store_true",
         help="Recompute recording-wide rule/lane analysis instead of using its cache.",
@@ -64,6 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--right-m", str(args.right_m),
         "--back-m", str(args.back_m),
         "--forward-m", str(args.forward_m),
+        "--existing-output", args.existing_output,
     ]
     for recording in args.recording or []:
         forwarded.extend(["--recording", recording])
