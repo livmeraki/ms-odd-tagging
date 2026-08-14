@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from ms_odd_tagging.common.atomic_io import atomic_write_text
 from ms_odd_tagging.tagger.rule_based.scenario_event import ScenarioEvent
 
 CACHE_SCHEMA_VERSION = "recording-analysis-cache-v1"
@@ -102,16 +103,15 @@ def write_cached_analysis(
     quality: dict[str, Any],
     lane_result: dict[str, Any],
 ) -> None:
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "signature": signature,
         "rule_events": [event.to_dict() for event in events],
         "quality": quality,
         "following_lane": lane_result,
     }
-    cache_path.write_text(
+    atomic_write_text(
+        cache_path,
         json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
 
 
