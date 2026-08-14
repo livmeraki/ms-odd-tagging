@@ -18,6 +18,10 @@ from . import frame_input, frame_input_revised
 from .bev_renderer import SUPPORTED_BEV_STYLES, normalize_bev_style
 
 
+STANDARD_DEFAULT_SIZE = (1000, 900)
+EXPLORER_ALIGNED_DEFAULT_SIZE = (900, 1200)
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate timestamp-sampled per-frame JSON and BEV inputs."
@@ -31,8 +35,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     sampling.add_argument("--frames-per-second", type=float, default=1.0)
     sampling.add_argument("--all-frames", action="store_true")
     parser.add_argument("--max-objects", type=int, default=80)
-    parser.add_argument("--width", type=int, default=1000)
-    parser.add_argument("--height", type=int, default=900)
+    # Leave size unresolved until the BEV style is normalized so each style can
+    # keep an appropriate default aspect ratio. Explicit user values still win.
+    parser.add_argument("--width", type=int)
+    parser.add_argument("--height", type=int)
     parser.add_argument("--left-m", type=float, default=45.0)
     parser.add_argument("--right-m", type=float, default=45.0)
     parser.add_argument("--back-m", type=float, default=25.0)
@@ -46,6 +52,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.bev_style = normalize_bev_style(args.bev_style)
     except ValueError as exc:
         parser.error(str(exc))
+
+    default_width, default_height = (
+        EXPLORER_ALIGNED_DEFAULT_SIZE
+        if args.bev_style == "explorer_aligned"
+        else STANDARD_DEFAULT_SIZE
+    )
+    if args.width is None:
+        args.width = default_width
+    if args.height is None:
+        args.height = default_height
     return args
 
 
