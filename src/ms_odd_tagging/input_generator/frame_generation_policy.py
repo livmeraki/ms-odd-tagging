@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-GENERATION_FINGERPRINT_VERSION = "frame-generation-v1"
+GENERATION_FINGERPRINT_VERSION = "frame-generation-v2"
 REQUIRED_FRAME_FILES = ("bev.png", "frame.json", "gt_reference.json")
 
 ANSI_RESET = "\033[0m"
@@ -39,6 +39,17 @@ def _callable_module_sha256(callable_obj: Callable[..., Any]) -> str | None:
     return _file_sha256(path)
 
 
+def _explorer_renderer_sha256() -> str | None:
+    """Fingerprint the actual renderer even when called through compatibility wrappers."""
+    try:
+        from . import revised_bev
+
+        path = Path(revised_bev.__file__ or "")
+        return _file_sha256(path) if path.is_file() else None
+    except (ImportError, OSError):
+        return None
+
+
 def build_generation_signature(
     *,
     canonical_path: Path,
@@ -64,7 +75,8 @@ def build_generation_signature(
         "extent_m": list(extent),
         "size_px": list(size),
         "max_objects": max_objects,
-        "renderer_module_sha256": _callable_module_sha256(render_callable),
+        "renderer_wrapper_sha256": _callable_module_sha256(render_callable),
+        "renderer_implementation_sha256": _explorer_renderer_sha256(),
         "frame_json_module_sha256": _callable_module_sha256(frame_json_callable),
     }
 
