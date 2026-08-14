@@ -23,7 +23,7 @@ The numbered data/output folders express execution order. Python package folders
 - `data/01_raw/`: local OD/LD/trajectory recordings.
 - `data/02_gt/`: ground-truth label files.
 - `outputs/01_canonical/`: synchronized canonical frames.
-- `outputs/02_frame_inputs/`: one `frame.json` and same-frame `bev.png` per selected timestamp.
+- `outputs/02_frame_inputs/`: one `frame.json` and same-frame explorer-aligned BEV per selected timestamp.
 - `outputs/04_tagging/`: local/server model results.
 - `outputs/05_validation/`: schema and semantic validation results.
 - `outputs/06_gt_comparison/`: GT comparison reports.
@@ -43,12 +43,9 @@ The public canonical entrypoint is `canonical_builder.py`:
 
 `canonical_odld.py` intentionally extends the OD canonicalizer; it is not an independent competing rewrite.
 
-The public per-frame input entrypoint is `frame_input_builder.py`:
+The public per-frame input entrypoint is `frame_input_builder.py`. It has one canonical BEV representation: `explorer_aligned`, centered on ego with ego heading up and metric-preserving x/y scale. There is no public BEV-style selector. By default, generated per-frame inputs are written to `outputs/02_frame_inputs` using a 900x1200 canvas for the default 90 m x 120 m centered physical extent.
 
-- `--bev-style standard`: model-facing BEV.
-- `--bev-style explorer_aligned`: centered explorer-aligned BEV used for visual review/debugging.
-
-`frame_input.py` and `frame_input_revised.py` remain compatibility entrypoints while cleanup is in progress. Both render paths dispatch through `bev_renderer.py`.
+The historical standard renderer remains only as an internal compatibility/helper layer while cleanup is in progress; it is not exposed as a selectable installed CLI.
 
 ## Install and validate
 
@@ -76,14 +73,14 @@ export MS_ODD_OUTPUT_ROOT=/path/to/ms-odd-tagging-data/outputs
 
 Use `--canonical-mode odld` (or the compatibility alias `--odld`) for a recording containing `annotations_OD.json`, `annotations_LD.json`, and `traj_lcs.txt`. Add `--frame-limit 1` for a fast smoke run or `--stop-after canonical` while debugging. BEV/model inputs are sampled by real timestamps at 1 frame per second by default. Change this with `--frames-per-second 2` or use `--all-frames` when full-frame output is required. Dynamic rule tagging still evaluates every canonical frame.
 
-Select the per-frame renderer explicitly when needed:
+The active per-frame renderer is always explorer-aligned:
 
 ```bash
-python run_pipeline.py RECORDING --canonical-mode odld --bev-style explorer_aligned
+python run_pipeline.py RECORDING --canonical-mode odld
 ```
 
 Add `--profile-generation` to write optional generation timing, processing FPS,
-and storage metrics under the selected frame-input output tree.
+and storage metrics under `outputs/02_frame_inputs/profiling`.
 
 Each stage is independently executable through a stable public dispatcher:
 
@@ -91,13 +88,13 @@ Each stage is independently executable through a stable public dispatcher:
 python -m ms_odd_tagging.input_generator.canonical_builder --help
 python -m ms_odd_tagging.input_generator.canonical_builder --mode odld RECORDING
 python -m ms_odd_tagging.input_generator.frame_input_builder --help
-python -m ms_odd_tagging.input_generator.frame_input_builder --bev-style explorer_aligned
+python -m ms_odd_tagging.input_generator.frame_input_builder --recording RECORDING
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
 python -m ms_odd_tagging.visualization.scenario_explorer --help
 ```
 
-The installed CLI equivalents are `ms-odd-canonical`, `ms-odd-frame-inputs`, and `ms-odd-tagging`. Compatibility CLIs for the implementation-specific paths remain available during the cleanup branch.
+The installed CLI equivalents are `ms-odd-canonical`, `ms-odd-frame-inputs`, and `ms-odd-tagging`.
 
 Phase 1 deterministic trajectory events are calculated over the complete
 recording and retain dynamic inclusive frame/time bounds. See
@@ -130,7 +127,7 @@ by default, or whichever rate was selected upstream):
 
 ```bash
 python -m ms_odd_tagging.gt_comparison.authoring \
-  --frame-input-root outputs/02_frame_inputs_revised \
+  --frame-input-root outputs/02_frame_inputs \
   --output-root outputs/frame_gt_authoring \
   --all
 ```
@@ -152,7 +149,7 @@ current synchronized frame:
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py \
   --source-dir outputs/scenarios/following_lane_phase2_all_tags/04_visualization \
   --output-dir outputs/07_odld_scenario_explorers_gt_authoring_all_tags \
-  --frame-input-root outputs/02_frame_inputs_revised \
+  --frame-input-root outputs/02_frame_inputs \
   --gt-dir data/02_gt \
   --regenerate-existing
 ```
@@ -165,7 +162,7 @@ the explorer's exact current frame to the downloaded frame-GT JSON.
 
 - Canonical schemas remain `od-trajectory-canonical-frame-v1` and `odld-trajectory-canonical-frame-v1`.
 - OD `frameIndex` maps directly to the trajectory row; LD is treated as a recording-level static map spatially queried at each ego pose.
-- Every selected timestamp produces one independent `frame.json` and BEV; default selection is 1 FPS and there is no temporal window sampling in the active per-frame pipeline.
+- Every selected timestamp produces one independent `frame.json` and explorer-aligned BEV under `outputs/02_frame_inputs`; default selection is 1 FPS and there is no temporal window sampling in the active per-frame pipeline.
 - Recording rule events are stored separately from model-facing frame JSON to prevent label leakage.
 - Numeric zero is valid data and must not become `null`.
 - OD+LD BEV requires both `ld_feature_store` and frame-level `ld.nearby_feature_ids`.
