@@ -14,8 +14,11 @@ dependencies = [
 
 [project.scripts]
 ms-odd-tagging = "ms_odd_tagging.pipeline:main"
-ms-odd-canonical = "ms_odd_tagging.input_generator.canonical:main"
-ms-odd-frame-inputs = "ms_odd_tagging.input_generator.frame_input:main"
+ms-odd-canonical = "ms_odd_tagging.input_generator.canonical_builder:main"
+ms-odd-canonical-od = "ms_odd_tagging.input_generator.canonical:main"
+ms-odd-canonical-odld = "ms_odd_tagging.input_generator.canonical_odld:main"
+ms-odd-frame-inputs = "ms_odd_tagging.input_generator.frame_input_builder:main"
+ms-odd-frame-inputs-standard = "ms_odd_tagging.input_generator.frame_input:main"
 ms-odd-frame-inputs-revised = "ms_odd_tagging.input_generator.frame_input_revised:main"
 ms-odd-validate-frames = "ms_odd_tagging.validator.frame_schema:main"
 ms-odd-tag = "ms_odd_tagging.tagger.model_based.local_vllm:main"
