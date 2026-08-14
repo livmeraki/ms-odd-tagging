@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,28 @@ STOPLINE_COLOR = "#7c3aed"
 FORWARD_ARC_COLOR = "#111827"
 ACTIVE_OBJECT_COLOR = "#facc15"
 PEDESTRIAN_COLOR = "#f97316"
+
+
+@dataclass(frozen=True)
+class BevStaticContext:
+    """Recording-static LD indexes reused by every rendered frame."""
+
+    points_by_id: dict[str, Any]
+    lane_lines: dict[str, Any]
+    road_boundaries: dict[str, Any]
+    roadmarks: dict[str, Any]
+
+
+def build_bev_static_context(recording: dict[str, Any]) -> BevStaticContext:
+    """Build recording-level LD lookup tables once instead of once per frame."""
+    return BevStaticContext(
+        points_by_id=ld_point_lookup(recording),
+        lane_lines=ld_feature_lookup(recording, "lane_lines", "line_id"),
+        road_boundaries=ld_feature_lookup(
+            recording, "road_boundaries", "road_boundary_id"
+        ),
+        roadmarks=ld_feature_lookup(recording, "roadmarks", "roadmark_id"),
+    )
 
 
 def _feature_points(feature: dict[str, Any], points_by_id: dict[str, Any]) -> list:
@@ -99,7 +122,12 @@ def _object_corners_lcs(obj: dict[str, Any], ego_yaw: float):
     half_l, half_w = max(float(length), 0.5) / 2, max(float(width), 0.5) / 2
     return [
         (center[0] + f * c - l * s, center[1] + f * s + l * c)
-        for f, l in ((half_l, half_w), (half_l, -half_w), (-half_l, -half_w), (-half_l, half_w))
+        for f, l in (
+            (half_l, half_w),
+            (half_l, -half_w),
+            (-half_l, -half_w),
+            (-half_l, half_w),
+        )
     ]
 
 
@@ -153,7 +181,9 @@ def _forward_arc_points(
     return outer + inner
 
 
-def centered_extent(extent: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+def centered_extent(
+    extent: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
     """Return symmetric left/right and behind/ahead bounds from configured totals."""
     left_m, right_m, back_m, forward_m = extent
     half_width = (float(left_m) + float(right_m)) / 2.0
@@ -165,12 +195,7 @@ def metric_viewport(
     extent: tuple[float, float, float, float],
     size: tuple[int, int],
 ) -> tuple[float, float, float, float, float]:
-    """Return a centered viewport with one uniform pixels-per-meter scale.
-
-    The drawable BEV keeps the physical left/right and longitudinal dimensions
-    proportional. Any mismatch between canvas and physical aspect ratios is
-    represented as empty margins instead of stretching scene geometry.
-    """
+    """Return a centered viewport with one uniform pixels-per-meter scale."""
     left_m, right_m, back_m, forward_m = extent
     width, height = size
     physical_width = left_m + right_m
@@ -198,6 +223,7 @@ def render_revised_bev_png(
     proximity_radius_m: float = 30.0,
     crossing_arc: tuple[float, float, float] | None = None,
     debug_context: dict[str, Any] | None = None,
+    static_context: BevStaticContext | None = None,
 ) -> None:
     """Render source LCS geometry into a centered ego-heading-up view."""
     width, height = size
@@ -216,7 +242,10 @@ def render_revised_bev_png(
 
     def visible(point):
         longitudinal, lateral = point
-        return -back_m <= longitudinal <= forward_m and -right_m <= lateral <= left_m
+        return (
+            -back_m <= longitudinal <= forward_m
+            and -right_m <= lateral <= left_m
+        )
 
     canvas = PngCanvas(width, height)
     grid = hex_to_rgb("#dbe4ee")
@@ -244,23 +273,32 @@ def render_revised_bev_png(
             alpha=0.82,
         )
 
-    store = recording.get("ld_feature_store") or {}
+    context = static_context or build_bev_static_context(recording)
     nearby = (frame.get("ld") or {}).get("nearby_feature_ids") or {}
-    points_by_id = ld_point_lookup(recording)
-    lookups = {
-        "lane_lines": ld_feature_lookup(recording, "lane_lines", "line_id"),
-        "road_boundaries": ld_feature_lookup(recording, "road_boundaries", "road_boundary_id"),
-        "roadmarks": ld_feature_lookup(recording, "roadmarks", "roadmark_id"),
-    }
+    points_by_id = context.points_by_id
 
     for feature_id in nearby.get("road_boundaries", []):
-        feature = lookups["road_boundaries"].get(str(feature_id))
+        feature = context.road_boundaries.get(str(feature_id))
         if feature:
-            color = "#f59e0b" if str(feature.get("boundary_attribute", "")).lower() == "drivable" else "#b45309"
-            _draw_feature(canvas, _feature_points(feature, points_by_id), ego_position, ego_yaw, screen, extent, color, 3, 0.80)
+            color = (
+                "#f59e0b"
+                if str(feature.get("boundary_attribute", "")).lower() == "drivable"
+                else "#b45309"
+            )
+            _draw_feature(
+                canvas,
+                _feature_points(feature, points_by_id),
+                ego_position,
+                ego_yaw,
+                screen,
+                extent,
+                color,
+                3,
+                0.80,
+            )
 
     for feature_id in nearby.get("roadmarks", []):
-        feature = lookups["roadmarks"].get(str(feature_id))
+        feature = context.roadmarks.get(str(feature_id))
         if feature:
             class_name = str(feature.get("class") or "unknown").lower()
             color = (
@@ -270,14 +308,39 @@ def render_revised_bev_png(
                 if "stopline" in class_name
                 else "#64748b"
             )
-            _draw_feature(canvas, _feature_points(feature, points_by_id), ego_position, ego_yaw, screen, extent, color, 4, 0.88, closed=feature.get("shape_type") == "polygon")
+            _draw_feature(
+                canvas,
+                _feature_points(feature, points_by_id),
+                ego_position,
+                ego_yaw,
+                screen,
+                extent,
+                color,
+                4,
+                0.88,
+                closed=feature.get("shape_type") == "polygon",
+            )
 
     for feature_id in nearby.get("lane_lines", []):
-        feature = lookups["lane_lines"].get(str(feature_id))
+        feature = context.lane_lines.get(str(feature_id))
         if feature:
-            pattern = str((feature.get("attributes") or {}).get("pattern") or "unknown").lower()
-            color, line_width, alpha = LANE_STYLES.get(pattern, LANE_STYLES["unknown"])
-            _draw_feature(canvas, _feature_points(feature, points_by_id), ego_position, ego_yaw, screen, extent, color, line_width, alpha)
+            pattern = str(
+                (feature.get("attributes") or {}).get("pattern") or "unknown"
+            ).lower()
+            color, line_width, alpha = LANE_STYLES.get(
+                pattern, LANE_STYLES["unknown"]
+            )
+            _draw_feature(
+                canvas,
+                _feature_points(feature, points_by_id),
+                ego_position,
+                ego_yaw,
+                screen,
+                extent,
+                color,
+                line_width,
+                alpha,
+            )
 
     if crossing_arc is not None:
         arc_points = _forward_arc_points(*crossing_arc)
@@ -301,6 +364,7 @@ def render_revised_bev_png(
             active_object_ids.update(str(value) for value in evidence.get(key, []))
         if evidence.get("object_track_id") is not None:
             active_object_ids.add(str(evidence["object_track_id"]))
+
     for obj in frame.get("objects", []):
         position = obj.get("position_lcs_m")
         if not position:
@@ -316,7 +380,10 @@ def render_revised_bev_png(
         )
         corners_lcs = _object_corners_lcs(obj, ego_yaw)
         if corners_lcs:
-            corners = [screen(lcs_to_ego(point, ego_position, ego_yaw)) for point in corners_lcs]
+            corners = [
+                screen(lcs_to_ego(point, ego_position, ego_yaw))
+                for point in corners_lcs
+            ]
             outline = (
                 hex_to_rgb(ACTIVE_OBJECT_COLOR)
                 if str(obj.get("object_id")) in active_object_ids
@@ -329,17 +396,30 @@ def render_revised_bev_png(
                 fill=color,
                 outline=outline,
                 alpha=0.18,
-                outline_width=4
-                if str(obj.get("object_id")) == lead_id
-                or str(obj.get("object_id")) in active_object_ids
-                else 2,
+                outline_width=(
+                    4
+                    if str(obj.get("object_id")) == lead_id
+                    or str(obj.get("object_id")) in active_object_ids
+                    else 2
+                ),
             )
         sx, sy = screen(center_ego)
         canvas.circle(sx, sy, 5, color, alpha=1.0)
 
     ego_corners = [(2.4, 1.0), (2.4, -1.0), (-2.4, -1.0), (-2.4, 1.0)]
-    canvas.polygon([screen(point) for point in ego_corners], hex_to_rgb("#22c55e"), hex_to_rgb("#166534"), alpha=0.34, outline_width=4)
+    canvas.polygon(
+        [screen(point) for point in ego_corners],
+        hex_to_rgb("#22c55e"),
+        hex_to_rgb("#166534"),
+        alpha=0.34,
+        outline_width=4,
+    )
     nose = [(3.0, 0.0), (1.6, 0.7), (1.6, -0.7)]
-    canvas.polygon([screen(point) for point in nose], hex_to_rgb("#166534"), hex_to_rgb("#166534"), alpha=0.9)
+    canvas.polygon(
+        [screen(point) for point in nose],
+        hex_to_rgb("#166534"),
+        hex_to_rgb("#166534"),
+        alpha=0.9,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save_png(output_path)
