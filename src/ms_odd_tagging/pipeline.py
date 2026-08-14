@@ -34,7 +34,7 @@ def run_stage(index: int, total: int, module: str, arguments: list[str]) -> None
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run canonicalization -> timestamp-sampled frame inputs and BEVs."
+        description="Run canonicalization -> explorer-aligned per-frame inputs and BEVs."
     )
     parser.add_argument("recordings", nargs="+", help="Recording IDs to process.")
     parser.add_argument("--source-root", type=Path, default=DATA_RAW)
@@ -51,12 +51,6 @@ def parse_args() -> argparse.Namespace:
         help="Compatibility alias for --canonical-mode odld.",
     )
     parser.add_argument("--ld-radius-m", type=float, default=100.0)
-    parser.add_argument(
-        "--bev-style",
-        choices=("standard", "explorer_aligned"),
-        default="standard",
-        help="Per-frame BEV rendering style.",
-    )
     parser.add_argument("--frame-limit", type=int, default=None)
     sampling = parser.add_mutually_exclusive_group()
     sampling.add_argument(
@@ -84,11 +78,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     canonical_root = args.output_root / "01_canonical"
-    frame_input_root = (
-        args.output_root / "02_frame_inputs_revised"
-        if args.bev_style == "explorer_aligned"
-        else args.output_root / "02_frame_inputs"
-    )
+    frame_input_root = args.output_root / "02_frame_inputs"
     canonical_mode = "odld" if args.odld else args.canonical_mode
     canonical_args = [
         "--mode", canonical_mode,
@@ -109,7 +99,6 @@ def main() -> int:
         return 0
 
     model_args = [
-        "--bev-style", args.bev_style,
         "--input-dir", str(canonical_root),
         "--output-dir", str(frame_input_root),
     ]
