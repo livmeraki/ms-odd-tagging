@@ -8,6 +8,7 @@ import html
 import json
 from pathlib import Path
 
+from ms_odd_tagging.common.atomic_io import atomic_write_text, staged_directory
 from ms_odd_tagging.tagger.rule_based.registry import (
     detect_recording_events,
     load_config,
@@ -94,7 +95,8 @@ def build_recording(
         )
     )
     rule_path = recording_dir / "recording_rule_events.json"
-    rule_path.write_text(
+    atomic_write_text(
+        rule_path,
         json.dumps(
             {
                 "schema_version": "rule-based-scenario-events-v1",
@@ -106,7 +108,6 @@ def build_recording(
             ensure_ascii=False,
             indent=2,
         ),
-        encoding="utf-8",
     )
     frame_tags_dir = recording_dir / "recording_frame_tags_1fps"
     frame_tags_manifest = export_frame_tag_files(
@@ -135,9 +136,7 @@ def build_recording(
     for frame in selected_frames:
         sample_start = profiler.sample_start() if profiler is not None else 0.0
         index = frame["frame_index"]
-        frame_dir = recording_dir / f"frame_{index:06d}"
-        ensure_dir(frame_dir)
-        bev_path = frame_dir / "bev.png"
+        final_frame_dir = recording_dir / f"frame_{index:06d}"
         lane_frame = lane_frames.get(index)
         derivation_context = build_direct_derivation_context(
             index,
@@ -146,68 +145,80 @@ def build_recording(
             lane_frame,
         )
         crossing_config = config["object_path_crossing_interactions"]
-        render_revised_bev_png(
-            recording,
-            frame,
-            bev_path,
-            extent,
-            size,
-            lane_context=lane_frame,
-            proximity_radius_m=float(
-                config["object_relations"]["generic_proximity_radius_m"]
-            ),
-            crossing_arc=(
-                float(crossing_config["arc_inner_radius_m"]),
-                float(crossing_config["arc_outer_radius_m"]),
-                float(crossing_config["arc_half_angle_deg"]),
-            ),
-            debug_context=derivation_context,
-        )
-        payload = build_frame_json(
-            recording,
-            frame,
-            canonical_path,
-            bev_path.name,
-            max_objects=max_objects,
-        )
-        centered_left, centered_right, centered_back, centered_forward = centered_extent(extent)
-        payload["bev"].update(
-            {
-                "renderer": "explorer-aligned-revised-v1",
-                "orientation": "ego-heading-up",
-                "ego_position": "center",
-                "annotations": [
-                    "footprint_proximity_boundary",
-                    "phase3c_forward_arc",
-                    "active_rule_object_highlight",
-                ],
-                "footprint_proximity_radius_m": float(
+
+        with staged_directory(final_frame_dir) as frame_dir:
+            bev_path = frame_dir / "bev.png"
+            render_revised_bev_png(
+                recording,
+                frame,
+                bev_path,
+                extent,
+                size,
+                lane_context=lane_frame,
+                proximity_radius_m=float(
                     config["object_relations"]["generic_proximity_radius_m"]
                 ),
-                "extent_m": {
-                    "left": centered_left,
-                    "right": centered_right,
-                    "behind": centered_back,
-                    "ahead": centered_forward,
-                },
-                "configured_extent_m": {
-                    "left": extent[0],
-                    "right": extent[1],
-                    "behind": extent[2],
-                    "ahead": extent[3],
-                },
-            }
-        )
-        frame_path = frame_dir / "frame.json"
-        frame_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        gt_reference_path = frame_dir / "gt_reference.json"
-        gt_reference_path.write_text(
-            json.dumps(derivation_context, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+                crossing_arc=(
+                    float(crossing_config["arc_inner_radius_m"]),
+                    float(crossing_config["arc_outer_radius_m"]),
+                    float(crossing_config["arc_half_angle_deg"]),
+                ),
+                debug_context=derivation_context,
+            )
+            payload = build_frame_json(
+                recording,
+                frame,
+                canonical_path,
+                bev_path.name,
+                max_objects=max_objects,
+            )
+            centered_left, centered_right, centered_back, centered_forward = centered_extent(extent)
+            payload["bev"].update(
+                {
+                    "renderer": "explorer-aligned-revised-v1",
+                    "orientation": "ego-heading-up",
+                    "ego_position": "center",
+                    "annotations": [
+                        "footprint_proximity_boundary",
+                        "phase3c_forward_arc",
+                        "active_rule_object_highlight",
+                    ],
+                    "footprint_proximity_radius_m": float(
+                        config["object_relations"]["generic_proximity_radius_m"]
+                    ),
+                    "extent_m": {
+                        "left": centered_left,
+                        "right": centered_right,
+                        "behind": centered_back,
+                        "ahead": centered_forward,
+                    },
+                    "configured_extent_m": {
+                        "left": extent[0],
+                        "right": extent[1],
+                        "behind": extent[2],
+                        "ahead": extent[3],
+                    },
+                }
+            )
+            frame_path = frame_dir / "frame.json"
+            frame_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            gt_reference_path = frame_dir / "gt_reference.json"
+            gt_reference_path.write_text(
+                json.dumps(derivation_context, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+        final_bev_path = final_frame_dir / "bev.png"
+        final_frame_path = final_frame_dir / "frame.json"
+        final_gt_reference_path = final_frame_dir / "gt_reference.json"
         if profiler is not None:
             profiler.record_sample(
-                index, sample_start, [bev_path, frame_path, gt_reference_path]
+                index,
+                sample_start,
+                [final_bev_path, final_frame_path, final_gt_reference_path],
             )
         rows.append(
             {
@@ -215,9 +226,9 @@ def build_recording(
                 "frame_id": payload["frame_id"],
                 "frame_index": index,
                 "time_since_start_s": payload["time_since_start_s"],
-                "frame_json": str(frame_path),
-                "bev": str(bev_path),
-                "relative_bev": bev_path.relative_to(output_dir).as_posix(),
+                "frame_json": str(final_frame_path),
+                "bev": str(final_bev_path),
+                "relative_bev": final_bev_path.relative_to(output_dir).as_posix(),
             }
         )
         progress.advance(f"frame {index}")
@@ -247,7 +258,8 @@ def write_review_html(output_dir: Path, rows: list[dict]) -> Path:
             "</article>"
         )
     path = output_dir / "bev_review.html"
-    path.write_text(
+    atomic_write_text(
+        path,
         """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Per-frame BEV review</title><style>
@@ -259,7 +271,6 @@ h1{font-size:22px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minma
 """
         + "\n".join(cards)
         + "\n</main></body></html>\n",
-        encoding="utf-8",
     )
     return path
 
@@ -332,7 +343,10 @@ def main() -> int:
         recording_progress.advance(
             f"{summary['recording_id']}: {summary['generated_frame_count']} frames"
         )
-    (args.output_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_text(
+        args.output_dir / "manifest.json",
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+    )
     review_path = write_review_html(args.output_dir, review_rows)
     print(f"Generated {len(review_rows)} BEV(s).")
     print(f"Review: {review_path}")
