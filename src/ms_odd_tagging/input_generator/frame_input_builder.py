@@ -33,6 +33,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--right-m", type=float, default=45.0)
     parser.add_argument("--back-m", type=float, default=25.0)
     parser.add_argument("--forward-m", type=float, default=95.0)
+    parser.add_argument(
+        "--refresh-analysis",
+        action="store_true",
+        help="Recompute recording-wide rule/lane analysis instead of using its cache.",
+    )
     parser.add_argument("--profile-generation", action="store_true")
     return parser.parse_args(argv)
 
@@ -68,6 +73,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         forwarded.append("--all-frames")
     else:
         forwarded.extend(["--frames-per-second", str(args.frames_per_second)])
+    if args.refresh_analysis:
+        forwarded.append("--refresh-analysis")
     if args.profile_generation:
         forwarded.append("--profile-generation")
     return _forward_main(frame_input_revised.main, forwarded)
