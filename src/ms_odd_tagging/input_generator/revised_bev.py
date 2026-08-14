@@ -161,6 +161,32 @@ def centered_extent(extent: tuple[float, float, float, float]) -> tuple[float, f
     return half_width, half_width, half_length, half_length
 
 
+def metric_viewport(
+    extent: tuple[float, float, float, float],
+    size: tuple[int, int],
+) -> tuple[float, float, float, float, float]:
+    """Return a centered viewport with one uniform pixels-per-meter scale.
+
+    The drawable BEV keeps the physical left/right and longitudinal dimensions
+    proportional. Any mismatch between canvas and physical aspect ratios is
+    represented as empty margins instead of stretching scene geometry.
+    """
+    left_m, right_m, back_m, forward_m = extent
+    width, height = size
+    physical_width = left_m + right_m
+    physical_height = back_m + forward_m
+    if physical_width <= 0 or physical_height <= 0:
+        raise ValueError("BEV extent dimensions must be positive")
+    if width <= 0 or height <= 0:
+        raise ValueError("BEV image dimensions must be positive")
+    scale = min(width / physical_width, height / physical_height)
+    draw_width = physical_width * scale
+    draw_height = physical_height * scale
+    origin_x = (width - draw_width) / 2.0
+    origin_y = (height - draw_height) / 2.0
+    return scale, origin_x, origin_y, draw_width, draw_height
+
+
 def render_revised_bev_png(
     recording: dict[str, Any],
     frame: dict[str, Any],
@@ -177,17 +203,16 @@ def render_revised_bev_png(
     width, height = size
     extent = centered_extent(extent)
     left_m, right_m, back_m, forward_m = extent
-    scale_x = width / (left_m + right_m)
-    scale_y = height / (back_m + forward_m)
-    center_x = width / 2.0
-    center_y = height / 2.0
+    scale, origin_x, origin_y, draw_width, draw_height = metric_viewport(extent, size)
+    center_x = origin_x + draw_width / 2.0
+    center_y = origin_y + draw_height / 2.0
     ego = frame["ego"]
     ego_position = ego["position_lcs_m"]
     ego_yaw = ego_heading(ego)
 
     def screen(point):
         longitudinal, lateral = point
-        return center_x - lateral * scale_x, center_y - longitudinal * scale_y
+        return center_x - lateral * scale, center_y - longitudinal * scale
 
     def visible(point):
         longitudinal, lateral = point
@@ -195,12 +220,16 @@ def render_revised_bev_png(
 
     canvas = PngCanvas(width, height)
     grid = hex_to_rgb("#dbe4ee")
+    viewport_left = origin_x
+    viewport_right = origin_x + draw_width
+    viewport_top = origin_y
+    viewport_bottom = origin_y + draw_height
     for lateral in range(-int(right_m), int(left_m) + 1, 10):
         x, _ = screen((0, lateral))
-        canvas.line(x, 0, x, height - 1, grid, width=1, alpha=0.65)
+        canvas.line(x, viewport_top, x, viewport_bottom, grid, width=1, alpha=0.65)
     for longitudinal in range(-int(back_m), int(forward_m) + 1, 10):
         _, y = screen((longitudinal, 0))
-        canvas.line(0, y, width - 1, y, grid, width=1, alpha=0.65)
+        canvas.line(viewport_left, y, viewport_right, y, grid, width=1, alpha=0.65)
 
     proximity = _footprint_buffer_points(4.8, 2.0, proximity_radius_m)
     proximity_screen = [screen(point) for point in proximity]
