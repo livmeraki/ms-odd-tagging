@@ -36,34 +36,6 @@ def test_canonical_builder_dispatches_od(monkeypatch) -> None:
     assert captured["argv"][-1] == "recording-b"
 
 
-def test_frame_input_builder_dispatches_standard(monkeypatch, tmp_path) -> None:
-    captured = {}
-
-    def fake_forward(module_main, argv):
-        captured["module_main"] = module_main
-        captured["argv"] = argv
-        return 0
-
-    monkeypatch.setattr(frame_input_builder, "_forward_main", fake_forward)
-    result = frame_input_builder.main(
-        [
-            "--bev-style",
-            "standard",
-            "--input-dir",
-            str(tmp_path / "in"),
-            "--output-dir",
-            str(tmp_path / "out"),
-            "--recording",
-            "recording-a",
-        ]
-    )
-    assert result == 0
-    assert captured["module_main"] is frame_input_builder.frame_input.main
-    assert "--ld-line-patterns" in captured["argv"]
-    assert captured["argv"][captured["argv"].index("--width") + 1] == "1000"
-    assert captured["argv"][captured["argv"].index("--height") + 1] == "900"
-
-
 def test_frame_input_builder_dispatches_explorer_aligned(monkeypatch, tmp_path) -> None:
     captured = {}
 
@@ -75,26 +47,32 @@ def test_frame_input_builder_dispatches_explorer_aligned(monkeypatch, tmp_path) 
     monkeypatch.setattr(frame_input_builder, "_forward_main", fake_forward)
     result = frame_input_builder.main(
         [
-            "--bev-style",
-            "revised",
             "--input-dir",
             str(tmp_path / "in"),
             "--output-dir",
             str(tmp_path / "out"),
+            "--recording",
+            "recording-a",
         ]
     )
     assert result == 0
     assert captured["module_main"] is frame_input_builder.frame_input_revised.main
-    assert "--ld-line-patterns" not in captured["argv"]
     assert captured["argv"][captured["argv"].index("--width") + 1] == "900"
     assert captured["argv"][captured["argv"].index("--height") + 1] == "1200"
+    assert "--bev-style" not in captured["argv"]
 
 
-def test_frame_input_builder_preserves_explicit_explorer_size() -> None:
+def test_frame_input_builder_defaults_to_02_frame_inputs() -> None:
+    args = frame_input_builder.parse_args([])
+    assert args.output_dir.name == "02_frame_inputs"
+    assert args.width == 900
+    assert args.height == 1200
+    assert not hasattr(args, "bev_style")
+
+
+def test_frame_input_builder_preserves_explicit_size() -> None:
     args = frame_input_builder.parse_args(
         [
-            "--bev-style",
-            "explorer_aligned",
             "--width",
             "750",
             "--height",
