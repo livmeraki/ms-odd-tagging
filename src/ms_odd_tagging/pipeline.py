@@ -34,21 +34,40 @@ def run_stage(index: int, total: int, module: str, arguments: list[str]) -> None
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run 01 canonical -> 02 timestamp-sampled frame inputs and BEVs."
+        description="Run canonicalization -> timestamp-sampled frame inputs and BEVs."
     )
     parser.add_argument("recordings", nargs="+", help="Recording IDs to process.")
     parser.add_argument("--source-root", type=Path, default=DATA_RAW)
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
-    parser.add_argument("--odld", action="store_true", help="Use OD+LD canonicalization.")
+    parser.add_argument(
+        "--canonical-mode",
+        choices=("od", "odld"),
+        default="od",
+        help="Canonical source mode. --odld remains a compatibility alias.",
+    )
+    parser.add_argument(
+        "--odld",
+        action="store_true",
+        help="Compatibility alias for --canonical-mode odld.",
+    )
     parser.add_argument("--ld-radius-m", type=float, default=100.0)
+    parser.add_argument(
+        "--bev-style",
+        choices=("standard", "explorer_aligned"),
+        default="standard",
+        help="Per-frame BEV rendering style.",
+    )
     parser.add_argument("--frame-limit", type=int, default=None)
     sampling = parser.add_mutually_exclusive_group()
     sampling.add_argument(
-        "--frames-per-second", type=float, default=1.0,
+        "--frames-per-second",
+        type=float,
+        default=1.0,
         help="BEV/model-input sampling rate (default: 1.0).",
     )
     sampling.add_argument(
-        "--all-frames", action="store_true",
+        "--all-frames",
+        action="store_true",
         help="Generate a BEV and model input for every canonical frame.",
     )
     parser.add_argument(
@@ -57,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile-generation",
         action="store_true",
-        help="Write optional frame-generation profiling artifacts under output-root/02_frame_inputs/profiling.",
+        help="Write optional frame-generation profiling artifacts.",
     )
     return parser.parse_args()
 
@@ -65,25 +84,35 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     canonical_root = args.output_root / "01_canonical"
-    frame_input_root = args.output_root / "02_frame_inputs"
-    canonical_module = (
-        "ms_odd_tagging.input_generator.canonical_odld"
-        if args.odld
-        else "ms_odd_tagging.input_generator.canonical"
+    frame_input_root = (
+        args.output_root / "02_frame_inputs_revised"
+        if args.bev_style == "explorer_aligned"
+        else args.output_root / "02_frame_inputs"
     )
+    canonical_mode = "odld" if args.odld else args.canonical_mode
     canonical_args = [
+        "--mode", canonical_mode,
         "--source-root", str(args.source_root),
         "--output-root", str(canonical_root),
     ]
-    if args.odld:
+    if canonical_mode == "odld":
         canonical_args.extend(["--ld-radius-m", str(args.ld_radius_m)])
     canonical_args.extend(args.recordings)
     stage_total = 1 if args.stop_after == "canonical" else 2
-    run_stage(1, stage_total, canonical_module, canonical_args)
+    run_stage(
+        1,
+        stage_total,
+        "ms_odd_tagging.input_generator.canonical_builder",
+        canonical_args,
+    )
     if args.stop_after == "canonical":
         return 0
 
-    model_args = ["--input-dir", str(canonical_root), "--output-dir", str(frame_input_root)]
+    model_args = [
+        "--bev-style", args.bev_style,
+        "--input-dir", str(canonical_root),
+        "--output-dir", str(frame_input_root),
+    ]
     for recording in args.recordings:
         model_args.extend(["--recording", recording])
     if args.frame_limit is not None:
@@ -94,7 +123,12 @@ def main() -> int:
         model_args.extend(["--frames-per-second", str(args.frames_per_second)])
     if args.profile_generation:
         model_args.append("--profile-generation")
-    run_stage(2, stage_total, "ms_odd_tagging.input_generator.frame_input", model_args)
+    run_stage(
+        2,
+        stage_total,
+        "ms_odd_tagging.input_generator.frame_input_builder",
+        model_args,
+    )
     return 0
 
 
