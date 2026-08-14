@@ -9,9 +9,15 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Any
+from typing import Any, Callable, Iterable
 
 Clock = Callable[[], float]
+FRAME_STAGE_FIELDS = (
+    "bev_render_time_s",
+    "frame_json_time_s",
+    "sidecar_write_time_s",
+    "publish_time_s",
+)
 
 
 def finalize_profile(profiler: "GenerationProfiler | None") -> None:
@@ -52,6 +58,17 @@ def pct(numerator: int | float, denominator: int | float) -> float | None:
     return (float(numerator) / float(denominator) * 100.0) if denominator else None
 
 
+def _stats(values: list[float]) -> dict[str, float]:
+    return {
+        "average": statistics.fmean(values) if values else 0.0,
+        "median": statistics.median(values) if values else 0.0,
+        "minimum": min(values) if values else 0.0,
+        "maximum": max(values) if values else 0.0,
+        "p95": p95(values),
+        "total": sum(values),
+    }
+
+
 @dataclass
 class RecordingProfile:
     recording_id: str
@@ -59,6 +76,7 @@ class RecordingProfile:
     start_time_s: float
     output_size_bytes: int = 0
     processed_frames: int = 0
+    setup_stage_times_s: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -85,10 +103,24 @@ class GenerationProfiler:
             return
         self.current.output_size_bytes += files_size(paths)
 
+    def record_recording_stage(self, name: str, elapsed_s: float) -> None:
+        if self.current is None:
+            return
+        self.current.setup_stage_times_s[name] = (
+            self.current.setup_stage_times_s.get(name, 0.0) + max(float(elapsed_s), 0.0)
+        )
+
     def sample_start(self) -> float:
         return self.clock()
 
-    def record_sample(self, frame_index: int, sample_start_s: float, output_paths: Iterable[Path]) -> None:
+    def record_sample(
+        self,
+        frame_index: int,
+        sample_start_s: float,
+        output_paths: Iterable[Path],
+        *,
+        stage_times: dict[str, float] | None = None,
+    ) -> None:
         if self.current is None:
             return
         now = self.clock()
@@ -99,6 +131,10 @@ class GenerationProfiler:
         frame_time = max(now - sample_start_s, 0.0)
         processing_fps = self.current.processed_frames / elapsed if elapsed > 0 else 0.0
         increase = self.current.output_size_bytes - self.current.input_size_bytes
+        stages = {field: 0.0 for field in FRAME_STAGE_FIELDS}
+        for key, value in (stage_times or {}).items():
+            if key in stages:
+                stages[key] = max(float(value), 0.0)
         self.rows.append(
             {
                 "recording_id": self.current.recording_id,
@@ -107,6 +143,7 @@ class GenerationProfiler:
                 "elapsed_generation_time_s": elapsed,
                 "frame_generation_time_s": frame_time,
                 "processing_fps": processing_fps,
+                **stages,
                 "cumulative_output_size_bytes": self.current.output_size_bytes,
                 "cumulative_output_size_mb": mb(self.current.output_size_bytes),
                 "input_size_bytes": self.current.input_size_bytes,
@@ -136,6 +173,7 @@ class GenerationProfiler:
                     if self.current.input_size_bytes
                     else None
                 ),
+                "setup_stage_times_s": dict(self.current.setup_stage_times_s),
             }
         )
         self.current = None
@@ -146,17 +184,21 @@ class GenerationProfiler:
         total_processed = len(self.rows)
         total_input = sum(int(item["input_size_bytes"]) for item in self.recordings)
         total_output = sum(int(item["generated_output_size_bytes"]) for item in self.recordings)
+        stage_summary = {
+            field: _stats([float(row.get(field, 0.0)) for row in self.rows])
+            for field in FRAME_STAGE_FIELDS
+        }
+        setup_totals: dict[str, float] = {}
+        for recording in self.recordings:
+            for name, value in recording.get("setup_stage_times_s", {}).items():
+                setup_totals[name] = setup_totals.get(name, 0.0) + float(value)
         return {
-            "schema_version": "generation-profile-summary-v1",
+            "schema_version": "generation-profile-summary-v2",
             "total_execution_time_s": total_execution_time,
             "total_processed_frames": total_processed,
-            "frame_generation_time_s": {
-                "average": statistics.fmean(frame_times) if frame_times else 0.0,
-                "median": statistics.median(frame_times) if frame_times else 0.0,
-                "minimum": min(frame_times) if frame_times else 0.0,
-                "maximum": max(frame_times) if frame_times else 0.0,
-                "p95": p95(frame_times),
-            },
+            "frame_generation_time_s": _stats(frame_times),
+            "frame_stage_time_s": stage_summary,
+            "recording_setup_stage_time_s": setup_totals,
             "average_processing_fps": total_processed / total_execution_time if total_execution_time > 0 else 0.0,
             "total_input_size_bytes": total_input,
             "total_input_size_mb": mb(total_input),
@@ -194,7 +236,19 @@ class GenerationProfiler:
         frame_times = summary["frame_generation_time_s"]
         ratio = summary["storage_expansion_ratio"]
         ratio_text = f"{ratio:.2f}x" if isinstance(ratio, (int, float)) else "n/a"
-        return (
+        stage_totals = {
+            key: float(value["total"])
+            for key, value in summary["frame_stage_time_s"].items()
+        }
+        ranked = sorted(stage_totals.items(), key=lambda item: item[1], reverse=True)
+        stage_text = ", ".join(
+            f"{name.removesuffix('_time_s')}={value:.2f}s" for name, value in ranked
+        )
+        setup_text = ", ".join(
+            f"{name}={value:.2f}s"
+            for name, value in sorted(summary["recording_setup_stage_time_s"].items())
+        )
+        parts = [
             "Generation profile: "
             f"{summary['total_processed_frames']} frames, "
             f"{summary['total_execution_time_s']:.3f}s total, "
@@ -203,7 +257,12 @@ class GenerationProfiler:
             f"avg {summary['average_processing_fps']:.2f} FPS, "
             f"output {summary['total_generated_output_size_mb']:.2f} MB, "
             f"expansion {ratio_text}"
-        )
+        ]
+        if stage_text:
+            parts.append(f"Frame stages: {stage_text}")
+        if setup_text:
+            parts.append(f"Recording setup: {setup_text}")
+        return "\n".join(parts)
 
     def _write_csv(self, path: Path) -> None:
         fields = [
@@ -213,6 +272,7 @@ class GenerationProfiler:
             "elapsed_generation_time_s",
             "frame_generation_time_s",
             "processing_fps",
+            *FRAME_STAGE_FIELDS,
             "cumulative_output_size_bytes",
             "cumulative_output_size_mb",
             "input_size_bytes",
