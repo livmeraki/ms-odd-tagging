@@ -40,12 +40,20 @@ def _source_stamp(callable_obj: Callable[..., Any]) -> dict[str, Any]:
     }
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _canonical_stamp(canonical_path: Path) -> dict[str, Any]:
     stat = canonical_path.stat()
     return {
         "name": canonical_path.name,
-        "mtime_ns": stat.st_mtime_ns,
         "size": stat.st_size,
+        "sha256": _file_sha256(canonical_path),
     }
 
 
@@ -55,7 +63,7 @@ def analysis_signature(
     detect_recording_events: Callable[..., Any],
     run_following_lane: Callable[..., Any],
 ) -> dict[str, Any]:
-    """Return a cheap signature that invalidates when inputs or analysis code change."""
+    """Return a signature that invalidates when data, config, or analysis code change."""
     return {
         "schema_version": CACHE_SCHEMA_VERSION,
         "canonical": _canonical_stamp(canonical_path),
