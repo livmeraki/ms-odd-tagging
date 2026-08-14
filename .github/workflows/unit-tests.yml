@@ -23,6 +23,7 @@ jobs:
         run: >-
           python -m pytest
           tests/unit/test_bev_renderer.py
+          tests/unit/test_bev_performance_paths.py
           tests/unit/test_input_builders.py
           tests/unit/test_frame_input.py
           tests/unit/test_frame_input_revised.py
