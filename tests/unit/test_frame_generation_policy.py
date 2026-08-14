@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 
 from ms_odd_tagging.input_generator.frame_generation_policy import (
+    ANSI_GREEN,
     choose_existing_output_action,
     completed_frame_matches,
+    format_existing_output_prompt,
     frame_fingerprint,
 )
 
@@ -49,6 +51,22 @@ def test_existing_output_prompt_allows_cancel() -> None:
         )
         == "cancel"
     )
+
+
+def test_existing_output_prompt_is_multiline_and_explains_each_choice() -> None:
+    prompt = format_existing_output_prompt(use_color=False)
+    assert "\n\n  [R] RESUME" in prompt
+    assert "\n  [G] REGENERATE" in prompt
+    assert "\n  [C] CANCEL" in prompt
+    assert "stale/missing/temp" in prompt
+    assert "replace completed outputs safely" in prompt
+    assert "Stop without changing frame outputs" in prompt
+
+
+def test_existing_output_prompt_can_colorize_actions() -> None:
+    prompt = format_existing_output_prompt(use_color=True)
+    assert ANSI_GREEN in prompt
+    assert "[R] RESUME" in prompt
 
 
 def test_noninteractive_ask_requires_explicit_policy() -> None:
