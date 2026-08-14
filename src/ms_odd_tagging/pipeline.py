@@ -65,6 +65,15 @@ def parse_args() -> argparse.Namespace:
         help="Generate a BEV and model input for every canonical frame.",
     )
     parser.add_argument(
+        "--existing-output",
+        choices=("ask", "resume", "regenerate", "cancel"),
+        default="ask",
+        help=(
+            "What to do if 02_frame_inputs already contains frame outputs. "
+            "Default ask prompts; batch jobs should choose explicitly."
+        ),
+    )
+    parser.add_argument(
         "--refresh-analysis",
         action="store_true",
         help="Ignore cached recording-wide rule/lane analysis and recompute it.",
@@ -106,6 +115,7 @@ def main() -> int:
     model_args = [
         "--input-dir", str(canonical_root),
         "--output-dir", str(frame_input_root),
+        "--existing-output", args.existing_output,
     ]
     for recording in args.recordings:
         model_args.extend(["--recording", recording])
