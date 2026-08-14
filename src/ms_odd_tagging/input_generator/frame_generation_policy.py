@@ -5,12 +5,20 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Callable
 
 GENERATION_FINGERPRINT_VERSION = "frame-generation-v1"
 REQUIRED_FRAME_FILES = ("bev.png", "frame.json", "gt_reference.json")
+
+ANSI_RESET = "\033[0m"
+ANSI_BOLD = "\033[1m"
+ANSI_CYAN = "\033[36m"
+ANSI_GREEN = "\033[32m"
+ANSI_YELLOW = "\033[33m"
+ANSI_RED = "\033[31m"
 
 
 def _file_sha256(path: Path) -> str:
@@ -99,6 +107,47 @@ def recording_has_existing_outputs(recording_dir: Path) -> bool:
     return False
 
 
+def _paint(text: str, color: str, *, enabled: bool, bold: bool = False) -> str:
+    if not enabled:
+        return text
+    prefix = f"{ANSI_BOLD if bold else ''}{color}"
+    return f"{prefix}{text}{ANSI_RESET}"
+
+
+def terminal_color_enabled() -> bool:
+    """Use ANSI colors only for an interactive terminal and respect NO_COLOR."""
+    return sys.stdout.isatty() and "NO_COLOR" not in os.environ
+
+
+def format_existing_output_prompt(*, use_color: bool) -> str:
+    """Return a deliberately prominent, line-oriented rerun decision prompt."""
+    title = _paint(
+        "Existing frame inputs were found.",
+        ANSI_CYAN,
+        enabled=use_color,
+        bold=True,
+    )
+    resume = (
+        f"  {_paint('[R] RESUME', ANSI_GREEN, enabled=use_color, bold=True)}"
+        "      Keep matching completed frames; rebuild stale/missing/temp frames."
+    )
+    regenerate = (
+        f"  {_paint('[G] REGENERATE', ANSI_YELLOW, enabled=use_color, bold=True)}"
+        "  Generate all selected frames again and replace completed outputs safely."
+    )
+    cancel = (
+        f"  {_paint('[C] CANCEL', ANSI_RED, enabled=use_color, bold=True)}"
+        "      Stop without changing frame outputs."
+    )
+    instruction = _paint(
+        "Enter R, G, or C: ",
+        ANSI_CYAN,
+        enabled=use_color,
+        bold=True,
+    )
+    return f"\n{title}\n\n{resume}\n{regenerate}\n{cancel}\n\n{instruction}"
+
+
 def choose_existing_output_action(
     requested: str,
     *,
@@ -118,10 +167,7 @@ def choose_existing_output_action(
             "pass --existing-output resume, regenerate, or cancel"
         )
 
-    prompt = (
-        "Existing frame inputs were found. Choose: "
-        "[R]esume matching completed frames / [G]enerate selected frames again / [C]ancel: "
-    )
+    prompt = format_existing_output_prompt(use_color=terminal_color_enabled())
     while True:
         answer = input_fn(prompt).strip().lower()
         if answer in {"r", "resume"}:
@@ -130,4 +176,12 @@ def choose_existing_output_action(
             return "regenerate"
         if answer in {"c", "cancel", "q", "quit"}:
             return "cancel"
-        print("Please enter R, G, or C.", flush=True)
+        print(
+            _paint(
+                "Invalid choice. Please enter R, G, or C.",
+                ANSI_RED,
+                enabled=terminal_color_enabled(),
+                bold=True,
+            ),
+            flush=True,
+        )
