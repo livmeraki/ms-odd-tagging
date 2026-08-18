@@ -587,6 +587,7 @@ def build_recording(
 
     ld_feature_store, ld_indexes = normalize_ld(ld_annotations)
     samples = od.build_object_samples(annotations["objects"], timestamps)
+    persistent_static = od.persisted_static_objects(annotations["objects"])
     visible_at_frame = defaultdict(list)
     out_of_range_od_frame_indices = []
     for obj in annotations["objects"]:
@@ -602,7 +603,12 @@ def build_recording(
     missing_geometry_count = 0
     for frame_index, ego in enumerate(trajectory):
         object_states = []
-        for obj in visible_at_frame[frame_index]:
+        frame_objects = od.frame_objects_with_persisted_static(
+            visible_at_frame[frame_index],
+            persistent_static,
+            ego["position"],
+        )
+        for obj in frame_objects:
             state = od.make_object_state(obj, frame_index, ego, samples)
             if state is None:
                 missing_geometry_count += 1
@@ -714,9 +720,10 @@ def build_recording(
             "ld": ld_feature_store["quality"],
             "notes": [
                 "No source trajectory frame is dropped.",
-                "No object state is forward-filled.",
+                "Dynamic object states are not forward-filled.",
                 "Dynamic geometry uses exact per-frame bbox3d only.",
-                "Static object-level bbox3d is used only on listed visible frames.",
+                "traffic_light_car object-level bbox3d is spatially persisted within 100 m of ego.",
+                "Other static object-level bbox3d remains limited to listed visible frames.",
                 "Lead detection remains an OD-only geometric candidate.",
                 "Object derivatives are omitted across observation gaps over 0.25 s.",
                 "LD is a recording-level static map, not a timestamped sensor stream.",
