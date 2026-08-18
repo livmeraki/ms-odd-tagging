@@ -62,7 +62,7 @@ Lane continuity와 intersection에서의 lane-ID 변화는 여러 detector에 �
 
 모든 threshold를 한 번에 느슨하게 하지 않는다.
 
-### 5. Phase 4 Traffic Interaction Calibration
+### 5. Traffic Interaction Calibration
 
 현재 `poc_requires_calibration` 상태인 scenario를 우선 검증한다.
 
@@ -193,7 +193,7 @@ Korean 문서를 최종 검증한 후 동일 구조를 `docs/handover/ENG/`에 �
 2. Traffic-light persistence
 3. Lane/intersection regression
 4. FN 분석 및 Recall 개선
-5. Phase 4 calibration
+5. Traffic interaction calibration
 6. Following-lane/main registry 정리
 7. PoC/legacy 구조 정리
 8. VLM evidence/runtime 개선
