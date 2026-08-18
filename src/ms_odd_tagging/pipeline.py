@@ -39,17 +39,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("recordings", nargs="+", help="Recording IDs to process.")
     parser.add_argument("--source-root", type=Path, default=DATA_RAW)
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
-    parser.add_argument(
-        "--canonical-mode",
-        choices=("od", "odld"),
-        default="od",
-        help="Canonical source mode. --odld remains a compatibility alias.",
-    )
-    parser.add_argument(
-        "--odld",
-        action="store_true",
-        help="Compatibility alias for --canonical-mode odld.",
-    )
     parser.add_argument("--ld-radius-m", type=float, default=100.0)
     parser.add_argument("--frame-limit", type=int, default=None)
     sampling = parser.add_mutually_exclusive_group()
@@ -93,14 +82,11 @@ def main() -> int:
     args = parse_args()
     canonical_root = args.output_root / "01_canonical"
     frame_input_root = args.output_root / "02_frame_inputs"
-    canonical_mode = "odld" if args.odld else args.canonical_mode
     canonical_args = [
-        "--mode", canonical_mode,
         "--source-root", str(args.source_root),
         "--output-root", str(canonical_root),
+        "--ld-radius-m", str(args.ld_radius_m),
     ]
-    if canonical_mode == "odld":
-        canonical_args.extend(["--ld-radius-m", str(args.ld_radius_m)])
     canonical_args.extend(args.recordings)
     stage_total = 1 if args.stop_after == "canonical" else 2
     run_stage(
