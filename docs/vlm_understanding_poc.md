@@ -41,7 +41,16 @@ Do not begin with scenario tags such as `waiting_for_pedestrian_to_cross`; add t
 
 ## 2. Run a smoke test
 
-With the local OpenAI-compatible vLLM server already running on port 8001:
+Start the local OpenAI-compatible vLLM vision server in one terminal:
+
+```bash
+scripts/vllm/run_vision_server.sh
+```
+
+The launcher uses this repo's `.venv` when `vllm` is installed, otherwise it
+falls back to `../vllm_scenario_tagging/.venv/bin/python` when available.
+
+With that server running on port 8001:
 
 ```bash
 python -m ms_odd_tagging.vlm_understanding_poc.cli \

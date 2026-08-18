@@ -102,6 +102,38 @@ python -m ms_odd_tagging.visualization.scenario_explorer \
 
 ## Per-frame model inference
 
+Start the optional OpenAI-compatible vLLM vision server from this repository
+before running VLM inference or BEV-understanding probes:
+
+```bash
+scripts/vllm/run_vision_server.sh
+```
+
+The launcher uses this repo's `.venv` when it has `vllm` installed. If not, it
+falls back to `../vllm_scenario_tagging/.venv/bin/python` when available. To
+install vLLM directly into this repo instead:
+
+```bash
+python -m pip install -e ".[server]"
+```
+
+Defaults are tuned for the local VLM audit path:
+
+- endpoint: `http://127.0.0.1:8001/v1/chat/completions`
+- model: `Qwen/Qwen3-VL-8B-Instruct`
+- max model length: `16384`
+- multimodal limit: `image=6`
+
+Override the model with a positional argument or override server settings with
+environment variables such as `MS_ODD_VLLM_PORT`, `MS_ODD_VLLM_MAX_MODEL_LEN`,
+`MS_ODD_VLLM_LIMIT_MM_PER_PROMPT`, `MS_ODD_HF_HOME`, and `MS_ODD_VLLM_PYTHON`.
+
+In another terminal, verify the server:
+
+```bash
+scripts/vllm/test_models.sh
+```
+
 ```bash
 python -m ms_odd_tagging.tagger.model_based.local_vllm \
   --recording RECORDING \
