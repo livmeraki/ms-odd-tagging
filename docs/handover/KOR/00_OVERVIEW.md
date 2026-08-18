@@ -48,50 +48,51 @@ OD Annotation + LD Annotation + Ego Trajectory
 1. OD / LD / Ego Trajectory를 canonical representation으로 정합한다.
 2. 수치적으로 명확한 scenario는 deterministic rule로 판별한다.
 3. Lane, crosswalk, stopline, intersection 및 object relation은 geometry와 temporal logic을 사용한다.
-4. 의미적 해석이 필요한 항목은 VLM을 보조적으로 사용하거나 PoC로 분리한다.
-5. 근거가 부족한 label은 억지로 추론하지 않고 unsupported로 남긴다.
+4. 의미적 해석이 필요한 일부 scenario는 VLM을 보조적으로 사용하거나 PoC로 분리한다.
+5. 현재 자동 tagging path가 없는 label은 억지로 추론하지 않고 `unsupported`로 남긴다.
 
 ## 3. Scenario Catalog — Single Source of Truth
 
-Scenario 이름, 처리 방식, 구현 상태는 다음 파일에서 한 번만 관리한다.
+Scenario 이름, 처리 방식, 구현 상태는 다음 파일에서 관리한다.
 
 ```text
 configs/scenario_catalog.csv
 ```
 
-주요 column:
+Catalog는 의도적으로 최소한의 네 column만 사용한다.
 
 ```text
-name | category | methods | status | taxonomy_status | vlm_candidate_group | notes
+name | category | methods | status
 ```
 
-`methods`는 다음과 같이 사용한다.
+각 column의 의미는 다음과 같다.
 
-- `rule`: deterministic rule / geometry / temporal logic
-- `vlm`: VLM inference
-- `rule+vlm`: 두 path가 모두 존재
-- 빈 값: 현재 자동 tagging path가 연결되지 않음
+- `name`: Motional Scenario label
+- `category`: taxonomy grouping (`dynamics`, `interaction`, `zone`, `maneuver`, `behavior`)
+- `methods`: 자동 판별 방식 (`rule`, `vlm`, `rule+vlm`, 또는 빈 값)
+- `status`: 현재 구현 상태 (`active`, `experimental`, `unsupported`)
 
-따라서 Rule/VLM scenario를 확인하기 위해 Python 파일마다 별도 list를 찾지 않고 `scenario_catalog.csv`를 먼저 확인한다.
+`methods`가 빈 값이고 `status=unsupported`인 scenario는 현재 repository에서 Rule 또는 VLM 자동 tagging path가 지원되지 않는 항목이다.
 
-VLM의 candidate scenario와 traffic-light output label은 catalog에서 derive한다. Rule registry와 catalog의 일치 여부는 unit test로 검증한다.
+따라서 Rule/VLM/unsupported 여부를 확인하기 위해 Python 파일이나 handover 문서에 별도 scenario list를 유지하지 않고 `scenario_catalog.csv`를 먼저 확인한다.
+
+VLM candidate grouping과 traffic-light episode 구성은 catalog가 아니라 `qwen_vlm_poc` 내부 구현에서 관리한다. Rule registry와 catalog의 method 일치 여부는 unit test로 검증한다.
 
 자세한 내용은 `04_SCENARIO_STATUS.md`를 확인한다.
 
 ## 4. 현재 구현 범위 요약
 
-주요 구현 범주는 다음과 같다.
+현재 자동화 방식은 크게 다음과 같이 구분된다.
 
-- Ego dynamics: speed band, lateral acceleration, jerk, turn
-- Lane change
-- Crosswalk / stopline relation
-- Nearby object interaction
-- Pedestrian-crosswalk interaction
-- Object path crossing
-- Traffic interaction / lead-trail relation
-- Traffic-light / intersection VLM PoC
+- **Rule — active**: speed, jerk, turn, lane change, crosswalk/stopline relation, nearby object interaction, pedestrian-crosswalk interaction, object path crossing 등
+- **Rule — experimental**: lead/trail 및 traffic interaction 계열 등 추가 calibration이 필요한 rule
+- **VLM — experimental**: `on_intersection`, `starting_u_turn`, traffic-light 관련 semantic scenario 등
+- **Rule + VLM — experimental**: 두 path가 모두 존재하는 scenario. 현재 대표적으로 `waiting_for_pedestrian_to_cross`
+- **Unsupported**: 현재 Rule/VLM 자동 tagging path가 없는 scenario
 
-`implemented`와 production-level validation 완료는 같은 의미가 아니다. 일부 traffic interaction은 `poc_calibration`, VLM 기반 scenario는 `vlm_poc`으로 catalog에서 구분한다.
+특히 stop-sign, pickup/dropoff, protected/unprotected turn, narrow-lane 관련 일부 taxonomy scenario는 현재 `unsupported`로 관리한다. 예를 들어 `accelerating_at_stop_sign`, `on_stopline_stop_sign`, `on_all_way_stop_intersection`, `starting_protected_cross_turn`, `traversing_narrow_lane`, `traversing_pickup_dropoff` 등이 이에 해당한다. 전체 목록은 반드시 `configs/scenario_catalog.csv`를 source of truth로 확인한다.
+
+`active`는 현재 자동 tagging path가 사용 가능한 상태를 의미하며, production-level validation이 모두 완료되었다는 의미는 아니다. `experimental`은 code path는 존재하지만 추가 calibration 또는 evaluation이 필요한 상태이다.
 
 ## 5. 핵심 성과
 
@@ -100,7 +101,7 @@ VLM의 candidate scenario와 traffic-light output label은 catalog에서 derive�
 - full recording에서 dynamic rule event를 계산하고, 선택된 timestamp에는 독립적인 `frame.json`과 `bev.png`를 생성하는 구조를 정리했다.
 - frame-level GT reviewer 및 tagged scenario explorer를 구축하여 rule 결과와 사람이 작성한 GT를 비교할 수 있는 기반을 마련했다.
 - lane continuity, crosswalk/stopline, nearby object, traffic interaction 등 복수의 scenario family를 단계적으로 확장했다.
-- Rule/VLM/unsupported 상태를 하나의 scenario catalog에서 관리하도록 정리했다.
+- Rule/VLM/unsupported 상태를 하나의 lightweight scenario catalog에서 관리하도록 정리했다.
 
 > 정량 성능(F1, Precision/Recall)과 수동 대비 처리 시간 수치는 발표용 실험에서 사용된 값이 있으나, 현재 repository 자체에서 동일 조건의 최종 결과 파일을 바로 확인할 수 없는 항목은 `06_EVALUATION.md`에서 **검증 필요**로 표시한다.
 
@@ -113,6 +114,8 @@ VLM의 candidate scenario와 traffic-light output label은 catalog에서 derive�
 - rule-derived label은 model-facing frame JSON과 분리하여 answer leakage를 방지한다.
 - scenario method/status의 source of truth는 `configs/scenario_catalog.csv`이다.
 - Rule threshold와 runtime enable 설정은 `configs/direct_scenarios.yaml`에서 관리한다.
+- VLM candidate grouping은 `src/ms_odd_tagging/qwen_vlm_poc/` 내부에서 관리한다.
+- `unsupported` scenario는 자동 결과에서 임의로 false 또는 inferred로 처리하지 않는다.
 - 생성 결과, model weight, secret, machine-local config는 Git에 포함하지 않는 것을 원칙으로 한다.
 
 ## 7. Handover Document Guide
