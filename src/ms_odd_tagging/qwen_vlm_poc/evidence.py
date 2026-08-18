@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ms_odd_tagging.input_generator.revised_bev import render_revised_bev_png
+from ms_odd_tagging.frame_inputs.revised_bev import render_revised_bev_png
 
 from .config import TRAFFIC_LIGHT_LABELS, VlmPocConfig
 from .geometry import ego_acceleration, ego_heading, ego_position, ego_speed, motion_state
