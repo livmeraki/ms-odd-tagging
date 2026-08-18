@@ -41,15 +41,6 @@ OD Annotation + LD Annotation + Ego Trajectory
           Motional Scenario Output
 ```
 
-`run_pipeline.py`의 현재 기본 역할은 canonical 생성과 timestamp 기반 frame input/BEV 생성을 순서대로 실행하는 것이다. OD+LD 입력에는 `--odld` 옵션을 사용한다. Rule-based tagging은 별도 registry에서 전체 canonical frame을 대상으로 실행된다.
-
-현재 설계 원칙은 다음과 같다.
-
-1. OD / LD / Ego Trajectory를 canonical representation으로 정합한다.
-2. 수치적으로 명확한 scenario는 deterministic rule로 판별한다.
-3. Lane, crosswalk, stopline, intersection 및 object relation은 geometry와 temporal logic을 사용한다.
-4. 의미적 해석이 필요한 일부 scenario는 VLM을 보조적으로 사용하거나 PoC로 분리한다.
-5. 현재 자동 tagging path가 없는 label은 억지로 추론하지 않고 `unsupported`로 남긴다.
 
 ## 3. Scenario Catalog — Single Source of Truth
 
@@ -59,24 +50,14 @@ Scenario 이름, 처리 방식, 구현 상태는 다음 파일에서 관리한�
 configs/scenario_catalog.csv
 ```
 
-Catalog는 의도적으로 최소한의 네 column만 사용한다.
+각 scenario에 대해:
 
-```text
-name | category | methods | status
-```
+- `rule`
+- `vlm`
+- `rule+vlm`
+- `unsupported`
 
-각 column의 의미는 다음과 같다.
-
-- `name`: Motional Scenario label
-- `category`: taxonomy grouping (`dynamics`, `interaction`, `zone`, `maneuver`, `behavior`)
-- `methods`: 자동 판별 방식 (`rule`, `vlm`, `rule+vlm`, 또는 빈 값)
-- `status`: 현재 구현 상태 (`active`, `experimental`, `unsupported`)
-
-`methods`가 빈 값이고 `status=unsupported`인 scenario는 현재 repository에서 Rule 또는 VLM 자동 tagging path가 지원되지 않는 항목이다.
-
-따라서 Rule/VLM/unsupported 여부를 확인하기 위해 Python 파일이나 handover 문서에 별도 scenario list를 유지하지 않고 `scenario_catalog.csv`를 먼저 확인한다.
-
-VLM candidate grouping과 traffic-light episode 구성은 catalog가 아니라 `qwen_vlm_poc` 내부 구현에서 관리한다. Rule registry와 catalog의 method 일치 여부는 unit test로 검증한다.
+여부를 확인할 수 있다.
 
 자세한 내용은 `04_SCENARIO_STATUS.md`를 확인한다.
 
@@ -103,20 +84,6 @@ VLM candidate grouping과 traffic-light episode 구성은 catalog가 아니라 `
 - lane continuity, crosswalk/stopline, nearby object, traffic interaction 등 복수의 scenario family를 단계적으로 확장했다.
 - Rule/VLM/unsupported 상태를 하나의 lightweight scenario catalog에서 관리하도록 정리했다.
 
-> 정량 성능(F1, Precision/Recall)과 수동 대비 처리 시간 수치는 발표용 실험에서 사용된 값이 있으나, 현재 repository 자체에서 동일 조건의 최종 결과 파일을 바로 확인할 수 없는 항목은 `06_EVALUATION.md`에서 **검증 필요**로 표시한다.
-
-## 6. Repository에서 먼저 알아둘 것
-
-- 기본 canonical schema: `od-trajectory-canonical-frame-v1`
-- OD+LD experimental schema: `odld-trajectory-canonical-frame-v1`
-- frame input은 기본 1 FPS이며, 각 timestamp마다 독립적인 `frame.json` + `bev.png`를 생성한다.
-- Rule-based dynamic tagging은 1 FPS 샘플만 보는 것이 아니라 전체 canonical frame을 평가한다.
-- rule-derived label은 model-facing frame JSON과 분리하여 answer leakage를 방지한다.
-- scenario method/status의 source of truth는 `configs/scenario_catalog.csv`이다.
-- Rule threshold와 runtime enable 설정은 `configs/direct_scenarios.yaml`에서 관리한다.
-- VLM candidate grouping은 `src/ms_odd_tagging/qwen_vlm_poc/` 내부에서 관리한다.
-- `unsupported` scenario는 자동 결과에서 임의로 false 또는 inferred로 처리하지 않는다.
-- 생성 결과, model weight, secret, machine-local config는 Git에 포함하지 않는 것을 원칙으로 한다.
 
 ## 7. Handover Document Guide
 
