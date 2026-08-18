@@ -10,7 +10,7 @@ behind_pedestrian_on_driveable,interaction,rule,experimental
 behind_pedestrian_on_pickup_dropoff,interaction,,unsupported
 crossed_by_bike,interaction,rule,active
 crossed_by_vehicle,interaction,rule,active
-waiting_for_pedestrian_to_cross,interaction,rule+vlm,experimental
+waiting_for_pedestrian_to_cross,interaction,rule,experimental
 near_barrier_on_driveable,interaction,rule,experimental
 near_construction_zone_sign,interaction,,unsupported
 near_high_speed_vehicle,interaction,rule,active
