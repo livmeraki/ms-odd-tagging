@@ -13,7 +13,7 @@
 
 > `enabled_scenarios`에 이름이 있다고 해서 충분한 production validation까지 완료되었다는 뜻은 아니다.
 
-## 2. Phase 1 — Ego Dynamics / Turn
+## 2. Ego Dynamics / Turn
 
 | Scenario | 상태 | 방식 | 비고 |
 |---|---|---|---|
@@ -28,7 +28,7 @@
 | `starting_low_speed_turn` | Implemented | Temporal Rule | turn + trigger speed |
 | `starting_high_speed_turn` | Implemented | Temporal Rule | turn + trigger speed |
 
-## 3. Phase 2 — Lane Change
+## 3. Lane Change
 
 | Scenario | 상태 | 방식 | 비고 |
 |---|---|---|---|
@@ -38,7 +38,7 @@
 
 Intersection 내부의 lane-ID 변화가 false lane change로 잡히지 않도록 suppression/stability logic이 존재한다.
 
-## 4. Phase 2B — Crosswalk / Stopline
+## 4. Crosswalk / Stopline
 
 | Scenario | 상태 | 방식 |
 |---|---|---|
@@ -50,7 +50,7 @@ Intersection 내부의 lane-ID 변화가 false lane change로 잡히지 않도�
 
 Threshold는 `configs/direct_scenarios.yaml`의 `road_feature_relations`를 확인한다.
 
-## 5. Phase 3A — Nearby Object Interaction
+## 5. Nearby Object Interaction
 
 | Scenario | 상태 | 방식 |
 |---|---|---|
@@ -63,14 +63,14 @@ Threshold는 `configs/direct_scenarios.yaml`의 `road_feature_relations`를 확�
 
 Object association과 velocity 추정 품질에 영향을 받으므로 visual review가 필요하다.
 
-## 6. Phase 3B — Pedestrian / Crosswalk
+## 6. Pedestrian / Crosswalk Interaction
 
 | Scenario | 상태 | 방식 |
 |---|---|---|
 | `near_pedestrian_on_crosswalk` | Implemented | Pedestrian-crosswalk overlap / edge distance |
 | `near_pedestrian_on_crosswalk_with_ego` | Implemented | 위 조건 + ego proximity relation |
 
-## 7. Phase 3C — Object Path Crossing
+## 7. Object Path Crossing
 
 | Scenario | 상태 | 방식 |
 |---|---|---|
@@ -78,9 +78,9 @@ Object association과 velocity 추정 품질에 영향을 받으므로 visual re
 | `crossed_by_motorcycle` | Implemented | Ego forward arc/path crossing |
 | `crossed_by_vehicle` | Implemented | Ego forward arc/path crossing |
 
-현재 detector version은 `phase3c-forward-arc-crossing-v3`이다.
+현재 config의 detector version 문자열은 `phase3c-forward-arc-crossing-v3`이다. 이는 개발 이력에서 이어진 이름이며, 현재 handover에서는 별도의 Phase 구분으로 사용하지 않는다.
 
-## 8. Phase 4 — Traffic Interaction
+## 8. Traffic / Lead-Trail Interaction
 
 아래 항목은 active rule registry에는 포함되어 있으나 configuration provenance가 `poc_requires_calibration`으로 명시되어 있다. 따라서 **구현됨 = 검증 완료**로 해석하지 않는다.
 
@@ -105,7 +105,7 @@ Repository에는 별도 `src/ms_odd_tagging/scenarios/following_lane/` package�
 - `following_lane_with_lead`
 - `following_lane_without_lead`
 
-이 두 항목은 **현재 `RULE_BASED_SCENARIOS` constant에는 포함되어 있지 않으므로**, Phase 1~4 registry와 별도 pipeline을 혼동하지 않는다.
+이 두 항목은 **현재 `RULE_BASED_SCENARIOS` constant에는 포함되어 있지 않으므로**, main rule registry와 별도 following-lane pipeline을 혼동하지 않는다.
 
 ## 10. Traffic-light 관련 상태
 
