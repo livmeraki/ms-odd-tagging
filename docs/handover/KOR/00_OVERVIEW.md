@@ -69,8 +69,6 @@ Scenario별 상세 지원 현황과 상태 기준은 `04_SCENARIO_STATUS.md`를 
 
 ## 5. Handover Document Guide
 
-> **READ THIS FIRST, THEN FOLLOW THIS ORDER**
-
 | 순서 | 문서 | 목적 |
 |---:|---|---|
 | 00 | `00_OVERVIEW.md` | 프로젝트 배경, 목적, 구조, 현재 범위 |
@@ -86,7 +84,7 @@ Scenario별 상세 지원 현황과 상태 기준은 `04_SCENARIO_STATUS.md`를 
 
 처음 인수받은 경우에는 다음 순서를 권장한다.
 
-**Overview → Setup & Run → Scenario Status → Known Issues**
+**Overview → Setup & Run → Pipeline → Scenario Status → Known Issues**
 
 새 scenario를 구현하거나 detector를 수정할 경우에는 다음 순서로 추가 확인한다.
 
