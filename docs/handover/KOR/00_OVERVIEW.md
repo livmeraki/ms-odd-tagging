@@ -41,7 +41,6 @@ OD Annotation + LD Annotation + Ego Trajectory
           Motional Scenario Output
 ```
 
-
 ## 3. Scenario Catalog — Single Source of Truth
 
 Scenario 이름, 처리 방식, 구현 상태는 다음 파일에서 관리한다.
@@ -52,12 +51,13 @@ configs/scenario_catalog.csv
 
 각 scenario에 대해:
 
-- `rule`
-- `vlm`
-- `rule+vlm`
-- `unsupported`
+- `rule`: Rule / Geometry / Temporal logic이 최종 scenario를 판별
+- `vlm`: Rule 기반 candidate selection 후 VLM이 최종 scenario를 판별
+- `unsupported`: 현재 자동 tagging path가 없음
 
 여부를 확인할 수 있다.
+
+`waiting_for_pedestrian_to_cross`의 현재 선택된 방식은 deterministic `rule`이다. 과거 VLM PoC 구현 코드는 남아 있지만 현재 catalog의 VLM method에는 포함하지 않는다.
 
 자세한 내용은 `04_SCENARIO_STATUS.md`를 확인한다.
 
@@ -68,24 +68,22 @@ configs/scenario_catalog.csv
 - **Rule — active**: speed, jerk, turn, lane change, crosswalk/stopline relation, nearby object interaction, pedestrian-crosswalk interaction, object path crossing 등
 - **Rule — experimental**: lead/trail 및 traffic interaction 계열 등 추가 calibration이 필요한 rule
 - **VLM — experimental**: `on_intersection`, `starting_u_turn`, traffic-light 관련 semantic scenario 등
-- **Rule + VLM — experimental**: 두 path가 모두 존재하는 scenario. 현재 대표적으로 `waiting_for_pedestrian_to_cross`
 - **Unsupported**: 현재 Rule/VLM 자동 tagging path가 없는 scenario
 
-특히 stop-sign, pickup/dropoff, protected/unprotected turn, narrow-lane 관련 일부 taxonomy scenario는 현재 `unsupported`로 관리한다. 예를 들어 `accelerating_at_stop_sign`, `on_stopline_stop_sign`, `on_all_way_stop_intersection`, `starting_protected_cross_turn`, `traversing_narrow_lane`, `traversing_pickup_dropoff` 등이 이에 해당한다. 전체 목록은 반드시 `configs/scenario_catalog.csv`를 source of truth로 확인한다.
+특히 stop-sign, pickup/dropoff, protected/unprotected turn, narrow-lane 관련 일부 taxonomy scenario는 현재 `unsupported`로 관리한다. 전체 목록은 반드시 `configs/scenario_catalog.csv`를 source of truth로 확인한다.
 
 `active`는 현재 자동 tagging path가 사용 가능한 상태를 의미하며, production-level validation이 모두 완료되었다는 의미는 아니다. `experimental`은 code path는 존재하지만 추가 calibration 또는 evaluation이 필요한 상태이다.
 
 ## 5. 핵심 성과
 
-- OD + Trajectory뿐 아니라 LD geometry를 통합하는 canonical pipeline을 구축했다.
-- 단일 모델 중심 접근에서 Rule / Geometry 중심 구조로 전환하고, VLM은 선택적 보조 수단으로 분리했다.
-- full recording에서 dynamic rule event를 계산하고, 선택된 timestamp에는 독립적인 `frame.json`과 `bev.png`를 생성하는 구조를 정리했다.
-- frame-level GT reviewer 및 tagged scenario explorer를 구축하여 rule 결과와 사람이 작성한 GT를 비교할 수 있는 기반을 마련했다.
-- lane continuity, crosswalk/stopline, nearby object, traffic interaction 등 복수의 scenario family를 단계적으로 확장했다.
-- Rule/VLM/unsupported 상태를 하나의 lightweight scenario catalog에서 관리하도록 정리했다.
+- OD, LD, Ego Trajectory를 통합한 **canonical pipeline 구축**
+- **Rule / Geometry 중심의 자동 tagging 구조 구축**
+- 필요한 scenario에 대해 **VLM 보조 추론 적용**
+- 자동 결과를 확인하기 위한 **GT Reviewer / Scenario Explorer 구축**
+- Lane, Crosswalk, Object Interaction 등으로 **지원 scenario 범위 확장**
+- Scenario 지원 상태를 **하나의 catalog로 통합 관리**
 
-
-## 7. Handover Document Guide
+## 6. Handover Document Guide
 
 > **READ THIS FIRST, THEN FOLLOW THIS ORDER**
 
