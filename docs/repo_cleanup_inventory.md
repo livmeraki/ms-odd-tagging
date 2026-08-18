@@ -139,3 +139,27 @@ src/ms_odd_tagging/
 ```
 
 This is intentionally less aggressive than a wholesale directory rewrite. The current repository already has useful semantic boundaries; the main cleanup need is explicit ownership and stable entrypoints, not moving every file.
+
+
+## Boundary resolution pass
+
+The seven repository-boundary issues now have explicit, testable decisions:
+
+1. Canonicalization has a public `ms_odd_tagging.canonical` package.
+2. Frame generation has a public `ms_odd_tagging.frame_inputs` package; old
+   standard/revised modules are compatibility internals and the standard path is
+   retained only as a regression oracle.
+3. `ms_odd_tagging.geometry` records one owner and lifecycle status per geometry
+   capability instead of pretending the lane approaches are interchangeable.
+4. `ms_odd_tagging.scenarios` records production, candidate, feature, and
+   experiment ownership.
+5. `ms_odd_tagging.vlm` owns transport-neutral contracts and backend status;
+   scenario prompts and Qwen evidence remain experimental.
+6. `ms_odd_tagging.evaluation` and `ms_odd_tagging.visualization` are the tool
+   boundaries; GT comparison remains a compatibility implementation package.
+7. `ms-odd` is the unified command surface. Existing commands remain aliases
+   during migration.
+
+These decisions are enforced by `test_architecture_boundaries.py` and documented
+in `docs/canonical_paths.md`. They do not claim output equivalence between
+independent lane experiments, so no high-risk algorithm was deleted.

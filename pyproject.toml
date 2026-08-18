@@ -13,14 +13,16 @@ dependencies = [
 ]
 
 [project.scripts]
+ms-odd = "ms_odd_tagging.cli:main"
 ms-odd-tagging = "ms_odd_tagging.pipeline:main"
-ms-odd-canonical = "ms_odd_tagging.input_generator.canonical_builder:main"
-ms-odd-frame-inputs = "ms_odd_tagging.input_generator.frame_input_builder:main"
+ms-odd-canonical = "ms_odd_tagging.canonical.builder:main"
+ms-odd-frame-inputs = "ms_odd_tagging.frame_inputs.builder:main"
 ms-odd-validate-frames = "ms_odd_tagging.validator.frame_schema:main"
 ms-odd-tag = "ms_odd_tagging.tagger.model_based.local_vllm:main"
 ms-odd-rules = "ms_odd_tagging.tagger.rule_based.registry:main"
 ms-odd-scenario-explorer = "ms_odd_tagging.visualization.scenario_explorer:main"
 ms-odd-frame-gt-review = "ms_odd_tagging.gt_comparison.authoring:main"
+ms-odd-evaluate-rules = "ms_odd_tagging.evaluation.rule_based:main"
 ms-odd-following-lane = "ms_odd_tagging.scenarios.following_lane.pipeline:main"
 ms-odd-lanelet2-poc = "ms_odd_tagging.lanelet2_poc.cli:main"
 ms-odd-bev-lane-poc = "ms_odd_tagging.bev_lane_poc.cli:main"

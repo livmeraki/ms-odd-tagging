@@ -92,7 +92,7 @@ def main() -> int:
     run_stage(
         1,
         stage_total,
-        "ms_odd_tagging.input_generator.canonical_builder",
+        "ms_odd_tagging.canonical.builder",
         canonical_args,
     )
     if args.stop_after == "canonical":
@@ -118,7 +118,7 @@ def main() -> int:
     run_stage(
         2,
         stage_total,
-        "ms_odd_tagging.input_generator.frame_input_builder",
+        "ms_odd_tagging.frame_inputs.builder",
         model_args,
     )
     return 0
