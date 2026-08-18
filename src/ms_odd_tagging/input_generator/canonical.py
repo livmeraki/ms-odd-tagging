@@ -93,6 +93,8 @@ INTERACTION_HORIZON_S = 5.0
 EGO_LENGTH_M = 4.8
 EGO_WIDTH_M = 2.0
 PATH_MARGIN_M = 0.5
+PERSISTED_STATIC_CLASSES = {"traffic_light_car"}
+STATIC_OBJECT_PERSISTENCE_RADIUS_M = 100.0
 
 
 def finite_number(value):
@@ -183,6 +185,38 @@ def ego_relative(position, ego_position, ego_yaw):
     return cosine * dx + sine * dy, -sine * dx + cosine * dy
 
 
+def persisted_static_objects(objects):
+    """Return supported static ODs with stable object-level LCS geometry."""
+    return [
+        obj
+        for obj in objects
+        if str(obj.get("type") or "").lower() == "static"
+        and str(obj.get("className") or "").lower() in PERSISTED_STATIC_CLASSES
+        and valid_bbox(obj.get("bbox3d"))
+    ]
+
+
+def frame_objects_with_persisted_static(
+    observed_objects,
+    static_objects,
+    ego_position,
+    radius_m=STATIC_OBJECT_PERSISTENCE_RADIUS_M,
+):
+    """Merge exact-frame objects with nearby persistent static traffic lights."""
+    result = list(observed_objects)
+    present_ids = {str(obj["objectId"]) for obj in result}
+    ego_x, ego_y = ego_position[:2]
+    for obj in static_objects:
+        object_id = str(obj["objectId"])
+        if object_id in present_ids:
+            continue
+        bbox = obj["bbox3d"]
+        if math.hypot(bbox["x"] - ego_x, bbox["y"] - ego_y) <= radius_m:
+            result.append(obj)
+            present_ids.add(object_id)
+    return result
+
+
 def build_object_samples(objects, timestamps):
     samples_by_object = {}
     for obj in objects:
@@ -258,11 +292,15 @@ def make_object_state(obj, frame_index, ego, samples):
     bbox = sample["bbox_by_frame"].get(frame_index)
     geometry_source = "per_frame_bbox3d"
 
-    if bbox is None and obj.get("type") == "static" and frame_index in obj.get("visible_frames", []):
+    if bbox is None and obj.get("type") == "static":
         candidate = obj.get("bbox3d")
         if valid_bbox(candidate):
             bbox = candidate
-            geometry_source = "object_bbox3d"
+            geometry_source = (
+                "object_bbox3d"
+                if frame_index in obj.get("visible_frames", [])
+                else "object_bbox3d_spatial_persistence"
+            )
     if bbox is None:
         return None
 
@@ -469,6 +507,7 @@ def build_recording(source_root, output_root, recording):
 
     timestamps = [row["timestamp"] for row in trajectory]
     samples = build_object_samples(annotations["objects"], timestamps)
+    persistent_static = persisted_static_objects(annotations["objects"])
     visible_at_frame = defaultdict(list)
     for obj in annotations["objects"]:
         frame_indices = set(obj.get("visible_frames", []))
@@ -481,7 +520,12 @@ def build_recording(source_root, output_root, recording):
     missing_geometry_count = 0
     for frame_index, ego in enumerate(trajectory):
         object_states = []
-        for obj in visible_at_frame[frame_index]:
+        frame_objects = frame_objects_with_persisted_static(
+            visible_at_frame[frame_index],
+            persistent_static,
+            ego["position"],
+        )
+        for obj in frame_objects:
             state = make_object_state(obj, frame_index, ego, samples)
             if state is None:
                 missing_geometry_count += 1
@@ -566,9 +610,10 @@ def build_recording(source_root, output_root, recording):
             "trajectory_rows_match_annotation_frames": True,
             "object_states_without_usable_geometry": missing_geometry_count,
             "notes": [
-                "No object state is forward-filled.",
+                "Dynamic object states are not forward-filled.",
                 "Dynamic geometry uses exact per-frame bbox3d only.",
-                "Static object-level bbox3d is used only on listed visible frames.",
+                "traffic_light_car object-level bbox3d is spatially persisted within 100 m of ego.",
+                "Other static object-level bbox3d remains limited to listed visible frames.",
                 "Lead detection is a geometric candidate, not a lane-topology assertion.",
                 "Object derivatives are omitted across observation gaps over 0.25 s.",
                 "TTC uses current relative position and constant relative velocity.",
