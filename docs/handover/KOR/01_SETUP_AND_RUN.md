@@ -78,7 +78,6 @@ OD+LD recording 1개를 canonicalize하고 frame input 1개만 생성:
 
 ```bash
 python run_pipeline.py <RECORDING_ID> \
-  --odld \
   --frame-limit 1
 ```
 
@@ -86,17 +85,15 @@ python run_pipeline.py <RECORDING_ID> \
 
 ```bash
 python run_pipeline.py Rec_Drv_GER_MACHET18_20260319_151819 \
-  --odld \
   --frame-limit 1
 ```
 
-> 주의: 현재 `run_pipeline.py` CLI는 `--odld`를 사용한다. 과거 실험 command에 존재했던 다른 canonical mode 이름과 혼동하지 말고 현재 `--help`를 source of truth로 사용한다.
+> `run_pipeline.py`는 항상 OD+LD+trajectory canonicalization을 수행한다. 별도의 canonical mode option은 없다.
 
 ## 7. Canonical만 생성
 
 ```bash
 python run_pipeline.py <RECORDING_ID> \
-  --odld \
   --stop-after canonical
 ```
 
@@ -111,19 +108,19 @@ outputs/01_canonical/
 기본 sampling rate는 1 FPS이다.
 
 ```bash
-python run_pipeline.py <RECORDING_ID> --odld
+python run_pipeline.py <RECORDING_ID>
 ```
 
 2 FPS:
 
 ```bash
-python run_pipeline.py <RECORDING_ID> --odld --frames-per-second 2
+python run_pipeline.py <RECORDING_ID> --frames-per-second 2
 ```
 
 모든 canonical frame에 대해 생성:
 
 ```bash
-python run_pipeline.py <RECORDING_ID> --odld --all-frames
+python run_pipeline.py <RECORDING_ID> --all-frames
 ```
 
 중요한 점은 **BEV/model input이 1 FPS로 sampling되더라도 dynamic rule tagging 자체는 전체 canonical frame을 사용할 수 있다는 것**이다.
@@ -192,8 +189,7 @@ VLM 기능은 optional이며, deterministic rule pipeline을 먼저 확인한 �
 ## 13. 개별 Stage 확인
 
 ```bash
-python -m ms_odd_tagging.input_generator.canonical --help
-python -m ms_odd_tagging.input_generator.canonical_odld --help
+python -m ms_odd_tagging.input_generator.canonical_builder --help
 python -m ms_odd_tagging.input_generator.frame_input --help
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
