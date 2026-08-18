@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ms_odd_tagging.input_generator.canonical_odld import build_recording
+from ms_odd_tagging.canonical.odld import build_recording
 
 
 RECORDING = "Rec_Drv_GER_TEST_20260414_103936"

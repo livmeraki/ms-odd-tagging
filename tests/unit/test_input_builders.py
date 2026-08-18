@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from ms_odd_tagging.input_generator import canonical_builder, frame_input_builder
+from ms_odd_tagging.canonical import builder as canonical_builder
+from ms_odd_tagging.input_generator import frame_input_builder
 
 
 def test_canonical_builder_dispatches_odld(monkeypatch) -> None:

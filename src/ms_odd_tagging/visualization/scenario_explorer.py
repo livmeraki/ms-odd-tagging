@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
-from ms_odd_tagging.input_generator.canonical import parse_trajectory
+from ms_odd_tagging.canonical.core import parse_trajectory
 from ms_odd_tagging.tagger.rule_based.registry import (
     detect_events,
     detect_recording_events,

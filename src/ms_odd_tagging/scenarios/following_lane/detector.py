@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from ms_odd_tagging.input_generator.canonical import LEAD_CLASSES
+from ms_odd_tagging.canonical.core import LEAD_CLASSES
 
 from .lane_geometry import (
     adjacent_lanes,

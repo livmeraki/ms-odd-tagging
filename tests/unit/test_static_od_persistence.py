@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ms_odd_tagging.input_generator import canonical
-from ms_odd_tagging.input_generator.canonical_odld import build_recording
+from ms_odd_tagging.canonical import core as canonical
+from ms_odd_tagging.canonical.odld import build_recording
 
 
 RECORDING = "Rec_Drv_GER_STATIC_TRAFFIC_LIGHT_TEST"

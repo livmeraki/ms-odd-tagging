@@ -18,7 +18,7 @@ class GeometryOwner:
 
 GEOMETRY_OWNERS: dict[str, GeometryOwner] = {
     "canonical_ld_normalization": GeometryOwner(
-        "ms_odd_tagging.input_generator.canonical_odld",
+        "ms_odd_tagging.canonical.core_odld",
         "canonical",
         "Normalize recording-level LD and attach nearby references to frames.",
     ),
