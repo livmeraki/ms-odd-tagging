@@ -130,7 +130,7 @@ Trajectory의 미세한 position/velocity noise는 acceleration과 jerk에서 �
 
 를 먼저 확인한다.
 
-## 10. Phase 4 Traffic Interaction Calibration
+## 10. Traffic Interaction Calibration
 
 `traffic_interactions` configuration provenance는 `poc_requires_calibration`이다.
 
