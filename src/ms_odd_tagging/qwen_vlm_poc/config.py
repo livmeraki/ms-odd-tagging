@@ -7,14 +7,55 @@ from pathlib import Path
 from typing import Any
 
 from ms_odd_tagging.common.config import CANONICAL, OUTPUT_ROOT
-from ms_odd_tagging.common.scenario_catalog import (
-    vlm_candidate_groups,
-    vlm_labels_for_group,
-)
+from ms_odd_tagging.common.scenario_catalog import scenario_names_for_method
 
 
-TRAFFIC_LIGHT_LABELS = vlm_labels_for_group("traffic_light_episode")
-SCENARIOS = vlm_candidate_groups()
+VLM_GROUPS = {
+    "waiting_for_pedestrian_to_cross": (
+        "waiting_for_pedestrian_to_cross",
+    ),
+    "on_intersection": (
+        "on_intersection",
+    ),
+    "starting_u_turn": (
+        "starting_u_turn",
+    ),
+    "traffic_light_episode": (
+        "on_traffic_light_intersection",
+        "on_stopline_traffic_light",
+        "accelerating_at_traffic_light",
+        "accelerating_at_traffic_light_with_lead",
+        "accelerating_at_traffic_light_without_lead",
+        "stationary_at_traffic_light_with_lead",
+        "stationary_at_traffic_light_without_lead",
+        "stopping_at_traffic_light_with_lead",
+        "stopping_at_traffic_light_without_lead",
+        "traversing_traffic_light_intersection",
+        "starting_straight_traffic_light_intersection_traversal",
+    ),
+}
+
+SCENARIOS = tuple(VLM_GROUPS)
+TRAFFIC_LIGHT_LABELS = VLM_GROUPS["traffic_light_episode"]
+
+
+def _validate_vlm_groups() -> None:
+    catalog_vlm = set(scenario_names_for_method("vlm"))
+    configured_vlm = {
+        label
+        for labels in VLM_GROUPS.values()
+        for label in labels
+    }
+    if configured_vlm != catalog_vlm:
+        missing = sorted(catalog_vlm - configured_vlm)
+        extra = sorted(configured_vlm - catalog_vlm)
+        raise ValueError(
+            "VLM groups must match catalog VLM scenarios; "
+            f"missing={missing}, extra={extra}"
+        )
+
+
+_validate_vlm_groups()
 
 
 @dataclass(frozen=True)
