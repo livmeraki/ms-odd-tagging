@@ -1,9 +1,8 @@
-"""Public dispatcher for canonical recording generation.
+"""Public entrypoint for OD+LD canonical recording generation.
 
-The OD-only canonicalizer remains the shared base implementation. The OD+LD
-canonicalizer extends the same OD/trajectory semantics with a recording-level LD
-feature store and per-frame spatial references. This module provides one public
-entrypoint without forcing those implementations into one large file.
+OD annotations and ego trajectories provide the dynamic frame core. Recording-level
+LD supplies the map geometry required by the supported tagging pipeline. The
+OD-only implementation remains an internal shared core used by canonical_odld.
 """
 
 from __future__ import annotations
@@ -15,20 +14,12 @@ from typing import Sequence
 
 from ms_odd_tagging.common.config import CANONICAL, DATA_RAW
 
-from . import canonical, canonical_odld
-
-CANONICAL_MODES = ("od", "odld")
+from . import canonical_odld
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build canonical OD/trajectory or OD+LD/trajectory recordings."
-    )
-    parser.add_argument(
-        "--mode",
-        choices=CANONICAL_MODES,
-        default="od",
-        help="Canonical source mode (default: od, preserving the legacy CLI).",
+        description="Build canonical OD+LD+trajectory recordings."
     )
     parser.add_argument("--source-root", type=Path, default=DATA_RAW)
     parser.add_argument("--output-root", type=Path, default=CANONICAL)
@@ -55,18 +46,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         str(args.source_root),
         "--output-root",
         str(args.output_root),
+        "--ld-radius-m",
+        str(args.ld_radius_m),
     ]
-    if args.mode == "odld":
-        forwarded.extend(["--ld-radius-m", str(args.ld_radius_m)])
-        if args.include_clipped_ld_geometry:
-            forwarded.append("--include-clipped-ld-geometry")
-        forwarded.extend(args.recordings)
-        return _forward_main(canonical_odld.main, forwarded)
-
-    # Preserve the OD-only module's historical default recording when none is
-    # supplied explicitly.
-    forwarded.extend(args.recordings or canonical.DEFAULT_RECORDINGS)
-    return _forward_main(canonical.main, forwarded)
+    if args.include_clipped_ld_geometry:
+        forwarded.append("--include-clipped-ld-geometry")
+    forwarded.extend(args.recordings)
+    return _forward_main(canonical_odld.main, forwarded)
 
 
 if __name__ == "__main__":
