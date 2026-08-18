@@ -19,13 +19,13 @@ from PIL import Image, ImageChops, ImageStat
 
 from ms_odd_tagging.common.config import CANONICAL, OUTPUT_ROOT
 from ms_odd_tagging.input_generator import revised_bev
-from ms_odd_tagging.input_generator.frame_input import (
+from ms_odd_tagging.frame_inputs.standard import (
     canonical_recording_id,
     sample_frames_by_rate,
     select_canonical_files,
 )
-from ms_odd_tagging.input_generator.model_input import PngCanvas, safe_name
-from ms_odd_tagging.input_generator.pillow_canvas import PillowCanvas
+from ms_odd_tagging.frame_inputs.model_input import PngCanvas, safe_name
+from ms_odd_tagging.frame_inputs.pillow_canvas import PillowCanvas
 from ms_odd_tagging.tagger.rule_based.registry import load_config
 
 

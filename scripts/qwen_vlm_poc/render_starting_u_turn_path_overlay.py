@@ -15,8 +15,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from ms_odd_tagging.input_generator.model_input import lcs_to_ego
-from ms_odd_tagging.input_generator.revised_bev import centered_extent, render_revised_bev_png
+from ms_odd_tagging.frame_inputs.model_input import lcs_to_ego
+from ms_odd_tagging.frame_inputs.revised_bev import centered_extent, render_revised_bev_png
 
 
 DEFAULT_RECORDING = "Rec_Drv_GER_MACHET18_20260422_105826"

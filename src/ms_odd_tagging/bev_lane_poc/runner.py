@@ -8,7 +8,7 @@ import math
 from pathlib import Path
 from typing import Any, Callable
 
-from ms_odd_tagging.input_generator.model_input import (
+from ms_odd_tagging.frame_inputs.model_input import (
     ego_heading,
     lcs_to_ego,
     ld_feature_lcs_points,

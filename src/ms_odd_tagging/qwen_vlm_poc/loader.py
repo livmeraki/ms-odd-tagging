@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ms_odd_tagging.input_generator.frame_input import canonical_recording_id
+from ms_odd_tagging.frame_inputs.standard import canonical_recording_id
 
 
 def canonical_path(input_dir: Path, recording_id: str) -> Path:

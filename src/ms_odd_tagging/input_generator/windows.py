@@ -10,7 +10,7 @@ from statistics import median
 
 from ms_odd_tagging.common.config import CANONICAL, WINDOWS
 from ms_odd_tagging.common.progress import ProgressReporter
-from ms_odd_tagging.input_generator.frame_tags import (
+from ms_odd_tagging.frame_inputs.frame_tags import (
     export_frame_tag_files,
     scenario_key_set,
 )
