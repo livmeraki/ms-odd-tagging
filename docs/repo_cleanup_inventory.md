@@ -62,14 +62,14 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 
 | Responsibility / Feature | Current path | Status | Ownership / unique behavior | Action |
 |---|---|---|---|---|
-| Public canonical generation | `input_generator/canonical_builder.py` | Canonical | Always builds the ODLD schema; no mode selection | Keep |
+| Public canonical generation | `canonical/` | Canonical | Stable ODLD-only public boundary | Keep |
 | OD + trajectory core | `input_generator/canonical.py` | Internal core | Shared OD parsing, object, ego, and interaction semantics reused by ODLD | Keep internal; do not expose as a mode |
 | LD augmentation | `input_generator/canonical_odld.py` | Canonical extension | Recording-static LD store, lane/topology/roadmark normalization, per-frame nearby references | Keep separate |
-| Public frame-input generation | `input_generator/frame_input_builder.py` | Canonical | Chooses BEV style and implementation compatibility path | Keep |
+| Public frame-input generation | `frame_inputs/` | Canonical | Stable explorer-aligned public boundary | Keep |
 | BEV renderer selection | `input_generator/bev_renderer.py` | Canonical | Single renderer API and metadata contract | Keep |
 | Standard frame-input implementation | `_frame_input_standard_impl.py` via `frame_input.py` | Legacy/internal during migration | Exact historical behavior retained for rollback | Remove only after local/CI regression run |
 | Explorer-aligned implementation | `_frame_input_explorer_aligned_impl.py` via `frame_input_revised.py` | Legacy/internal during migration | Exact historical revised behavior retained for rollback | Remove only after regression run |
-| Rule-based tagging | `tagger/rule_based/` + `configs/direct_scenarios.yaml` | Canonical | Detector policies and event logic | Do not restructure in this pass |
+| Rule-based tagging | `tagger/rule_based/` + `configs/scenario_catalog.csv` + `configs/direct_scenarios.yaml` | Canonical | Unified scenario catalog, detector registry, and thresholds | Keep catalog as source of truth |
 | Shared features | `features/` | Canonical | Cross-detector reusable relations/motion/context | Keep; future duplicate-utility audit |
 | Following-lane | `scenarios/following_lane/` | Canonical/candidate | Active physical lane/lead logic with extensive tests | High risk; defer consolidation |
 | LD topology | `ld_topology/` | Experiment/candidate | Independent topology/intersection approach | Keep isolated until equivalence is proven |
@@ -81,8 +81,8 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 | Visualization | `visualization/` + package-specific overlays | Tool | Generic explorer plus algorithm-specific debug overlays | Preserve; avoid premature merge |
 | ODLD explorer scripts | `scripts/odld_explorer/` | Tool/legacy mixture | Large authoring/debug/generator scripts with potentially unique behavior | Needs separate entrypoint audit; no deletion this pass |
 | Root compatibility wrappers | `run_*.py` | Compatibility | Convenient source-tree execution, especially without install | Keep for now; `run_pipeline.py` is documented |
-| Lane continuation patch | `lane_continuation_current_working.patch` | Legacy artifact | May contain unique lane work not represented elsewhere | Do not delete until compared with current lane code |
-| `brainstorm.md` | repository root | Historical design artifact | Contains project decisions and old architecture assumptions | Retain until provenance is summarized into docs |
+| Lane continuation patch | `docs/archive/lane_continuation_current_working.patch` | Legacy artifact | Preserved for comparison without cluttering the repository root | Compare before deletion |
+| Historical brainstorm | `docs/archive/brainstorm.md` | Historical design artifact | Preserved outside the runtime/documentation entry path | Retain as archive |
 | `artifacts/*.txt` | repository root artifact folder | Artifact | Generated prediction lists may support retrospective/debugging | Do not delete without caller/provenance check |
 
 ## Regression gate before removal
@@ -163,3 +163,16 @@ The seven repository-boundary issues now have explicit, testable decisions:
 These decisions are enforced by `test_architecture_boundaries.py` and documented
 in `docs/canonical_paths.md`. They do not claim output equivalence between
 independent lane experiments, so no high-risk algorithm was deleted.
+
+
+## Final low-risk hygiene pass
+
+- Removed two generated 15 MB manual-tagging HTML exports from the repository root.
+- Removed the incomplete tracked raw LD/trajectory sample; raw recordings are now
+  uniformly ignored and runnable tests use small fixtures or external data.
+- Moved the historical brainstorm and lane-continuation patch under
+  `docs/archive/`.
+- Made all supported unit tests required in CI. LD-topology candidate tests run
+  separately and remain advisory until their algorithm is reconciled.
+- Fixed explorer thumbnail generation for older/minimal payloads that omit
+  trajectory `x`/`y` arrays.

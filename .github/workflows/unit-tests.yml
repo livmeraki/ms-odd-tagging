@@ -23,6 +23,7 @@ jobs:
         run: >-
           python -m pytest
           tests/unit/test_architecture_boundaries.py
+          tests/unit/test_scenario_catalog.py
           tests/unit/test_bev_renderer.py
           tests/unit/test_bev_performance_paths.py
           tests/unit/test_input_builders.py
@@ -33,7 +34,19 @@ jobs:
           tests/unit/test_static_od_persistence.py
           tests/unit/test_generation_profile.py
 
-  full-unit-suite:
+  supported-unit-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install package
+        run: python -m pip install -e '.[dev]'
+      - name: Run supported unit suite
+        run: python -m pytest tests/unit --ignore=tests/unit/test_ld_topology.py
+
+  candidate-topology-suite:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -43,5 +56,5 @@ jobs:
           python-version: '3.11'
       - name: Install package
         run: python -m pip install -e '.[dev]'
-      - name: Run full unit suite (advisory)
-        run: python -m pytest tests/unit
+      - name: Run LD-topology candidate tests (advisory)
+        run: python -m pytest tests/unit/test_ld_topology.py

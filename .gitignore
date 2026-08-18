@@ -25,16 +25,9 @@ configs/server.yaml
 *.pem
 
 # Data and generated outputs
-data/01_raw/*
-!data/01_raw/Rec_Drv_GER_MACHET18_20260319_152119/
-data/01_raw/Rec_Drv_GER_MACHET18_20260319_152119/*
-!data/01_raw/Rec_Drv_GER_MACHET18_20260319_152119/annotations_LD.json
-!data/01_raw/Rec_Drv_GER_MACHET18_20260319_152119/traj_lcs.txt
-data/01_raw_odld/*
-data/02_gt/*
-
-# Ignore large raw OD annotation JSON files
-data/01_raw_odld/**/*.json
+data/01_raw/**
+data/01_raw_odld/**
+data/02_gt/**
 data/external/
 data/production/
 outputs/*
@@ -47,6 +40,7 @@ outputs/*/*
 /model_inputs/
 /motional_windows/
 /canonical_frames/
+*_manual_tagging*_demo.html
 bev_*.png
 bev_*.svg
 bev_model_*.png

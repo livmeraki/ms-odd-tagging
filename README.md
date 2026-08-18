@@ -29,23 +29,31 @@ The numbered data/output folders express execution order. Python package folders
 - `outputs/05_gt_comparison/`: GT comparison reports.
 - `outputs/06_scenario_explorers/`: generated scenario-review explorers.
 - `outputs/legacy/`: compatibility outputs for the deprecated window/refined model-input path.
-- `src/ms_odd_tagging/input_generator/`: canonicalization, per-frame model-input, feature, and BEV code.
+- `src/ms_odd_tagging/canonical/`: public OD+LD+trajectory normalization boundary.
+- `src/ms_odd_tagging/frame_inputs/`: public per-frame JSON and BEV generation boundary.
+- `src/ms_odd_tagging/input_generator/`: compatibility implementations used behind those public boundaries.
 - `src/ms_odd_tagging/tagger/`: rule-based and model-based tagging.
 - `src/ms_odd_tagging/scenarios/`: scenario-specific geometry/detection pipelines such as following-lane.
 - `src/ms_odd_tagging/validator/`: input/output validation and retry logic.
-- `src/ms_odd_tagging/gt_comparison/`: GT label generation, matching, metrics, and reports.
+- `src/ms_odd_tagging/evaluation/`: public evaluation boundary.
+- `src/ms_odd_tagging/gt_comparison/`: compatibility GT authoring/comparison implementations.
+- `src/ms_odd_tagging/geometry/`: geometry implementation ownership and lifecycle registry.
+- `src/ms_odd_tagging/vlm/`: transport-neutral VLM contracts and backend registry.
 - `src/ms_odd_tagging/*_poc/`: isolated research/experimental implementations; these are not canonical runtime ownership boundaries.
 
 ### Public input-generation boundaries
 
-The public canonical entrypoint is `canonical_builder.py`. It always builds the
-OD+LD+trajectory schema through `canonical_odld.py`. The former OD-only mode is
-not exposed because the supported tagging pipeline depends on LD context.
+The public canonical boundary is `ms_odd_tagging.canonical`. It always builds
+the OD+LD+trajectory schema. The former OD-only mode is not exposed because the
+supported tagging pipeline depends on LD context.
 
 `canonical.py` remains an internal shared core for OD/trajectory parsing and
 geometry used by `canonical_odld.py`; it is not a separate user-facing pipeline.
 
-The public per-frame input entrypoint is `frame_input_builder.py`. It always generates the centered, ego-heading-up `explorer_aligned` BEV and writes to `outputs/02_frame_inputs` by default. The previous standard/revised renderer choice is no longer exposed by the active pipeline.
+The public per-frame boundary is `ms_odd_tagging.frame_inputs`. It always
+generates the centered, ego-heading-up `explorer_aligned` BEV and writes to
+`outputs/02_frame_inputs` by default. The previous standard/revised renderer
+choice is no longer exposed by the active pipeline.
 
 `frame_input.py` remains an internal compatibility/helper layer while cleanup is in progress because explorer-aligned generation still reuses several of its non-rendering utilities.
 
@@ -86,21 +94,19 @@ and storage metrics under `outputs/02_frame_inputs`.
 Each stage is independently executable through a stable public dispatcher:
 
 ```bash
-python -m ms_odd_tagging.input_generator.canonical_builder --help
-python -m ms_odd_tagging.input_generator.canonical_builder RECORDING
-python -m ms_odd_tagging.input_generator.frame_input_builder --help
-python -m ms_odd_tagging.input_generator.frame_input_builder
+ms-odd --help
+ms-odd canonical --help
+ms-odd canonical RECORDING
+ms-odd frame-inputs --help
+ms-odd frame-inputs --recording RECORDING
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
 python -m ms_odd_tagging.visualization.scenario_explorer --help
 ```
 
-The installed CLI equivalents are `ms-odd-canonical`, `ms-odd-frame-inputs`, and `ms-odd-tagging`.
+The older `ms-odd-canonical`, `ms-odd-frame-inputs`, and `ms-odd-tagging` commands remain compatibility aliases.
 
-Phase 1 deterministic trajectory events are calculated over the complete
-recording and retain dynamic inclusive frame/time bounds. See
-[docs/phase1_rule_based.md](docs/phase1_rule_based.md) for rules, provenance,
-event semantics, and extension guidance.
+Deterministic trajectory events are calculated over the complete recording and retain dynamic inclusive frame/time bounds. See [docs/phase1_rule_based.md](docs/phase1_rule_based.md) for the historical implementation notes, rule provenance, event semantics, and extension guidance.
 
 Generate standalone tagged-scenario explorers from canonical JSON or a raw trajectory:
 

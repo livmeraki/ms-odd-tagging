@@ -746,7 +746,13 @@ setFrame(0);
 
 
 def thumbnail_svg(data, width=122, height=78):
-    points = [(float(x), float(y), "#2563eb", 1.0) for x, y in zip(data["trajectory"]["x"], data["trajectory"]["y"])]
+    trajectory = data.get("trajectory") or {}
+    trajectory_x = trajectory.get("x") or []
+    trajectory_y = trajectory.get("y") or []
+    points = [
+        (float(x), float(y), "#2563eb", 1.0)
+        for x, y in zip(trajectory_x, trajectory_y)
+    ]
     class_colors = {c: PALETTE[i % len(PALETTE)] for i, c in enumerate(data["summary"]["classCounts"].keys())}
     object_points = []
     for obj in data["objects"]:
@@ -783,10 +789,10 @@ def thumbnail_svg(data, width=122, height=78):
     def ty(y):
         return height - (off_y + (y - min_y) * scale)
 
-    step = max(1, len(data["trajectory"]["x"]) // 80)
+    step = max(1, len(trajectory_x) // 80)
     path_points = [
         f"{tx(float(x)):.1f},{ty(float(y)):.1f}"
-        for x, y in zip(data["trajectory"]["x"][::step], data["trajectory"]["y"][::step])
+        for x, y in zip(trajectory_x[::step], trajectory_y[::step])
     ]
     object_markup = "\n".join(
         f'<circle cx="{tx(x):.1f}" cy="{ty(y):.1f}" r="{r:.1f}" fill="{color}" opacity="0.72" />'
