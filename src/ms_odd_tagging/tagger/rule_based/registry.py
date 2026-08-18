@@ -43,15 +43,49 @@ from .scenario_event import ScenarioEvent
 from .traffic_interactions import TrafficInteractionDetector
 from .turns import TurnDetector
 
-PHASE1_SCENARIOS = ("stationary", "low_magnitude_speed", "medium_magnitude_speed", "high_magnitude_speed", "high_lateral_acceleration", "high_magnitude_jerk", "starting_left_turn", "starting_right_turn", "starting_low_speed_turn", "starting_high_speed_turn")
-PHASE2_SCENARIOS = ("changing_lane", "changing_lane_to_left", "changing_lane_to_right")
-PHASE2B_SCENARIOS = ("traversing_crosswalk", "on_stopline_crosswalk", "stationary_at_crosswalk", "stopping_at_crosswalk", "accelerating_at_crosswalk")
-PHASE3A_SCENARIOS = ("near_high_speed_vehicle", "near_long_vehicle", "near_multiple_bikes", "near_multiple_motorcycle", "near_multiple_pedestrians", "near_multiple_vehicles")
-PHASE3B_SCENARIOS = ("near_pedestrian_on_crosswalk", "near_pedestrian_on_crosswalk_with_ego")
-PHASE3C_SCENARIOS = ("crossed_by_bike", "crossed_by_motorcycle", "crossed_by_vehicle")
-PHASE4_SCENARIOS = ("following_lane_with_slow_lead", "changing_lane_with_lead", "changing_lane_with_trail", "stopping_with_lead", "stopping_without_lead", "stationary_in_traffic", "behind_bike", "behind_long_vehicle", "behind_pedestrian_on_driveable", "waiting_for_pedestrian_to_cross", "near_barrier_on_driveable")
+RULE_BASED_SCENARIOS = (
+    "stationary",
+    "low_magnitude_speed",
+    "medium_magnitude_speed",
+    "high_magnitude_speed",
+    "high_lateral_acceleration",
+    "high_magnitude_jerk",
+    "starting_left_turn",
+    "starting_right_turn",
+    "starting_low_speed_turn",
+    "starting_high_speed_turn",
+    "changing_lane",
+    "changing_lane_to_left",
+    "changing_lane_to_right",
+    "traversing_crosswalk",
+    "on_stopline_crosswalk",
+    "stationary_at_crosswalk",
+    "stopping_at_crosswalk",
+    "accelerating_at_crosswalk",
+    "near_high_speed_vehicle",
+    "near_long_vehicle",
+    "near_multiple_bikes",
+    "near_multiple_motorcycle",
+    "near_multiple_pedestrians",
+    "near_multiple_vehicles",
+    "near_pedestrian_on_crosswalk",
+    "near_pedestrian_on_crosswalk_with_ego",
+    "crossed_by_bike",
+    "crossed_by_motorcycle",
+    "crossed_by_vehicle",
+    "following_lane_with_slow_lead",
+    "changing_lane_with_lead",
+    "changing_lane_with_trail",
+    "stopping_with_lead",
+    "stopping_without_lead",
+    "stationary_in_traffic",
+    "behind_bike",
+    "behind_long_vehicle",
+    "behind_pedestrian_on_driveable",
+    "waiting_for_pedestrian_to_cross",
+    "near_barrier_on_driveable",
+)
 EXPLICITLY_EXCLUDED_SCENARIOS = ("pickup_dropoff", "pickup_with_pedestrian", "dropoff_with_pedestrian")
-RULE_BASED_SCENARIOS = PHASE1_SCENARIOS + PHASE2_SCENARIOS + PHASE2B_SCENARIOS + PHASE3A_SCENARIOS + PHASE3B_SCENARIOS + PHASE3C_SCENARIOS + PHASE4_SCENARIOS
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[4] / "configs" / "direct_scenarios.yaml"
 
 def validate_config(config: dict[str, Any]) -> None:
