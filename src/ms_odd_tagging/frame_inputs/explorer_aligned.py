@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import _frame_input_explorer_aligned_impl as _impl
+from . import _explorer_aligned_impl as _impl
 from ._explorer_aligned_impl import *  # noqa: F401,F403
 from .bev_renderer import render_frame_bev
 

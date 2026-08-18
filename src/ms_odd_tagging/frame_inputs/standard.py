@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import _frame_input_standard_impl as _impl
+from . import _standard_impl as _impl
 from ._standard_impl import *  # noqa: F401,F403
 from .bev_renderer import render_frame_bev
 
