@@ -45,23 +45,21 @@ def load_scenario_catalog(path: Path | str | None = None) -> tuple[ScenarioCatal
                 raise ValueError(f"{catalog_path}: {name} requires a category")
             seen.add(name)
 
-            methods = tuple(
-                method.strip()
-                for method in (row.get("methods") or "").split("+")
-                if method.strip()
-            )
-            unknown_methods = sorted(set(methods) - VALID_METHODS)
-            if unknown_methods:
+            method = (row.get("methods") or "").strip()
+            if "+" in method:
                 raise ValueError(
-                    f"{catalog_path}: {name} has unknown methods: {', '.join(unknown_methods)}"
+                    f"{catalog_path}: {name} must use one current method; combined methods are not supported"
                 )
+            if method and method not in VALID_METHODS:
+                raise ValueError(f"{catalog_path}: {name} has unknown method: {method}")
+            methods = (method,) if method else ()
 
             status = (row.get("status") or "").strip()
             if status not in VALID_STATUSES:
                 raise ValueError(f"{catalog_path}: {name} has invalid status {status!r}")
             if status == "unsupported" and methods:
                 raise ValueError(
-                    f"{catalog_path}: unsupported scenario {name} cannot declare methods"
+                    f"{catalog_path}: unsupported scenario {name} cannot declare a method"
                 )
             if status != "unsupported" and not methods:
                 raise ValueError(
