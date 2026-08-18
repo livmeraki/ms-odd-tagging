@@ -1,160 +1,160 @@
 # Scenario Status
 
-## 1. 이 문서를 읽는 방법
+## 1. Source of Truth
 
-이 문서는 **현재 repository에 실제로 존재하는 구현 상태**를 중심으로 정리한다.
+Scenario별 자동화 방식과 현재 상태는 하나의 catalog에서 관리한다.
 
-상태 표기:
+```text
+configs/scenario_catalog.csv
+```
 
-- **Implemented**: active rule registry에 포함되어 있고 전용 detector/feature path가 존재
-- **PoC / Calibration Needed**: code와 registry entry는 있으나 configuration provenance상 추가 calibration/검증 필요
-- **VLM PoC**: Qwen VLM 실험 package에서 다루는 semantic scenario
-- **Unsupported / Not wired**: taxonomy에는 있으나 현재 active rule registry에 연결되지 않음
+이 파일이 다음 정보의 **single source of truth**이다.
 
-> `enabled_scenarios`에 이름이 있다고 해서 충분한 production validation까지 완료되었다는 뜻은 아니다.
+- 공식/현재 사용 scenario name
+- taxonomy category
+- 자동 판별 방식 (`rule`, `vlm`)
+- 현재 구현 상태
+- VLM candidate group
+- repository-specific extension 여부
 
-## 2. Ego Dynamics / Turn
+따라서 scenario가 Rule-based인지 VLM inferred인지 확인할 때 별도의 문서 목록을 찾지 말고 `scenario_catalog.csv`를 먼저 확인한다.
 
-| Scenario | 상태 | 방식 | 비고 |
-|---|---|---|---|
-| `stationary` | Implemented | Rule | ego speed band |
-| `low_magnitude_speed` | Implemented | Rule | 0.5~5.0 m/s |
-| `medium_magnitude_speed` | Implemented | Rule | 5.0~15.0 m/s |
-| `high_magnitude_speed` | Implemented | Rule | >=15.0 m/s |
-| `high_lateral_acceleration` | Implemented | Rule | lateral acceleration + hysteresis |
-| `high_magnitude_jerk` | Implemented | Rule | acceleration-vector magnitude 기반 jerk |
-| `starting_left_turn` | Implemented | Temporal Rule | yaw-rate / accumulated heading |
-| `starting_right_turn` | Implemented | Temporal Rule | yaw-rate / accumulated heading |
-| `starting_low_speed_turn` | Implemented | Temporal Rule | turn + trigger speed |
-| `starting_high_speed_turn` | Implemented | Temporal Rule | turn + trigger speed |
+## 2. Catalog Column
 
-## 3. Lane Change
+| Column | 의미 |
+|---|---|
+| `name` | scenario label |
+| `category` | `dynamics`, `interaction`, `zone`, `maneuver`, `behavior` |
+| `methods` | 자동 판별 방식. `rule`, `vlm`, `rule+vlm`, 또는 빈 값 |
+| `status` | 현재 구현/검증 상태 |
+| `taxonomy_status` | reference taxonomy 포함 여부 |
+| `vlm_candidate_group` | VLM candidate/inference에서 사용하는 group |
+| `notes` | 예외 또는 추가 설명 |
 
-| Scenario | 상태 | 방식 | 비고 |
-|---|---|---|---|
-| `changing_lane` | Implemented | Geometry + Temporal | logical lane stability 필요 |
-| `changing_lane_to_left` | Implemented | Geometry + Temporal | target lane direction |
-| `changing_lane_to_right` | Implemented | Geometry + Temporal | target lane direction |
+`methods`가 빈 값인 경우 현재 repository에서 자동 tagging path가 연결되지 않은 scenario이다.
 
-Intersection 내부의 lane-ID 변화가 false lane change로 잡히지 않도록 suppression/stability logic이 존재한다.
+## 3. Method 의미
 
-## 4. Crosswalk / Stopline
+### `rule`
 
-| Scenario | 상태 | 방식 |
-|---|---|---|
-| `traversing_crosswalk` | Implemented | Ego footprint + crosswalk geometry |
-| `on_stopline_crosswalk` | Implemented | Stopline / crosswalk spatial relation |
-| `stationary_at_crosswalk` | Implemented | Geometry + ego speed |
-| `stopping_at_crosswalk` | Implemented | Geometry + temporal deceleration |
-| `accelerating_at_crosswalk` | Implemented | Geometry + temporal acceleration |
-
-Threshold는 `configs/direct_scenarios.yaml`의 `road_feature_relations`를 확인한다.
-
-## 5. Nearby Object Interaction
-
-| Scenario | 상태 | 방식 |
-|---|---|---|
-| `near_high_speed_vehicle` | Implemented | Object relation + estimated/measured speed |
-| `near_long_vehicle` | Implemented | Class/dimension + proximity |
-| `near_multiple_bikes` | Implemented | Proximity count |
-| `near_multiple_motorcycle` | Implemented | Proximity count |
-| `near_multiple_pedestrians` | Implemented | Proximity count |
-| `near_multiple_vehicles` | Implemented | Proximity count |
-
-Object association과 velocity 추정 품질에 영향을 받으므로 visual review가 필요하다.
-
-## 6. Pedestrian / Crosswalk Interaction
-
-| Scenario | 상태 | 방식 |
-|---|---|---|
-| `near_pedestrian_on_crosswalk` | Implemented | Pedestrian-crosswalk overlap / edge distance |
-| `near_pedestrian_on_crosswalk_with_ego` | Implemented | 위 조건 + ego proximity relation |
-
-## 7. Object Path Crossing
-
-| Scenario | 상태 | 방식 |
-|---|---|---|
-| `crossed_by_bike` | Implemented | Ego forward arc/path crossing |
-| `crossed_by_motorcycle` | Implemented | Ego forward arc/path crossing |
-| `crossed_by_vehicle` | Implemented | Ego forward arc/path crossing |
-
-현재 config의 detector version 문자열은 `phase3c-forward-arc-crossing-v3`이다. 이는 개발 이력에서 이어진 이름이며, 현재 handover에서는 별도의 Phase 구분으로 사용하지 않는다.
-
-## 8. Traffic / Lead-Trail Interaction
-
-아래 항목은 active rule registry에는 포함되어 있으나 configuration provenance가 `poc_requires_calibration`으로 명시되어 있다. 따라서 **구현됨 = 검증 완료**로 해석하지 않는다.
-
-| Scenario | 상태 | 주요 근거 |
-|---|---|---|
-| `following_lane_with_slow_lead` | PoC / Calibration Needed | same-lane lead + lead speed |
-| `changing_lane_with_lead` | PoC / Calibration Needed | lane-change episode + lead relation |
-| `changing_lane_with_trail` | PoC / Calibration Needed | lane-change episode + trail relation |
-| `stopping_with_lead` | PoC / Calibration Needed | stopping transition + lead |
-| `stopping_without_lead` | PoC / Calibration Needed | stopping transition + no lead |
-| `stationary_in_traffic` | PoC / Calibration Needed | stationary ego + surrounding vehicles |
-| `behind_bike` | PoC / Calibration Needed | same corridor / lead-like relation |
-| `behind_long_vehicle` | PoC / Calibration Needed | long vehicle ahead relation |
-| `behind_pedestrian_on_driveable` | PoC / Calibration Needed | pedestrian corridor relation |
-| `waiting_for_pedestrian_to_cross` | PoC / Calibration Needed | ego stop/yield + pedestrian conflict relation |
-| `near_barrier_on_driveable` | PoC / Calibration Needed | barrier intrusion / distance |
-
-## 9. Following-lane 계열
-
-Repository에는 별도 `src/ms_odd_tagging/scenarios/following_lane/` package가 존재한다. README와 기존 문서에서 `following_lane` 관련 pipeline을 별도로 설명하고 있으므로, 다음 label의 실제 wiring 여부는 해당 package와 current GT reviewer를 함께 확인한다.
-
-- `following_lane_with_lead`
-- `following_lane_without_lead`
-
-이 두 항목은 **현재 `RULE_BASED_SCENARIOS` constant에는 포함되어 있지 않으므로**, main rule registry와 별도 following-lane pipeline을 혼동하지 않는다.
-
-## 10. Traffic-light 관련 상태
-
-`configs/direct_scenarios.yaml`에는 `traffic_light_context` feature configuration이 존재하지만, 현재 `RULE_BASED_SCENARIOS` 목록에는 traffic-light behavior label이 직접 포함되어 있지 않다.
-
-따라서 다음과 같은 label은 현재 문서에서 **active direct-rule 구현 완료로 표시하지 않는다.**
+Deterministic rule / geometry / temporal logic으로 판별한다.
 
 예:
 
-- `on_stopline_traffic_light`
-- `on_traffic_light_intersection`
-- `traversing_traffic_light_intersection`
-- `accelerating_at_traffic_light*`
-- `stationary_at_traffic_light*`
-- `stopping_at_traffic_light*`
+- `stationary`
+- `changing_lane`
+- `traversing_crosswalk`
+- `near_multiple_pedestrians`
 
-Traffic-light context는 VLM episode candidate 또는 향후 direct behavior detector의 evidence로 사용하는 구조가 포함되어 있으므로 추가 wiring/검증이 필요하다.
+Rule threshold와 detector parameter는 `configs/direct_scenarios.yaml`에서 관리한다.
 
-## 11. VLM PoC
+### `vlm`
 
-`src/ms_odd_tagging/qwen_vlm_poc/`에는 다음 기능이 분리되어 있다.
+VLM candidate generation 및 inference를 통해 판별하는 scenario이다.
 
-- candidate generation
-- evidence construction
-- prompt
-- client
-- validation
-- merging
-- visualization
+예:
 
-VLM 결과는 rule-based scenario와 동일한 신뢰 수준으로 간주하지 말고 scenario별 evaluation 후 사용한다.
+- `on_intersection`
+- `starting_u_turn`
+- traffic-light 관련 scenario
 
-## 12. Explicit Exclusion
+VLM 관련 실행 code는 다음 package를 확인한다.
 
-registry에는 다음 개념이 explicit exclusion으로 정의되어 있다.
+```text
+src/ms_odd_tagging/qwen_vlm_poc/
+```
 
-- `pickup_dropoff`
-- `pickup_with_pedestrian`
-- `dropoff_with_pedestrian`
+### `rule+vlm`
 
-관련 taxonomy label을 추가할 때 기존 exclusion 목적을 먼저 확인한다.
+동일 scenario에 Rule과 VLM path가 모두 존재할 수 있다.
 
-## 13. 유지보수 원칙
+현재 대표적인 예는:
 
-새 scenario를 추가하거나 상태를 변경하면 이 문서와 함께 다음을 수정한다.
+```text
+waiting_for_pedestrian_to_cross
+```
 
-1. `configs/direct_scenarios.yaml`
-2. `registry.py`
-3. detector / feature module
-4. tests
-5. GT reviewer support status
-6. 본 `04_SCENARIO_STATUS.md`
+이다. 따라서 scenario를 단순히 "Rule 또는 VLM" 중 하나로 강제 분류하지 않고 `methods`를 복수 값으로 저장한다.
+
+## 4. Status 의미
+
+| Status | 의미 |
+|---|---|
+| `implemented` | active deterministic implementation이 존재 |
+| `poc_calibration` | code는 존재하지만 추가 dataset calibration / validation 필요 |
+| `vlm_poc` | VLM PoC path에서 다루는 scenario |
+| `unsupported` | 현재 자동 tagging path가 연결되지 않음 |
+
+> `implemented`는 production-level validation 완료와 같은 의미가 아니다. 실제 신뢰 수준은 evaluation 결과와 `07_KNOWN_ISSUES.md`를 함께 확인한다.
+
+## 5. 현재 Catalog 범위
+
+현재 catalog는 reference Motional Scenario list를 기반으로 하며, 현재 repository가 실제로 사용하는 추가 label도 함께 기록한다.
+
+현재 repository의 rule detector에는 reference list에 없는 다음 label이 존재하므로 `taxonomy_status=repo_extension`으로 명시한다.
+
+- `near_multiple_motorcycle`
+- `crossed_by_motorcycle`
+
+이렇게 reference taxonomy와 현재 code 사이의 차이를 숨기지 않고 catalog에서 명시적으로 관리한다.
+
+## 6. Code와 Catalog 관계
+
+```text
+configs/scenario_catalog.csv
+          │
+          ├── Rule method metadata
+          │     └── rule registry와 consistency test
+          │
+          ├── VLM method metadata
+          │     └── qwen_vlm_poc/config.py
+          │         ├── SCENARIOS
+          │         └── TRAFFIC_LIGHT_LABELS
+          │
+          └── Handover documentation
+```
+
+VLM의 `SCENARIOS`와 `TRAFFIC_LIGHT_LABELS`는 catalog에서 derive하도록 변경되어 별도 label list를 중복 관리하지 않는다.
+
+Rule registry의 current support list와 catalog의 `rule` method가 일치하는지는 unit test로 고정한다.
+
+```text
+tests/unit/test_scenario_catalog.py
+```
+
+## 7. Runtime Config와의 차이
+
+`scenario_catalog.csv`와 `direct_scenarios.yaml`의 역할은 다르다.
+
+```text
+scenario_catalog.csv
+→ 어떤 scenario가 존재하는가?
+→ Rule / VLM 중 어떤 방식으로 처리하는가?
+→ 현재 상태는 무엇인가?
+
+direct_scenarios.yaml
+→ Rule detector가 어떤 threshold / parameter로 동작하는가?
+→ 현재 run에서 어떤 rule scenario가 enabled 되었는가?
+```
+
+따라서 detector threshold를 catalog에 넣지 않는다.
+
+## 8. 유지보수 원칙
+
+새 scenario를 추가하거나 처리 방식을 변경할 때는 가장 먼저:
+
+```text
+configs/scenario_catalog.csv
+```
+
+를 수정한다.
+
+그 다음 필요한 경우에만 아래를 수정한다.
+
+1. Rule scenario → detector / feature module + `direct_scenarios.yaml`
+2. VLM scenario → `qwen_vlm_poc` candidate / prompt / validation
+3. tests
+4. GT reviewer support
+5. evaluation artifact
+
+Scenario 이름과 Rule/VLM 분류를 여러 Python 파일이나 Markdown 문서에 별도 list로 복사하지 않는다.
