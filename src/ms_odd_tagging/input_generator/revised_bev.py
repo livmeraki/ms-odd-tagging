@@ -149,6 +149,74 @@ def _object_corners_lcs(obj: dict[str, Any], ego_yaw: float):
     ]
 
 
+def _traffic_light_state(obj: dict[str, Any]) -> str | None:
+    """Best-effort extraction of traffic-light state from object metadata."""
+    candidates = (
+        obj.get("attributes"),
+        obj.get("signals"),
+        obj.get("metadata"),
+        obj,
+    )
+    for source in candidates:
+        if not isinstance(source, dict):
+            continue
+        for key in (
+            "state",
+            "signal_state",
+            "light_state",
+            "traffic_light_state",
+            "color",
+        ):
+            value = source.get(key)
+            if value is not None:
+                return str(value).strip().lower()
+    return None
+
+
+def _traffic_light_color(state: str | None) -> tuple[int, int, int]:
+    """Map a traffic-light state to a high-visibility RGB marker color."""
+    if state is None:
+        return hex_to_rgb("#0891b2")
+    normalized = state.lower()
+    if "red" in normalized:
+        return hex_to_rgb("#dc2626")
+    if "yellow" in normalized or "amber" in normalized:
+        return hex_to_rgb("#f59e0b")
+    if "green" in normalized:
+        return hex_to_rgb("#16a34a")
+    return hex_to_rgb("#0891b2")
+
+
+def _draw_traffic_light_marker(
+    canvas,
+    x: float,
+    y: float,
+    color: tuple[int, int, int],
+    *,
+    pedestrian: bool = False,
+) -> None:
+    """Draw a distinct, high-visibility traffic-light marker."""
+    outline = hex_to_rgb("#111827")
+    if pedestrian:
+        canvas.circle(x, y, 10, outline, alpha=0.18)
+        canvas.circle(x, y, 7, color, alpha=0.95)
+        return
+
+    box = [
+        (x - 5, y - 8),
+        (x + 5, y - 8),
+        (x + 5, y + 8),
+        (x - 5, y + 8),
+    ]
+    canvas.polygon(
+        box,
+        fill=color,
+        outline=outline,
+        alpha=0.95,
+        outline_width=2,
+    )
+
+
 def _footprint_buffer_points(length_m: float, width_m: float, radius_m: float, samples_per_corner: int = 12) -> list[tuple[float, float]]:
     half_length, half_width = length_m / 2.0, width_m / 2.0
     corners = (
@@ -313,6 +381,16 @@ def render_revised_bev_png(
             )
         sx, sy = screen(center_ego)
         canvas.circle(sx, sy, 5, color, alpha=1.0)
+
+        if class_name in {"traffic_light_car", "traffic_light_ped"}:
+            state = _traffic_light_state(obj)
+            _draw_traffic_light_marker(
+                canvas,
+                sx,
+                sy,
+                _traffic_light_color(state),
+                pedestrian=class_name == "traffic_light_ped",
+            )
 
     ego_corners = [(2.4, 1.0), (2.4, -1.0), (-2.4, -1.0), (-2.4, 1.0)]
     canvas.polygon([screen(point) for point in ego_corners], hex_to_rgb("#22c55e"), hex_to_rgb("#166534"), alpha=0.34, outline_width=4)
