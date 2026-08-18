@@ -27,12 +27,11 @@ Branch purpose: safely consolidate duplicate implementations without losing beha
 
 ### Canonical input generation
 
-`canonical.py` and `canonical_odld.py` are not duplicate rewrites. `canonical_odld.py` imports and reuses the OD/trajectory implementation and adds LD static-map normalization plus per-frame spatial references. They therefore remain separate implementations behind one public dispatcher:
-
-- `input_generator/canonical_builder.py --mode od`
-- `input_generator/canonical_builder.py --mode odld`
-
-The main pipeline now calls this dispatcher instead of selecting implementation modules itself.
+`canonical_builder.py` now exposes only OD+LD+trajectory canonicalization.
+`canonical_odld.py` owns the supported schema and imports reusable OD/trajectory
+parsing and geometry from `canonical.py`. The latter remains an internal shared
+core, not a separately selectable mode. The main pipeline always calls this
+single ODLD entrypoint.
 
 ### Per-frame BEV/input generation
 
@@ -47,11 +46,13 @@ The previous `frame_input.py` / `frame_input_revised.py` split represented two r
 
 `pyproject.toml` now exposes stable public commands:
 
-- `ms-odd-canonical` -> canonical dispatcher;
+- `ms-odd-canonical` -> ODLD canonical generation;
 - `ms-odd-frame-inputs` -> frame-input dispatcher;
-- `ms-odd-tagging` -> ordered pipeline.
+- `ms-odd-tagging` -> ordered ODLD pipeline.
 
-Implementation-specific commands remain available with explicit names while migration is in progress.
+The implementation-specific `ms-odd-canonical-od` and
+`ms-odd-canonical-odld` aliases were removed so there is one public canonical
+command.
 
 ### Root clutter
 
@@ -61,8 +62,8 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 
 | Responsibility / Feature | Current path | Status | Ownership / unique behavior | Action |
 |---|---|---|---|---|
-| Public canonical generation | `input_generator/canonical_builder.py` | Canonical | Dispatches OD vs ODLD without changing their schemas | Keep |
-| OD + trajectory canonicalization | `input_generator/canonical.py` | Canonical core | Shared OD object/ego/interaction semantics | Keep |
+| Public canonical generation | `input_generator/canonical_builder.py` | Canonical | Always builds the ODLD schema; no mode selection | Keep |
+| OD + trajectory core | `input_generator/canonical.py` | Internal core | Shared OD parsing, object, ego, and interaction semantics reused by ODLD | Keep internal; do not expose as a mode |
 | LD augmentation | `input_generator/canonical_odld.py` | Canonical extension | Recording-static LD store, lane/topology/roadmark normalization, per-frame nearby references | Keep separate |
 | Public frame-input generation | `input_generator/frame_input_builder.py` | Canonical | Chooses BEV style and implementation compatibility path | Keep |
 | BEV renderer selection | `input_generator/bev_renderer.py` | Canonical | Single renderer API and metadata contract | Keep |
@@ -89,7 +90,7 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 Before deleting or replacing an implementation, verify where applicable:
 
 - imports and installed CLI entrypoints succeed;
-- OD and ODLD canonical frame schemas remain compatible;
+- the ODLD canonical frame schema remains stable;
 - one representative ODLD recording runs end-to-end;
 - standard and explorer-aligned per-frame output metadata remains stable;
 - detector/unit tests pass;
@@ -118,9 +119,9 @@ Do not collapse `qwen_vlm_poc` into `tagger/model_based/local_vllm.py` yet. The 
 src/ms_odd_tagging/
 ├── common/
 ├── input_generator/
-│   ├── canonical_builder.py      # public canonical dispatcher
-│   ├── canonical.py              # OD/trajectory core
-│   ├── canonical_odld.py         # LD extension
+│   ├── canonical_builder.py      # public ODLD entrypoint
+│   ├── canonical.py              # internal OD/trajectory core
+│   ├── canonical_odld.py         # supported ODLD schema
 │   ├── frame_input_builder.py    # public per-frame dispatcher
 │   ├── bev_renderer.py           # renderer ownership
 │   └── ...
