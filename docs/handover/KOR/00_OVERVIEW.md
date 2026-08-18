@@ -21,29 +21,24 @@ STRADVISION의 ALT (Auto Labeling Tool)를 통해 생성된 다음 데이터를 
 
 이 입력을 이용해 Ego Vehicle의 속도/가감속, 회전, lane 관계, crosswalk/stopline/intersection과의 공간 관계, 주변 객체와의 상호작용을 시간적으로 분석하고 Motional Scenario를 판별한다.
 
-다음은 단순화된 파이프라인이다.
+전체 흐름은 다음과 같다.
 
 ```text
-OD Annotation + LD Annotation + Ego Trajectory
-                    │
-                    ▼
-        OD+LD Canonicalization
-                    │
-                    ▼
-        Canonical Frame JSON
-                    │
-          ┌─────────┴─────────┐
-          ▼                   ▼
-  Rule-based Tagging     1 FPS Frame Input / BEV
-          │                   │
-          │              Optional VLM / PoC
-          │                   │
-          └─────────┬─────────┘
-                    ▼
-          Motional Scenario Output
+OD + LD + Ego Trajectory
+          │
+          ▼
+   Canonical Data
+          │
+    ┌─────┴─────┐
+    ▼           ▼
+Rule / Geometry  VLM-assisted tagging
+    │           │
+    └─────┬─────┘
+          ▼
+Motional Scenario Output
 ```
 
-## 3. Scenario Catalog — Single Source of Truth
+## 3. Scenario 지원 현황
 
 Scenario 이름, 처리 방식, 구현 상태는 다음 파일에서 관리한다.
 
@@ -51,15 +46,12 @@ Scenario 이름, 처리 방식, 구현 상태는 다음 파일에서 관리한�
 configs/scenario_catalog.csv
 ```
 
-각 scenario에 대해:
-
+각 scenario가 다음 중 어떤 방식으로 처리되는지 확인할 수 있다.
 - `rule`: Rule / Geometry / Temporal logic이 최종 scenario를 판별
 - `vlm`: Rule 기반 candidate selection 후 VLM이 최종 scenario를 판별
 - `unsupported`: 현재 자동 tagging path가 없음
 
-여부를 확인할 수 있다.
-
-자세한 내용은 `04_SCENARIO_STATUS.md`를 확인한다.
+Scenario별 상세 지원 현황과 상태 기준은 `04_SCENARIO_STATUS.md`를 확인한다.
 
 ## 4. 핵심 성과
 
