@@ -1,7 +1,7 @@
 # Motional Scenario ODD Tagging Automation
 
 > **START HERE — PROJECT HANDOVER OVERVIEW**  
-> 이 문서는 프로젝트를 처음 인수받은 사람이 전체 목적, 현재 구조, 구현 범위와 다음 읽을 문서를 빠르게 파악하기 위한 시작 문서이다.
+> 이 문서는 프로젝트를 처음 인수받은 사람이 전체 목적, 현재 구조, 구현 범위를 빠르게 파악하기 위한 시작 문서입니다.
 
 ## 1. 프로젝트 배경 및 목적
 
