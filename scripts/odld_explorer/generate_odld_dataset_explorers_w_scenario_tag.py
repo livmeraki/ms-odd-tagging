@@ -35,7 +35,7 @@ from ms_odd_tagging.features.traffic_relations import build_traffic_relations
 from ms_odd_tagging.ld_topology.config import load_config as load_ld_topology_config
 from ms_odd_tagging.ld_topology.pipeline import classify_recording
 from ms_odd_tagging.tagger.rule_based.registry import (
-    PHASE4_SCENARIOS,
+    RULE_BASED_SCENARIOS,
     detect_recording_events,
     load_config,
 )
@@ -3091,7 +3091,7 @@ def index_html(rows: list[dict]) -> str:
             for row in rows
             for scenario in row.get("tagScenarioList", [])
         }
-        | set(PHASE4_SCENARIOS)
+        | set(RULE_BASED_SCENARIOS)
     )
     scenario_items = "".join(
         f'<label class="scenarioChoice"><input type="checkbox" value="{html.escape(scenario)}"><span>{html.escape(scenario)}</span></label>'

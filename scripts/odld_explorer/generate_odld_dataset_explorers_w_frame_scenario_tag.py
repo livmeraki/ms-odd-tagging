@@ -30,7 +30,7 @@ from ms_odd_tagging.features.object_path_crossing_relations import (
 )
 from ms_odd_tagging.ld_topology.config import load_config as load_ld_topology_config
 from ms_odd_tagging.ld_topology.pipeline import classify_recording
-from ms_odd_tagging.tagger.rule_based.registry import PHASE4_SCENARIOS, load_config
+from ms_odd_tagging.tagger.rule_based.registry import RULE_BASED_SCENARIOS, load_config
 from ms_odd_tagging.scenarios.following_lane.detector import run_following_lane
 from ms_odd_tagging.scenarios.following_lane.explorer_visualization import (
     render_original_explorer_with_lane_tracker,
@@ -2469,7 +2469,7 @@ def index_html(rows: list[dict]) -> str:
             for row in rows
             for scenario in row.get("tagScenarioList", [])
         }
-        | set(PHASE4_SCENARIOS)
+        | set(RULE_BASED_SCENARIOS)
     )
     scenario_items = "".join(
         f'<label class="scenarioChoice"><input type="checkbox" value="{html.escape(scenario)}"><span>{html.escape(scenario)}</span></label>'
