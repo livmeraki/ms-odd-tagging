@@ -1,97 +1,66 @@
 # Motional Scenario ODD Tagging Automation
 
 > **START HERE — PROJECT HANDOVER OVERVIEW**  
-> 이 문서는 프로젝트를 처음 인수받은 사람이 전체 목적, 현재 구조, 구현 범위를 빠르게 파악하기 위한 시작 문서입니다.
+> 이 문서는 프로젝트를 처음 인수받은 사람이 **무엇을 만들었고, 어디서부터 보면 되는지** 빠르게 파악하기 위한 시작 문서입니다.
 
-## 1. 프로젝트 배경 및 목적
+## 1. 이 프로젝트는 무엇인가?
 
-STRADVISION에서는 기존에 주행 환경과 주변 조건을 분류하는 ODD (Operational Design Domain) Tagging 작업을 수행하고 있었다. Dynamic ODD는 각 frame에서 관찰되는 상태를 기준으로 tagging할 수 있는 반면, Motional Scenario는 차량의 움직임과 주변 객체와의 관계가 시간에 따라 어떻게 변하는지를 함께 확인해야 하는 경우가 많다.
+Motional Scenario는 `changing_lane`, `starting_left_turn`, `stopping_with_lead`처럼 **여러 frame에 걸친 차량 움직임과 주변 객체 관계를 함께 봐야 하는 주행 상황**이다.
 
-예를 들어 `changing_lane`, `starting_left_turn`, `stopping_with_lead`, `waiting_for_pedestrian_to_cross`와 같은 scenario는 단일 frame만으로 안정적으로 판단하기 어렵다. 따라서 Motional Scenario Tagging은 여러 frame에 걸친 temporal context를 확인해야 하며, 수작업 시 기존 ODD Tagging보다 판단 과정이 복잡하고 시간이 더 많이 소요될 것으로 예상된다.
-
-본 프로젝트의 목적은 **Motional Scenario Tagging을 주행 데이터 기반으로 자동화하는 파이프라인을 개발하는 것**이다.
-
-STRADVISION의 ALT (Auto Labeling Tool)를 통해 생성된 다음 데이터를 주요 입력으로 사용한다.
+본 프로젝트는 STRADVISION ALT에서 생성된 다음 데이터를 이용해 이러한 Motional Scenario Tagging을 자동화한다.
 
 - OD (Object Detection) Annotation
 - LD (Lane Detection) Annotation
 - Ego Trajectory
 
-이 입력을 이용해 Ego Vehicle의 속도/가감속, 회전, lane 관계, crosswalk/stopline/intersection과의 공간 관계, 주변 객체와의 상호작용을 시간적으로 분석하고 Motional Scenario를 판별한다.
+명확하게 수치화할 수 있는 scenario는 **Rule / Geometry / Temporal logic**으로 판별하고, 일부 복잡한 scenario는 **Rule 기반 candidate selection + VLM** 방식으로 보조 판별한다.
 
-## 2. 현재 시스템 구조
-
-```text
-OD Annotation + LD Annotation + Ego Trajectory
-                    │
-                    ▼
-        OD+LD Canonicalization
-                    │
-                    ▼
-        Canonical Frame JSON
-                    │
-          ┌─────────┴─────────┐
-          ▼                   ▼
-  Rule-based Tagging     1 FPS Frame Input / BEV
-          │                   │
-          │              Optional VLM / PoC
-          │                   │
-          └─────────┬─────────┘
-                    ▼
-          Motional Scenario Output
-```
-
-## 3. Scenario Catalog — Single Source of Truth
-
-Scenario 이름, 처리 방식, 구현 상태는 다음 파일에서 관리한다.
+## 2. 전체 구조
 
 ```text
-configs/scenario_catalog.csv
+OD + LD + Ego Trajectory
+          │
+          ▼
+   Canonical Data
+          │
+     ┌────┴────┐
+     ▼         ▼
+Rule / Geometry   VLM-assisted
+     │         │
+     └────┬────┘
+          ▼
+Motional Scenario Output
 ```
 
-각 scenario에 대해:
+Scenario별 현재 처리 방식과 지원 상태는 `configs/scenario_catalog.csv`를 기준으로 확인한다.
 
-- `rule`: Rule / Geometry / Temporal logic이 최종 scenario를 판별
-- `vlm`: Rule 기반 candidate selection 후 VLM이 최종 scenario를 판별
-- `unsupported`: 현재 자동 tagging path가 없음
-
-여부를 확인할 수 있다.
-
-자세한 내용은 `04_SCENARIO_STATUS.md`를 확인한다.
-
-## 4. 핵심 성과
+## 3. 핵심 성과
 
 - OD, LD, Ego Trajectory를 통합한 **canonical pipeline 구축**
-- **Rule / Geometry 중심의 자동 tagging 구조 구축**
-- 필요한 scenario에 대해 **VLM 보조 추론 적용**
-- 자동 결과를 확인하기 위한 **GT Reviewer / Scenario Explorer 구축**
-- Lane, Crosswalk, Object Interaction 등으로 **지원 scenario 범위 확장**
-- Scenario 지원 상태를 **하나의 catalog로 통합 관리**
+- **Rule / Geometry 중심의 자동 tagging 구조** 구축
+- 필요한 일부 scenario에 **VLM 보조 추론** 적용
+- 결과 확인을 위한 **GT Reviewer / Scenario Explorer** 구축
+- Lane, Crosswalk, Object Interaction 등으로 **자동 tagging 범위 확장**
+- Scenario 지원 상태를 **하나의 lightweight catalog로 통합 관리**
 
-Scenario별 상세 구현 방식과 상태는 `configs/scenario_catalog.csv`와
-`04_SCENARIO_STATUS.md`를 확인한다.
+## 4. 다음에 무엇을 읽어야 하나?
 
-## 5. Handover Document Guide
+목적에 따라 필요한 문서부터 읽으면 된다.
 
-> **READ THIS FIRST, THEN FOLLOW THIS ORDER**
+| 알고 싶은 것 | 문서 |
+|---|---|
+| 프로젝트를 설치하고 실제로 실행하기 | [`01_SETUP_AND_RUN.md`](01_SETUP_AND_RUN.md) |
+| 전체 pipeline과 module 흐름 이해하기 | [`02_PIPELINE.md`](02_PIPELINE.md) |
+| OD / LD / Trajectory / Canonical 데이터 구조 보기 | [`03_DATA_FORMAT.md`](03_DATA_FORMAT.md) |
+| 어떤 scenario가 Rule / VLM / Unsupported인지 확인하기 | [`04_SCENARIO_STATUS.md`](04_SCENARIO_STATUS.md) |
+| Rule / Geometry 알고리즘이 어떻게 동작하는지 이해하기 | [`05_ALGORITHMS.md`](05_ALGORITHMS.md) |
+| GT 작성 방법과 평가 결과 확인하기 | [`06_EVALUATION.md`](06_EVALUATION.md) |
+| 현재 한계, 오류, 주의점 확인하기 | [`07_KNOWN_ISSUES.md`](07_KNOWN_ISSUES.md) |
+| 다음 개발자가 이어서 할 작업 확인하기 | [`08_NEXT_STEPS.md`](08_NEXT_STEPS.md) |
+| 원본 정책, 관련 문서, 코드 출처 찾기 | [`09_REFERENCES.md`](09_REFERENCES.md) |
 
-| 순서 | 문서 | 목적 |
-|---:|---|---|
-| 00 | `00_OVERVIEW.md` | 프로젝트 배경, 목적, 구조, 현재 범위 |
-| 01 | `01_SETUP_AND_RUN.md` | 설치, 데이터 경로, 실행 명령 |
-| 02 | `02_PIPELINE.md` | 단계별 pipeline과 module 관계 |
-| 03 | `03_DATA_FORMAT.md` | OD / LD / Trajectory / Canonical 형식 |
-| 04 | `04_SCENARIO_STATUS.md` | scenario catalog와 구현 상태 |
-| 05 | `05_ALGORITHMS.md` | 주요 rule / geometry 알고리즘 |
-| 06 | `06_EVALUATION.md` | GT 작성, 평가 방법, 정량 결과 |
-| 07 | `07_KNOWN_ISSUES.md` | 현재 알려진 오류와 주의점 |
-| 08 | `08_NEXT_STEPS.md` | 후속 개발 우선순위 |
-| 09 | `09_REFERENCES.md` | 관련 코드, 기존 문서, 정책 자료 |
+처음 인수받았다면 다음 순서를 권장한다.
 
-처음 인수받은 경우에는 다음 순서를 권장한다.
+**Setup & Run → Pipeline → Scenario Status → Known Issues → Next Steps**
 
-**Overview → Setup & Run → Scenario Status → Known Issues**
-
-새 scenario를 구현하거나 detector를 수정할 경우에는 다음 순서로 추가 확인한다.
-
-**Scenario Catalog → Pipeline → Data Format → Algorithms → Evaluation**
+코드를 수정하기 전에는 관련 문서만 추가로 확인하면 된다. 모든 내용을 처음부터 읽을 필요는 없다.
