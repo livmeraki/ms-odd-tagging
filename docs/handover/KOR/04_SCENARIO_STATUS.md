@@ -10,28 +10,25 @@ configs/scenario_catalog.csv
 
 이 파일이 다음 정보의 **single source of truth**이다.
 
-- 공식/현재 사용 scenario name
-- taxonomy category
-- 자동 판별 방식 (`rule`, `vlm`)
-- 현재 구현 상태
-- VLM candidate group
-- repository-specific extension 여부
+- scenario name
+- category
+- 자동 판별 방식 (`rule`, `vlm`, `rule+vlm`)
+- 현재 상태 (`active`, `experimental`, `unsupported`)
 
 따라서 scenario가 Rule-based인지 VLM inferred인지 확인할 때 별도의 문서 목록을 찾지 말고 `scenario_catalog.csv`를 먼저 확인한다.
 
-## 2. Catalog Column
+## 2. Catalog Columns
+
+Catalog는 의도적으로 다음 네 column만 유지한다.
 
 | Column | 의미 |
 |---|---|
 | `name` | scenario label |
 | `category` | `dynamics`, `interaction`, `zone`, `maneuver`, `behavior` |
 | `methods` | 자동 판별 방식. `rule`, `vlm`, `rule+vlm`, 또는 빈 값 |
-| `status` | 현재 구현/검증 상태 |
-| `taxonomy_status` | reference taxonomy 포함 여부 |
-| `vlm_candidate_group` | VLM candidate/inference에서 사용하는 group |
-| `notes` | 예외 또는 추가 설명 |
+| `status` | `active`, `experimental`, `unsupported` |
 
-`methods`가 빈 값인 경우 현재 repository에서 자동 tagging path가 연결되지 않은 scenario이다.
+Catalog에는 detector threshold, VLM candidate group, taxonomy 예외 설명과 같은 implementation detail을 넣지 않는다.
 
 ## 3. Method 의미
 
@@ -58,7 +55,7 @@ VLM candidate generation 및 inference를 통해 판별하는 scenario이다.
 - `starting_u_turn`
 - traffic-light 관련 scenario
 
-VLM 관련 실행 code는 다음 package를 확인한다.
+VLM 관련 실행 code와 candidate grouping은 다음 package 안에서 관리한다.
 
 ```text
 src/ms_odd_tagging/qwen_vlm_poc/
@@ -80,23 +77,34 @@ waiting_for_pedestrian_to_cross
 
 | Status | 의미 |
 |---|---|
-| `implemented` | active deterministic implementation이 존재 |
-| `poc_calibration` | code는 존재하지만 추가 dataset calibration / validation 필요 |
-| `vlm_poc` | VLM PoC path에서 다루는 scenario |
+| `active` | 현재 구현되어 기본적으로 사용할 수 있는 자동 tagging path가 존재 |
+| `experimental` | 구현 또는 PoC path는 존재하지만 추가 calibration / validation 필요 |
 | `unsupported` | 현재 자동 tagging path가 연결되지 않음 |
 
-> `implemented`는 production-level validation 완료와 같은 의미가 아니다. 실제 신뢰 수준은 evaluation 결과와 `07_KNOWN_ISSUES.md`를 함께 확인한다.
+`methods`와 `status`는 서로 다른 정보를 표현한다.
 
-## 5. 현재 Catalog 범위
+예:
 
-현재 catalog는 reference Motional Scenario list를 기반으로 하며, 현재 repository가 실제로 사용하는 추가 label도 함께 기록한다.
+```text
+on_intersection
+methods = vlm
+status = experimental
+```
 
-현재 repository의 rule detector에는 reference list에 없는 다음 label이 존재하므로 `taxonomy_status=repo_extension`으로 명시한다.
+즉 VLM이라는 사실은 `methods`에서, 검증 수준은 `status`에서 확인한다.
+
+> `active`는 production-level validation이 완전히 끝났다는 의미가 아니다. 실제 성능과 제한 사항은 evaluation 결과와 `07_KNOWN_ISSUES.md`를 함께 확인한다.
+
+## 5. Reference Taxonomy와 Repository Extension
+
+현재 catalog는 supplied Motional Scenario reference list를 기반으로 하며, repository가 실제로 사용하는 다음 두 label도 포함한다.
 
 - `near_multiple_motorcycle`
 - `crossed_by_motorcycle`
 
-이렇게 reference taxonomy와 현재 code 사이의 차이를 숨기지 않고 catalog에서 명시적으로 관리한다.
+이 두 label은 현재 rule-based detector에서 사용되지만 supplied Motional Scenario reference list에는 없었다.
+
+이 예외 때문에 모든 row에 `taxonomy_status` column을 추가하지 않는다. Reference taxonomy와 repository extension 차이는 이 문서에서 명시적으로 관리한다.
 
 ## 6. Code와 Catalog 관계
 
@@ -107,16 +115,14 @@ configs/scenario_catalog.csv
           │     └── rule registry와 consistency test
           │
           ├── VLM method metadata
-          │     └── qwen_vlm_poc/config.py
-          │         ├── SCENARIOS
-          │         └── TRAFFIC_LIGHT_LABELS
+          │     └── qwen_vlm_poc/config.py가 catalog coverage 검증
           │
           └── Handover documentation
 ```
 
-VLM의 `SCENARIOS`와 `TRAFFIC_LIGHT_LABELS`는 catalog에서 derive하도록 변경되어 별도 label list를 중복 관리하지 않는다.
+VLM candidate grouping은 scenario 자체의 속성이 아니라 현재 VLM implementation의 구조이므로 `qwen_vlm_poc/config.py` 내부에서 관리한다.
 
-Rule registry의 current support list와 catalog의 `rule` method가 일치하는지는 unit test로 고정한다.
+Rule registry의 support list와 catalog의 `rule` method가 일치하는지, VLM grouping이 catalog의 `vlm` method 전체를 정확히 덮는지는 다음 unit test로 확인한다.
 
 ```text
 tests/unit/test_scenario_catalog.py
@@ -137,7 +143,7 @@ direct_scenarios.yaml
 → 현재 run에서 어떤 rule scenario가 enabled 되었는가?
 ```
 
-따라서 detector threshold를 catalog에 넣지 않는다.
+따라서 detector threshold나 세부 algorithm parameter를 catalog에 넣지 않는다.
 
 ## 8. 유지보수 원칙
 
@@ -152,7 +158,7 @@ configs/scenario_catalog.csv
 그 다음 필요한 경우에만 아래를 수정한다.
 
 1. Rule scenario → detector / feature module + `direct_scenarios.yaml`
-2. VLM scenario → `qwen_vlm_poc` candidate / prompt / validation
+2. VLM scenario → `qwen_vlm_poc` candidate grouping / prompt / validation
 3. tests
 4. GT reviewer support
 5. evaluation artifact
