@@ -55,9 +55,9 @@ OD Annotation + LD Annotation + Ego Trajectory
 
 ## 3. 현재 구현 범위 요약
 
-Rule-based registry에는 Phase 1~4 시나리오가 등록되어 있다. 주요 구현 범주는 다음과 같다.
+Rule-based registry에는 현재 지원되는 scenario가 하나의 `RULE_BASED_SCENARIOS` 목록으로 관리된다. 주요 구현 범주는 다음과 같다.
 
-- Ego dynamics: speed band, lateral acceleration, jerk, turn
+- Ego dynamics / turn
 - Lane change
 - Crosswalk / stopline relation
 - Nearby object interaction
@@ -66,7 +66,7 @@ Rule-based registry에는 Phase 1~4 시나리오가 등록되어 있다. 주요 
 - Traffic interaction / lead-trail relation
 - Traffic-light context
 
-다만 **registry에 scenario 이름이 존재하는 것과 production 수준으로 충분히 검증된 것은 동일하지 않다.** 특히 Phase 4 traffic interaction 및 일부 traffic-light/VLM 관련 기능은 configuration provenance에 PoC 또는 provisional로 명시되어 있으므로 `04_SCENARIO_STATUS.md`와 `07_KNOWN_ISSUES.md`를 함께 확인해야 한다.
+다만 **registry에 scenario 이름이 존재하는 것과 production 수준으로 충분히 검증된 것은 동일하지 않다.** 특히 traffic interaction 및 일부 traffic-light/VLM 관련 기능은 configuration provenance에 PoC 또는 provisional로 명시되어 있으므로 `04_SCENARIO_STATUS.md`와 `07_KNOWN_ISSUES.md`를 함께 확인해야 한다.
 
 ## 4. 핵심 성과
 
