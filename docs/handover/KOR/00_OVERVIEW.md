@@ -14,10 +14,9 @@ STRADVISION에서는 기존에 주행 환경과 주변 조건을 분류하는 OD
 ## 2. 현재 시스템 구조
 
 STRADVISION의 ALT (Auto Labeling Tool)를 통해 생성된 다음 데이터를 주요 입력으로 사용한다.
-
-- OD (Object Detection) Annotation
-- LD (Lane Detection) Annotation
-- Ego Trajectory
+- OD Annotation: 주변 객체의 위치·종류 등 물체 감지 정보
+- LD Annotation: 차선, 차선 경계, 정지선·횡단보도 등 도로 구조 감지 정보
+- Ego Trajectory: Ego Vehicle의 시간에 따른 위치·진행 방향 변화 정보
 
 이 입력을 이용해 Ego Vehicle의 속도/가감속, 회전, lane 관계, crosswalk/stopline/intersection과의 공간 관계, 주변 객체와의 상호작용을 시간적으로 분석하고 Motional Scenario를 판별한다.
 
@@ -55,12 +54,18 @@ Scenario별 상세 지원 현황과 상태 기준은 `04_SCENARIO_STATUS.md`를 
 
 ## 4. 핵심 성과
 
-- OD, LD, Ego Trajectory를 통합한 **canonical pipeline 구축**
-- **Rule / Geometry 중심의 자동 tagging 구조 구축**
-- 필요한 scenario에 대해 **VLM 보조 추론 적용**
-- 자동 결과를 확인하기 위한 **GT Reviewer / Scenario Explorer 구축**
-- Lane, Crosswalk, Object Interaction 등으로 **지원 scenario 범위 확장**
-- Scenario 지원 상태를 **하나의 catalog로 통합 관리**
+- **데이터 처리 기반 구축**
+  - OD, LD, Ego Trajectory를 통합하는 canonical pipeline 구축
+  - 전체 tagging algorithm이 동일한 데이터 구조를 사용하도록 정리
+
+- **Motional Scenario 자동 Tagging 구현**
+  - Rule / Geometry / Temporal logic 중심의 자동 tagging 구조 구축
+  - Lane, Crosswalk, Object Interaction 등 다양한 scenario로 지원 범위 확장
+  - Rule만으로 판단하기 어려운 일부 scenario에 VLM 기반 판별 적용
+
+- **검토 및 유지보수 환경 구축**
+  - GT Reviewer / Scenario Explorer를 통해 자동 tagging 결과를 직접 확인·비교할 수 있도록 구성
+  - Scenario별 지원 방식과 현재 상태를 하나의 `scenario_catalog.csv`에서 관리
 
 ## 5. Handover Document Guide
 
