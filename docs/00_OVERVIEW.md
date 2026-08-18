@@ -10,6 +10,8 @@ STRADVISION에서는 기존에 주행 환경과 주변 조건을 분류하는 **
 
 반면, **Motional Scenario Tagging은 기존 ODD Tagging보다 차량의 시간적 움직임과 주변 객체와의 관계를 함께 이해해야 하는 작업**이다.
 
+![alt text](Motional_ODD.png "motional_odd")
+
 예를 들어 다음과 같은 scenario는 한 frame만으로는 정확하게 판단하기 어렵다.
 
 * `changing_lane`
@@ -30,7 +32,7 @@ STRADVISION에서는 기존에 주행 환경과 주변 조건을 분류하는 **
 
 ## 1.2 프로젝트 목적
 
-본 프로젝트의 목적은 **기존에 자동화되어 있지 않았던 Motional Scenario Tagging을 주행 데이터 기반으로 자동화하는 파이프라인을 개발하는 것**이다.
+본 프로젝트의 목적은 **Motional Scenario Tagging을 주행 데이터 기반으로 자동화하는 파이프라인을 개발하는 것**이다.
 
 주행 데이터에서 제공되는 다음 정보를 활용한다.
 
