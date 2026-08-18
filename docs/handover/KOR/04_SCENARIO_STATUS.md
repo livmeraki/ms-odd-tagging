@@ -12,10 +12,10 @@ configs/scenario_catalog.csv
 
 - scenario name
 - category
-- 자동 판별 방식 (`rule`, `vlm`, `rule+vlm`)
+- 자동 판별 방식 (`rule`, `vlm`)
 - 현재 상태 (`active`, `experimental`, `unsupported`)
 
-따라서 scenario가 Rule-based인지 VLM inferred인지 확인할 때 별도의 문서 목록을 찾지 말고 `scenario_catalog.csv`를 먼저 확인한다.
+따라서 scenario가 Rule-based인지 VLM 기반인지 확인할 때 별도의 문서 목록을 찾지 말고 `scenario_catalog.csv`를 먼저 확인한다.
 
 ## 2. Catalog Columns
 
@@ -25,16 +25,18 @@ Catalog는 의도적으로 다음 네 column만 유지한다.
 |---|---|
 | `name` | scenario label |
 | `category` | `dynamics`, `interaction`, `zone`, `maneuver`, `behavior` |
-| `methods` | 자동 판별 방식. `rule`, `vlm`, `rule+vlm`, 또는 빈 값 |
+| `methods` | 현재 선택된 자동 판별 방식. `rule`, `vlm`, 또는 빈 값 |
 | `status` | `active`, `experimental`, `unsupported` |
 
 Catalog에는 detector threshold, VLM candidate group, taxonomy 예외 설명과 같은 implementation detail을 넣지 않는다.
+
+각 scenario는 현재 기준으로 하나의 method만 가진다. 과거에 다른 방식으로 실험한 code가 남아 있더라도 현재 선택된 tagging 방식만 catalog에 기록한다.
 
 ## 3. Method 의미
 
 ### `rule`
 
-Deterministic rule / geometry / temporal logic으로 판별한다.
+Rule / Geometry / Temporal logic이 최종 scenario를 판별한다.
 
 예:
 
@@ -42,12 +44,25 @@ Deterministic rule / geometry / temporal logic으로 판별한다.
 - `changing_lane`
 - `traversing_crosswalk`
 - `near_multiple_pedestrians`
+- `waiting_for_pedestrian_to_cross`
 
 Rule threshold와 detector parameter는 `configs/direct_scenarios.yaml`에서 관리한다.
 
 ### `vlm`
 
-VLM candidate generation 및 inference를 통해 판별하는 scenario이다.
+Rule / Geometry 기반으로 먼저 candidate 구간과 evidence를 선택한 뒤, VLM이 최종 scenario를 판별한다.
+
+즉 `vlm`은 모든 frame을 그대로 VLM에 입력하는 방식이 아니라 다음과 같은 hybrid pipeline을 의미한다.
+
+```text
+Rule / Geometry based candidate selection
+                ↓
+       Evidence / BEV selection
+                ↓
+           VLM inference
+                ↓
+       Validation / merging
+```
 
 예:
 
@@ -61,17 +76,7 @@ VLM 관련 실행 code와 candidate grouping은 다음 package 안에서 관리�
 src/ms_odd_tagging/qwen_vlm_poc/
 ```
 
-### `rule+vlm`
-
-동일 scenario에 Rule과 VLM path가 모두 존재할 수 있다.
-
-현재 대표적인 예는:
-
-```text
-waiting_for_pedestrian_to_cross
-```
-
-이다. 따라서 scenario를 단순히 "Rule 또는 VLM" 중 하나로 강제 분류하지 않고 `methods`를 복수 값으로 저장한다.
+`waiting_for_pedestrian_to_cross`는 과거 VLM PoC도 구현되었지만, 현재 선택된 최종 방식은 deterministic `rule`이다. 따라서 catalog에서는 `rule`로만 관리하며, 해당 VLM PoC는 현재 VLM scenario configuration에서 제외한다.
 
 ## 4. Status 의미
 
@@ -91,7 +96,7 @@ methods = vlm
 status = experimental
 ```
 
-즉 VLM이라는 사실은 `methods`에서, 검증 수준은 `status`에서 확인한다.
+즉 판별 방식은 `methods`에서, 검증 수준은 `status`에서 확인한다.
 
 > `active`는 production-level validation이 완전히 끝났다는 의미가 아니다. 실제 성능과 제한 사항은 evaluation 결과와 `07_KNOWN_ISSUES.md`를 함께 확인한다.
 
@@ -104,7 +109,7 @@ status = experimental
 
 이 두 label은 현재 rule-based detector에서 사용되지만 supplied Motional Scenario reference list에는 없었다.
 
-이 예외 때문에 모든 row에 `taxonomy_status` column을 추가하지 않는다. Reference taxonomy와 repository extension 차이는 이 문서에서 명시적으로 관리한다.
+이 예외 때문에 모든 row에 별도의 taxonomy column을 추가하지 않는다. Reference taxonomy와 repository extension 차이는 이 문서에서 명시적으로 관리한다.
 
 ## 6. Code와 Catalog 관계
 
@@ -135,7 +140,7 @@ tests/unit/test_scenario_catalog.py
 ```text
 scenario_catalog.csv
 → 어떤 scenario가 존재하는가?
-→ Rule / VLM 중 어떤 방식으로 처리하는가?
+→ 현재 Rule / VLM 중 어떤 방식으로 처리하는가?
 → 현재 상태는 무엇인가?
 
 direct_scenarios.yaml
