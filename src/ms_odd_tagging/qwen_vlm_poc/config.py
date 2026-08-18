@@ -11,9 +11,6 @@ from ms_odd_tagging.common.scenario_catalog import scenario_names_for_method
 
 
 VLM_GROUPS = {
-    "waiting_for_pedestrian_to_cross": (
-        "waiting_for_pedestrian_to_cross",
-    ),
     "on_intersection": (
         "on_intersection",
     ),
