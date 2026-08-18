@@ -38,12 +38,12 @@ The numbered data/output folders express execution order. Python package folders
 
 ### Public input-generation boundaries
 
-The public canonical entrypoint is `canonical_builder.py`:
+The public canonical entrypoint is `canonical_builder.py`. It always builds the
+OD+LD+trajectory schema through `canonical_odld.py`. The former OD-only mode is
+not exposed because the supported tagging pipeline depends on LD context.
 
-- `--mode od`: OD annotations + trajectory using `canonical.py`.
-- `--mode odld`: the same OD/trajectory semantics plus LD static-map normalization and per-frame LD spatial context using `canonical_odld.py`.
-
-`canonical_odld.py` intentionally extends the OD canonicalizer; it is not an independent competing rewrite.
+`canonical.py` remains an internal shared core for OD/trajectory parsing and
+geometry used by `canonical_odld.py`; it is not a separate user-facing pipeline.
 
 The public per-frame input entrypoint is `frame_input_builder.py`. It always generates the centered, ego-heading-up `explorer_aligned` BEV and writes to `outputs/02_frame_inputs` by default. The previous standard/revised renderer choice is no longer exposed by the active pipeline.
 
@@ -73,7 +73,12 @@ export MS_ODD_DATA_ROOT=/path/to/ms-odd-tagging-data/data
 export MS_ODD_OUTPUT_ROOT=/path/to/ms-odd-tagging-data/outputs
 ```
 
-Use `--canonical-mode odld` (or the compatibility alias `--odld`) for a recording containing `annotations_OD.json`, `annotations_LD.json`, and `traj_lcs.txt`. Add `--frame-limit 1` for a fast smoke run or `--stop-after canonical` while debugging. BEV/model inputs are sampled by real timestamps at 1 frame per second by default. Change this with `--frames-per-second 2` or use `--all-frames` when full-frame output is required. Dynamic rule tagging still evaluates every canonical frame.
+Every recording must contain `annotations_OD.json`, `annotations_LD.json`, and
+`traj_lcs.txt`; ODLD canonicalization is always used. Add `--frame-limit 1` for
+a fast smoke run or `--stop-after canonical` while debugging. BEV/model inputs
+are sampled by real timestamps at 1 frame per second by default. Change this with
+`--frames-per-second 2` or use `--all-frames` when full-frame output is
+required. Dynamic rule tagging still evaluates every canonical frame.
 
 Add `--profile-generation` to write optional generation timing, processing FPS,
 and storage metrics under `outputs/02_frame_inputs`.
@@ -82,7 +87,7 @@ Each stage is independently executable through a stable public dispatcher:
 
 ```bash
 python -m ms_odd_tagging.input_generator.canonical_builder --help
-python -m ms_odd_tagging.input_generator.canonical_builder --mode odld RECORDING
+python -m ms_odd_tagging.input_generator.canonical_builder RECORDING
 python -m ms_odd_tagging.input_generator.frame_input_builder --help
 python -m ms_odd_tagging.input_generator.frame_input_builder
 python -m ms_odd_tagging.validator.frame_schema --help
@@ -156,7 +161,7 @@ the explorer's exact current frame to the downloaded frame-GT JSON.
 
 ## Important contracts
 
-- Canonical schemas remain `od-trajectory-canonical-frame-v1` and `odld-trajectory-canonical-frame-v1`.
+- The canonical schema is `odld-trajectory-canonical-frame-v1`.
 - OD `frameIndex` maps directly to the trajectory row; LD is treated as a recording-level static map spatially queried at each ego pose.
 - Every selected timestamp produces one independent `frame.json` and BEV; default selection is 1 FPS and there is no temporal window sampling in the active per-frame pipeline.
 - Recording rule events are stored separately from model-facing frame JSON to prevent label leakage.
