@@ -43,9 +43,9 @@ src/ms_odd_tagging/input_generator/canonical.py
 src/ms_odd_tagging/input_generator/canonical_odld.py
 ```
 
-OD-only canonicalizer와 OD+LD canonicalizer는 실험적 차이가 남아 있어 현재 별도로 유지한다.
+지원되는 canonical path는 OD+LD 하나이다. `canonical.py`는 별도 mode가 아니라 `canonical_odld.py`가 재사용하는 내부 OD/trajectory core로만 유지한다.
 
-OD+LD mode는 raw OD, LD, trajectory를 frame 기준으로 동기화하고 LD feature store 및 frame-level nearby feature reference를 구성한다.
+Canonicalization은 raw OD, LD, trajectory를 frame 기준으로 동기화하고 LD feature store 및 frame-level nearby feature reference를 구성한다.
 
 주요 contract:
 
