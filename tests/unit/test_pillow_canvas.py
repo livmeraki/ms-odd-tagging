@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from ms_odd_tagging.input_generator.pillow_canvas import PillowCanvas
+from ms_odd_tagging.frame_inputs.pillow_canvas import PillowCanvas
 
 
 def test_pillow_canvas_supports_bev_drawing_api(tmp_path: Path) -> None:

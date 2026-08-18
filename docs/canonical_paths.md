@@ -28,7 +28,7 @@ breaking existing notebooks, tests, and source-tree scripts.
 6. experiments may consume canonical packages, but canonical packages must never
    import experiments.
 
-## The old frame-input implementations
+## Compatibility import paths
 
 The explorer-aligned builder is the only production frame-input route.
 `frame_input.py`, `frame_input_revised.py`,
@@ -36,8 +36,6 @@ The explorer-aligned builder is the only production frame-input route.
 `_frame_input_explorer_aligned_impl.py` are compatibility/migration internals.
 They are deliberately not installed command targets. The standard renderer path
 remains solely as a regression oracle until output-equivalence fixtures allow
-its removal. New code must import `ms_odd_tagging.frame_inputs`, not these
-modules.
 
 ## Geometry and scenario ownership
 
@@ -64,3 +62,8 @@ Existing `ms-odd-*` commands and root `run_*.py` scripts remain supported in
 this PR. `ms-odd` is the single discoverable command surface for new use.
 Compatibility paths may be removed only after caller search, fixture comparison,
 and a deprecation window.
+
+
+## Physical implementation ownership
+
+Canonical normalization now lives in `ms_odd_tagging.canonical`; active per-frame JSON, generation policy, and BEV rendering live in `ms_odd_tagging.frame_inputs`. The similarly named modules under `ms_odd_tagging.input_generator` are compatibility aliases only. They resolve to the same module objects so existing imports and monkeypatch points continue to work, but all new code and tests must import the owning packages directly.

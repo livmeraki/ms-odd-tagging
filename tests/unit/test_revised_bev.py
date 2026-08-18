@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from ms_odd_tagging.input_generator.revised_bev import (
+from ms_odd_tagging.frame_inputs.revised_bev import (
     ACTIVE_OBJECT_COLOR,
     CROSSWALK_COLOR,
     FORWARD_ARC_COLOR,

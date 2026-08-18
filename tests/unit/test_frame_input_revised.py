@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ms_odd_tagging.input_generator import frame_input_revised
+from ms_odd_tagging.frame_inputs import explorer_aligned as frame_input_revised
 
 
 def test_revised_frame_input_metadata_describes_centered_bev(

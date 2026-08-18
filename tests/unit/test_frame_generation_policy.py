@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ms_odd_tagging.input_generator.frame_generation_policy import (
+from ms_odd_tagging.frame_inputs.frame_generation_policy import (
     ANSI_GREEN,
     choose_existing_output_action,
     completed_frame_matches,

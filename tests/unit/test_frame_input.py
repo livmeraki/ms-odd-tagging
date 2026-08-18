@@ -3,15 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ms_odd_tagging.input_generator import frame_input
-from ms_odd_tagging.input_generator.frame_input import (
+from ms_odd_tagging.frame_inputs import standard as frame_input
+from ms_odd_tagging.frame_inputs.standard import (
     SCHEMA_VERSION,
     build_frame_json,
     frame_id,
     following_lane_intervals_to_events,
     sample_frames_by_rate,
 )
-from ms_odd_tagging.input_generator.frame_tags import (
+from ms_odd_tagging.frame_inputs.frame_tags import (
     active_scenarios_from_event_json,
     active_scenarios_from_frame_json,
     export_frame_tags_from_event_json,

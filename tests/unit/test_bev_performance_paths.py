@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ms_odd_tagging.input_generator import revised_bev
+from ms_odd_tagging.frame_inputs import revised_bev
 
 
 def _minimal_frame() -> dict:

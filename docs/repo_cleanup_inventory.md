@@ -40,7 +40,7 @@ The previous `frame_input.py` / `frame_input_revised.py` split represented two r
 - `standard`: existing model-facing rendering;
 - `explorer_aligned`: centered explorer-aligned rendering.
 
-`frame_input_builder.py` is the public dispatcher. The historical public modules remain compatibility entrypoints, and their original implementations are retained privately during this cleanup branch for rollback.
+`frame_inputs/builder.py` is the public dispatcher. Historical modules under `input_generator/` are compatibility aliases; active implementations now live in their owning packages.
 
 ### CLI ownership
 
@@ -63,12 +63,12 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 | Responsibility / Feature | Current path | Status | Ownership / unique behavior | Action |
 |---|---|---|---|---|
 | Public canonical generation | `canonical/` | Canonical | Stable ODLD-only public boundary | Keep |
-| OD + trajectory core | `input_generator/canonical.py` | Internal core | Shared OD parsing, object, ego, and interaction semantics reused by ODLD | Keep internal; do not expose as a mode |
-| LD augmentation | `input_generator/canonical_odld.py` | Canonical extension | Recording-static LD store, lane/topology/roadmark normalization, per-frame nearby references | Keep separate |
+| OD + trajectory core | `canonical/core.py` | Internal core | Shared OD parsing, object, ego, and interaction semantics reused by ODLD | Keep internal; do not expose as a mode |
+| LD augmentation | `canonical/odld.py` | Canonical extension | Recording-static LD store, lane/topology/roadmark normalization, per-frame nearby references | Keep separate |
 | Public frame-input generation | `frame_inputs/` | Canonical | Stable explorer-aligned public boundary | Keep |
-| BEV renderer selection | `input_generator/bev_renderer.py` | Canonical | Single renderer API and metadata contract | Keep |
-| Standard frame-input implementation | `_frame_input_standard_impl.py` via `frame_input.py` | Legacy/internal during migration | Exact historical behavior retained for rollback | Remove only after local/CI regression run |
-| Explorer-aligned implementation | `_frame_input_explorer_aligned_impl.py` via `frame_input_revised.py` | Legacy/internal during migration | Exact historical revised behavior retained for rollback | Remove only after regression run |
+| BEV renderer selection | `frame_inputs/bev_renderer.py` | Canonical | Single renderer API and metadata contract | Keep |
+| Standard frame-input implementation | `frame_inputs/_standard_impl.py` via `frame_inputs/standard.py` | Internal compatibility mode | Exact historical behavior retained behind the owning boundary | Keep while supported by regression tests |
+| Explorer-aligned implementation | `frame_inputs/_explorer_aligned_impl.py` via `frame_inputs/explorer_aligned.py` | Canonical implementation | Active per-frame generation behavior | Keep |
 | Rule-based tagging | `tagger/rule_based/` + `configs/scenario_catalog.csv` + `configs/direct_scenarios.yaml` | Canonical | Unified scenario catalog, detector registry, and thresholds | Keep catalog as source of truth |
 | Shared features | `features/` | Canonical | Cross-detector reusable relations/motion/context | Keep; future duplicate-utility audit |
 | Following-lane | `scenarios/following_lane/` | Canonical/candidate | Active physical lane/lead logic with extensive tests | High risk; defer consolidation |
@@ -146,7 +146,7 @@ This is intentionally less aggressive than a wholesale directory rewrite. The cu
 The seven repository-boundary issues now have explicit, testable decisions:
 
 1. Canonicalization has a public `ms_odd_tagging.canonical` package.
-2. Frame generation has a public `ms_odd_tagging.frame_inputs` package; old
+2. Frame generation is physically owned by `ms_odd_tagging.frame_inputs`; old
    standard/revised modules are compatibility internals and the standard path is
    retained only as a regression oracle.
 3. `ms_odd_tagging.geometry` records one owner and lifecycle status per geometry

@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from ms_odd_tagging.input_generator.generation_profile import (
+from ms_odd_tagging.frame_inputs.generation_profile import (
     GenerationProfiler,
     files_size,
     p95,

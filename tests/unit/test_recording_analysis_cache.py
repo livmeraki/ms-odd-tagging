@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ms_odd_tagging.input_generator.recording_analysis_cache import get_recording_analysis
+from ms_odd_tagging.frame_inputs.recording_analysis_cache import get_recording_analysis
 from ms_odd_tagging.tagger.rule_based.scenario_event import ScenarioEvent
 
 

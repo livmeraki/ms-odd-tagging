@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from ms_odd_tagging.input_generator.bev_renderer import normalize_bev_style, render_metadata
-from ms_odd_tagging.input_generator.revised_bev import metric_viewport
+from ms_odd_tagging.frame_inputs.bev_renderer import normalize_bev_style, render_metadata
+from ms_odd_tagging.frame_inputs.revised_bev import metric_viewport
 
 
 def test_bev_style_aliases() -> None:

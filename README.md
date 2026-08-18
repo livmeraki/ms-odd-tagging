@@ -31,7 +31,7 @@ The numbered data/output folders express execution order. Python package folders
 - `outputs/legacy/`: compatibility outputs for the deprecated window/refined model-input path.
 - `src/ms_odd_tagging/canonical/`: public OD+LD+trajectory normalization boundary.
 - `src/ms_odd_tagging/frame_inputs/`: public per-frame JSON and BEV generation boundary.
-- `src/ms_odd_tagging/input_generator/`: compatibility implementations used behind those public boundaries.
+- `src/ms_odd_tagging/input_generator/`: deprecated compatibility aliases plus the legacy window pipeline; active canonical and frame-input implementations live in their owning packages.
 - `src/ms_odd_tagging/tagger/`: rule-based and model-based tagging.
 - `src/ms_odd_tagging/scenarios/`: scenario-specific geometry/detection pipelines such as following-lane.
 - `src/ms_odd_tagging/validator/`: input/output validation and retry logic.
@@ -47,15 +47,14 @@ The public canonical boundary is `ms_odd_tagging.canonical`. It always builds
 the OD+LD+trajectory schema. The former OD-only mode is not exposed because the
 supported tagging pipeline depends on LD context.
 
-`canonical.py` remains an internal shared core for OD/trajectory parsing and
-geometry used by `canonical_odld.py`; it is not a separate user-facing pipeline.
+`canonical/core.py` is the internal shared core for OD/trajectory parsing and geometry used by `canonical/odld.py`; it is not a separate user-facing pipeline.
 
 The public per-frame boundary is `ms_odd_tagging.frame_inputs`. It always
 generates the centered, ego-heading-up `explorer_aligned` BEV and writes to
 `outputs/02_frame_inputs` by default. The previous standard/revised renderer
 choice is no longer exposed by the active pipeline.
 
-`frame_input.py` remains an internal compatibility/helper layer while cleanup is in progress because explorer-aligned generation still reuses several of its non-rendering utilities.
+Explorer-aligned generation and its shared helpers are physically owned by `frame_inputs/`. Legacy `input_generator` module names remain import-compatible aliases only.
 
 ## Install and validate
 

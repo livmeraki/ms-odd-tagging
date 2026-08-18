@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib
+
 import tomllib
 from pathlib import Path
 
@@ -48,3 +50,18 @@ def test_shared_vlm_contract_does_not_encode_scenario_policy() -> None:
     request = VLMRequest(system_prompt="system", user_prompt="user")
     assert request.image_paths == ()
     assert request.metadata == {}
+
+
+def test_legacy_input_generator_modules_alias_their_canonical_owners() -> None:
+    aliases = {
+        "ms_odd_tagging.input_generator.canonical": "ms_odd_tagging.canonical.core",
+        "ms_odd_tagging.input_generator.canonical_odld": "ms_odd_tagging.canonical.odld",
+        "ms_odd_tagging.input_generator.canonical_builder": "ms_odd_tagging.canonical.builder",
+        "ms_odd_tagging.input_generator.frame_input": "ms_odd_tagging.frame_inputs.standard",
+        "ms_odd_tagging.input_generator.frame_input_revised": "ms_odd_tagging.frame_inputs.explorer_aligned",
+        "ms_odd_tagging.input_generator.frame_input_builder": "ms_odd_tagging.frame_inputs.builder",
+        "ms_odd_tagging.input_generator.bev_renderer": "ms_odd_tagging.frame_inputs.bev_renderer",
+        "ms_odd_tagging.input_generator.revised_bev": "ms_odd_tagging.frame_inputs.revised_bev",
+    }
+    for legacy_name, owner_name in aliases.items():
+        assert importlib.import_module(legacy_name) is importlib.import_module(owner_name)
