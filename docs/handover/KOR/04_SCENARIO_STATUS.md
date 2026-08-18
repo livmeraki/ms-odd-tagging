@@ -8,7 +8,7 @@ Scenario별 자동화 방식과 현재 상태는 하나의 catalog에서 관리�
 configs/scenario_catalog.csv
 ```
 
-이 파일이 다음 정보의 **single source of truth**이다.
+이 파일이 다음 정보의 single source of truth이다.
 
 - scenario name
 - category
@@ -42,9 +42,6 @@ Rule / Geometry / Temporal logic이 최종 scenario를 판별한다.
 
 - `stationary`
 - `changing_lane`
-- `traversing_crosswalk`
-- `near_multiple_pedestrians`
-- `waiting_for_pedestrian_to_cross`
 
 Rule threshold와 detector parameter는 `configs/direct_scenarios.yaml`에서 관리한다.
 
@@ -68,7 +65,6 @@ Rule / Geometry based candidate selection
 
 - `on_intersection`
 - `starting_u_turn`
-- traffic-light 관련 scenario
 
 VLM 관련 실행 code와 candidate grouping은 다음 package 안에서 관리한다.
 

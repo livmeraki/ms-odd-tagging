@@ -57,24 +57,9 @@ configs/scenario_catalog.csv
 
 여부를 확인할 수 있다.
 
-`waiting_for_pedestrian_to_cross`의 현재 선택된 방식은 deterministic `rule`이다. 과거 VLM PoC 구현 코드는 남아 있지만 현재 catalog의 VLM method에는 포함하지 않는다.
-
 자세한 내용은 `04_SCENARIO_STATUS.md`를 확인한다.
 
-## 4. 현재 구현 범위 요약
-
-현재 자동화 방식은 크게 다음과 같이 구분된다.
-
-- **Rule — active**: speed, jerk, turn, lane change, crosswalk/stopline relation, nearby object interaction, pedestrian-crosswalk interaction, object path crossing 등
-- **Rule — experimental**: lead/trail 및 traffic interaction 계열 등 추가 calibration이 필요한 rule
-- **VLM — experimental**: `on_intersection`, `starting_u_turn`, traffic-light 관련 semantic scenario 등
-- **Unsupported**: 현재 Rule/VLM 자동 tagging path가 없는 scenario
-
-특히 stop-sign, pickup/dropoff, protected/unprotected turn, narrow-lane 관련 일부 taxonomy scenario는 현재 `unsupported`로 관리한다. 전체 목록은 반드시 `configs/scenario_catalog.csv`를 source of truth로 확인한다.
-
-`active`는 현재 자동 tagging path가 사용 가능한 상태를 의미하며, production-level validation이 모두 완료되었다는 의미는 아니다. `experimental`은 code path는 존재하지만 추가 calibration 또는 evaluation이 필요한 상태이다.
-
-## 5. 핵심 성과
+## 4. 핵심 성과
 
 - OD, LD, Ego Trajectory를 통합한 **canonical pipeline 구축**
 - **Rule / Geometry 중심의 자동 tagging 구조 구축**
@@ -83,7 +68,10 @@ configs/scenario_catalog.csv
 - Lane, Crosswalk, Object Interaction 등으로 **지원 scenario 범위 확장**
 - Scenario 지원 상태를 **하나의 catalog로 통합 관리**
 
-## 6. Handover Document Guide
+Scenario별 상세 구현 방식과 상태는 `configs/scenario_catalog.csv`와
+`04_SCENARIO_STATUS.md`를 확인한다.
+
+## 5. Handover Document Guide
 
 > **READ THIS FIRST, THEN FOLLOW THIS ORDER**
 
