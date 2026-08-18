@@ -7,29 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from ms_odd_tagging.common.config import CANONICAL, OUTPUT_ROOT
-
-
-TRAFFIC_LIGHT_LABELS = (
-    "on_traffic_light_intersection",
-    "on_stopline_traffic_light",
-    "accelerating_at_traffic_light",
-    "accelerating_at_traffic_light_with_lead",
-    "accelerating_at_traffic_light_without_lead",
-    "stationary_at_traffic_light_with_lead",
-    "stationary_at_traffic_light_without_lead",
-    "stopping_at_traffic_light_with_lead",
-    "stopping_at_traffic_light_without_lead",
-    "traversing_traffic_light_intersection",
-    "starting_straight_traffic_light_intersection_traversal",
+from ms_odd_tagging.common.scenario_catalog import (
+    vlm_candidate_groups,
+    vlm_labels_for_group,
 )
 
 
-SCENARIOS = (
-    "waiting_for_pedestrian_to_cross",
-    "on_intersection",
-    "starting_u_turn",
-    "traffic_light_episode",
-)
+TRAFFIC_LIGHT_LABELS = vlm_labels_for_group("traffic_light_episode")
+SCENARIOS = vlm_candidate_groups()
 
 
 @dataclass(frozen=True)
