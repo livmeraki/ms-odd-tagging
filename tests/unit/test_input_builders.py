@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from ms_odd_tagging.input_generator import canonical_builder, frame_input_builder
 
 
@@ -13,7 +15,7 @@ def test_canonical_builder_dispatches_odld(monkeypatch) -> None:
 
     monkeypatch.setattr(canonical_builder, "_forward_main", fake_forward)
     result = canonical_builder.main(
-        ["--mode", "odld", "--ld-radius-m", "80", "recording-a"]
+        ["--ld-radius-m", "80", "recording-a"]
     )
     assert result == 0
     assert captured["module_main"] is canonical_builder.canonical_odld.main
@@ -21,19 +23,9 @@ def test_canonical_builder_dispatches_odld(monkeypatch) -> None:
     assert captured["argv"][captured["argv"].index("--ld-radius-m") + 1] == "80.0"
 
 
-def test_canonical_builder_dispatches_od(monkeypatch) -> None:
-    captured = {}
-
-    def fake_forward(module_main, argv):
-        captured["module_main"] = module_main
-        captured["argv"] = argv
-        return 0
-
-    monkeypatch.setattr(canonical_builder, "_forward_main", fake_forward)
-    result = canonical_builder.main(["--mode", "od", "recording-b"])
-    assert result == 0
-    assert captured["module_main"] is canonical_builder.canonical.main
-    assert captured["argv"][-1] == "recording-b"
+def test_canonical_builder_rejects_removed_od_mode() -> None:
+    with pytest.raises(SystemExit):
+        canonical_builder.parse_args(["--mode", "od"])
 
 
 def test_frame_input_builder_dispatches_explorer_aligned(monkeypatch, tmp_path) -> None:
