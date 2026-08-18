@@ -15,11 +15,12 @@ def test_catalog_is_unique_and_covers_current_methods() -> None:
     assert len(names) == len(set(names))
     assert len(catalog) == 76
     assert len(scenario_names_for_method("rule")) == 40
-    assert len(scenario_names_for_method("vlm")) == 14
+    assert len(scenario_names_for_method("vlm")) == 13
 
 
 def test_catalog_status_and_method_contract() -> None:
     for entry in load_scenario_catalog():
+        assert len(entry.methods) <= 1
         if entry.status == "unsupported":
             assert not entry.methods
         else:
@@ -40,4 +41,5 @@ def test_vlm_configuration_matches_catalog() -> None:
     assert SCENARIOS == tuple(VLM_GROUPS)
     assert TRAFFIC_LIGHT_LABELS == VLM_GROUPS["traffic_light_episode"]
     assert "waiting_for_pedestrian_to_cross" in scenario_names_for_method("rule")
-    assert "waiting_for_pedestrian_to_cross" in scenario_names_for_method("vlm")
+    assert "waiting_for_pedestrian_to_cross" not in scenario_names_for_method("vlm")
+    assert "waiting_for_pedestrian_to_cross" not in SCENARIOS
