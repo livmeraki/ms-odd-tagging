@@ -16,6 +16,8 @@ from ms_odd_tagging.input_generator.revised_bev import (
     _clip_segment,
     _forward_arc_points,
     _footprint_buffer_points,
+    _traffic_light_color,
+    _traffic_light_state,
     centered_extent,
     render_revised_bev_png,
 )
@@ -35,6 +37,41 @@ def png_pixel(content: bytes, x: int, y: int, width: int) -> bytes:
     stride = 1 + width * 3
     pixel_start = y * stride + 1 + x * 3
     return raw[pixel_start:pixel_start + 3]
+
+
+@pytest.mark.parametrize(
+    ("obj", "expected"),
+    [
+        ({"attributes": {"state": "RED"}}, "red"),
+        ({"signals": {"signal_state": "amber"}}, "amber"),
+        ({"metadata": {"traffic_light_state": "Green"}}, "green"),
+        ({"color": "unknown"}, "unknown"),
+        ({}, None),
+    ],
+)
+def test_traffic_light_state_extracts_supported_metadata(
+    obj: dict, expected: str | None
+) -> None:
+    assert _traffic_light_state(obj) == expected
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [
+        ("red", "#dc2626"),
+        ("yellow", "#f59e0b"),
+        ("amber", "#f59e0b"),
+        ("green", "#16a34a"),
+        (None, "#0891b2"),
+        ("unknown", "#0891b2"),
+    ],
+)
+def test_traffic_light_color_maps_state_and_fallback(
+    state: str | None, expected: str
+) -> None:
+    from ms_odd_tagging.input_generator.model_input import hex_to_rgb
+
+    assert _traffic_light_color(state) == hex_to_rgb(expected)
 
 
 def test_clipping_keeps_geometry_crossing_the_asymmetric_view() -> None:
@@ -97,7 +134,21 @@ def test_revised_bev_renders_png_with_requested_dimensions(tmp_path: Path) -> No
                 "dimensions_m": {"length": 4.5, "width": 1.8},
                 "heading_relative_rad": 0.0,
                 "velocity_lcs_mps": [2.0, 3.0, 0.0],
-            }
+            },
+            {
+                "object_id": "traffic-light-car-1",
+                "class": "traffic_light_car",
+                "annotation_type": "static",
+                "position_lcs_m": [13.0, 24.0, 0.0],
+                "attributes": {"state": "red"},
+            },
+            {
+                "object_id": "traffic-light-ped-1",
+                "class": "traffic_light_ped",
+                "annotation_type": "static",
+                "position_lcs_m": [12.0, 22.0, 0.0],
+                "metadata": {"light_state": "green"},
+            },
         ],
         "ld": {"available": False},
     }
