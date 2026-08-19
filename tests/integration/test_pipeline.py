@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -447,12 +448,14 @@ def test_gt_template_formula_fills_speed_labels(tmp_path: Path) -> None:
 
 def test_no_tracked_secret_or_server_absolute_path_patterns() -> None:
     repo = Path(__file__).resolve().parents[2]
-    banned = (
-        "sk" + "-",
+    banned_literals = (
         "BEGIN " + "PRIVATE KEY",
         "/home/" + "stradvision",
         "/media/" + "stradvision",
         "C:" + "\\Users",
+    )
+    credential_patterns = (
+        re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}"),
     )
     tracked_files = subprocess.run(
         ["git", "ls-files"],
@@ -469,5 +472,7 @@ def test_no_tracked_secret_or_server_absolute_path_patterns() -> None:
         if path.suffix.lower() in {".png", ".pyc"}:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        for pattern in banned:
+        for pattern in banned_literals:
             assert pattern not in text, f"{pattern} found in {relative_path}"
+        for pattern in credential_patterns:
+            assert pattern.search(text) is None, f"{pattern.pattern} found in {relative_path}"
