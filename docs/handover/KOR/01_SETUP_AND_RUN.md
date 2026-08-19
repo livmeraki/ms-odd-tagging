@@ -174,6 +174,8 @@ outputs/02_frame_inputs
 
 기본 Frame Input / BEV sampling rate는 **1 FPS**이다.
 
+### Recording 1개 전체 실행
+
 Linux/macOS:
 
 ```bash
@@ -203,6 +205,46 @@ python run_pipeline.py <RECORDING_ID> --frames-per-second 2
 ```bash
 python run_pipeline.py <RECORDING_ID> --all-frames
 ```
+
+### Data folder의 모든 Recording 실행
+
+`data/01_raw/` 아래의 모든 recording directory를 순서대로 처리하려면 다음과 같이 실행한다. 기존 output이 있는 recording에서 매번 prompt가 뜨지 않도록 batch 실행에서는 `--existing-output resume`를 사용한다.
+
+Linux/macOS:
+
+```bash
+for recording in data/01_raw/*/; do
+  python run_pipeline.py "$(basename "$recording")" --existing-output resume
+done
+```
+
+Windows PowerShell:
+
+```powershell
+Get-ChildItem "data/01_raw" -Directory | ForEach-Object {
+    python run_pipeline.py $_.Name --existing-output resume
+}
+```
+
+외부 data root를 `MS_ODD_DATA_ROOT`로 설정한 경우에는 해당 경로의 모든 recording을 실행할 수 있다.
+
+Linux/macOS:
+
+```bash
+for recording in "$MS_ODD_DATA_ROOT"/*/; do
+  python run_pipeline.py "$(basename "$recording")" --existing-output resume
+done
+```
+
+Windows PowerShell:
+
+```powershell
+Get-ChildItem $env:MS_ODD_DATA_ROOT -Directory | ForEach-Object {
+    python run_pipeline.py $_.Name --existing-output resume
+}
+```
+
+> 위 명령은 data root 바로 아래의 각 directory를 하나의 `RECORDING_ID`로 간주한다. 전체 실행 전에 recording 1개로 Smoke Test를 먼저 완료하는 것을 권장한다.
 
 ### 전체 실행 후 확인
 
