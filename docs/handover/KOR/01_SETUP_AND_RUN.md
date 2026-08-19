@@ -208,43 +208,36 @@ python run_pipeline.py <RECORDING_ID> --all-frames
 
 ### Data folder의 모든 Recording 실행
 
-`data/01_raw/` 아래의 모든 recording directory를 순서대로 처리하려면 다음과 같이 실행한다. 기존 output이 있는 recording에서 매번 prompt가 뜨지 않도록 batch 실행에서는 `--existing-output resume`를 사용한다.
+앞에서 `MS_ODD_DATA_ROOT`, `MS_ODD_OUTPUT_ROOT`를 설정했다면 같은 환경변수를 그대로 사용한다.
 
-Linux/macOS:
+예를 들어 Windows PowerShell에서 다음과 같이 설정했다고 가정한다.
 
-```bash
-for recording in data/01_raw/*/; do
-  python run_pipeline.py "$(basename "$recording")" --existing-output resume
-done
+```powershell
+$env:MS_ODD_DATA_ROOT = "D:\path\to\ms-odd-tagging-data\data"
+$env:MS_ODD_OUTPUT_ROOT = "D:\path\to\ms-odd-tagging-data\outputs"
 ```
+
+이 경우 모든 raw recording은 `$env:MS_ODD_DATA_ROOT\01_raw`에서 읽고, 결과는 자동으로 `$env:MS_ODD_OUTPUT_ROOT` 아래에 생성된다. 별도로 `--source-root`, `--output-root`를 지정할 필요가 없다.
 
 Windows PowerShell:
 
 ```powershell
-Get-ChildItem "data/01_raw" -Directory | ForEach-Object {
+Get-ChildItem (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") -Directory | ForEach-Object {
     python run_pipeline.py $_.Name --existing-output resume
 }
 ```
-
-외부 data root를 `MS_ODD_DATA_ROOT`로 설정한 경우에는 해당 경로의 모든 recording을 실행할 수 있다.
 
 Linux/macOS:
 
 ```bash
-for recording in "$MS_ODD_DATA_ROOT"/*/; do
+for recording in "$MS_ODD_DATA_ROOT"/01_raw/*/; do
   python run_pipeline.py "$(basename "$recording")" --existing-output resume
 done
 ```
 
-Windows PowerShell:
+환경변수를 설정하지 않은 경우 기본값인 repository의 `data/01_raw/`와 `outputs/`가 사용된다.
 
-```powershell
-Get-ChildItem $env:MS_ODD_DATA_ROOT -Directory | ForEach-Object {
-    python run_pipeline.py $_.Name --existing-output resume
-}
-```
-
-> 위 명령은 data root 바로 아래의 각 directory를 하나의 `RECORDING_ID`로 간주한다. 전체 실행 전에 recording 1개로 Smoke Test를 먼저 완료하는 것을 권장한다.
+> Batch 실행에서는 기존 output이 있는 recording마다 prompt가 뜨지 않도록 `--existing-output resume`를 사용한다. 전체 실행 전 recording 1개로 Smoke Test를 먼저 완료하는 것을 권장한다.
 
 ### 전체 실행 후 확인
 
