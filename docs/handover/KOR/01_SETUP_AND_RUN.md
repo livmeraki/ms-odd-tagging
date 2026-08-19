@@ -209,7 +209,7 @@ Batch 중 일부 recording에 필수 파일이 없거나 processing error가 발
 - `$env:MS_ODD_OUTPUT_ROOT\02_frame_inputs`에 frame input / BEV가 생성되었는지 확인
 - 일부 BEV를 열어 Ego, road geometry, 주변 object 위치가 정상인지 확인
 
-> `run_pipeline.py`의 전체 실행은 현재 **input generation pipeline 전체 실행**을 의미한다. Rule-based tagging, Full ODLD Scenario Explorer, Frame GT Reviewer, VLM은 이후 필요에 따라 별도로 사용한다.
+> `run_pipeline.py`의 전체 실행은 현재 **input generation pipeline 전체 실행**을 의미한다. Rule-based tagging, Full ODLD Scenario Explorer, Integrated ODLD GT Authoring, VLM은 이후 필요에 따라 별도로 사용한다.
 
 ---
 
@@ -222,7 +222,7 @@ Batch 중 일부 recording에 필수 파일이 없거나 processing error가 발
 | Frame Input 없이 Canonical 결과만 생성 | Canonical만 생성 |
 | Rule scenario 구성 및 detector 확인 | Rule-based Tagging 구성 확인 |
 | OD + LD + Ego Trajectory + Scenario Tag를 함께 시각적으로 확인 | Full ODLD Scenario Explorer |
-| Ground Truth 작성 / 검토 | Frame GT Reviewer |
+| Full ODLD Explorer에서 Ground Truth 작성 / 저장 | Integrated ODLD GT Authoring |
 | VLM 실험 실행 | Local VLM Inference |
 
 ### 8.1 Canonical만 생성
@@ -299,33 +299,79 @@ $MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html
 
 rule 결과가 이상할 경우 이 explorer에서 OD / LD / Ego Trajectory / Scenario Event를 함께 확인한다.
 
-### 8.4 Frame GT Reviewer
+### 8.4 Integrated ODLD GT Authoring
 
-자동 tagging 결과와 비교할 Ground Truth를 작성하거나 검토할 때 사용한다.
+Ground Truth 작성에는 별도의 `ms_odd_tagging.gt_comparison.authoring` HTML page 대신, **Full ODLD Scenario Explorer에 GT authoring panel을 직접 결합한 최근 tool**을 사용한다. 이 방식에서는 OD / LD / Ego Trajectory / Scenario Event를 보면서 동일 frame 기준으로 GT를 작성할 수 있다.
+
+먼저 8.3의 Full ODLD Scenario Explorer가 생성되어 있어야 한다.
+
+#### 1) GT authoring explorer 생성
 
 Windows PowerShell:
 
 ```powershell
-python -m ms_odd_tagging.gt_comparison.authoring `
+$RECORDING = "<RECORDING_ID>"
+
+python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py `
+  --source-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers_gt_authoring_all_tags") `
   --frame-input-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "02_frame_inputs") `
-  --output-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "frame_gt_authoring") `
-  --all
+  --gt-dir (Join-Path $env:MS_ODD_DATA_ROOT "02_gt") `
+  --regenerate-existing `
+  $RECORDING
 ```
 
 Linux/macOS:
 
 ```bash
-python -m ms_odd_tagging.gt_comparison.authoring \
+RECORDING="<RECORDING_ID>"
+
+python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py \
+  --source-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers_gt_authoring_all_tags" \
   --frame-input-root "$MS_ODD_OUTPUT_ROOT/02_frame_inputs" \
-  --output-root "$MS_ODD_OUTPUT_ROOT/frame_gt_authoring" \
-  --all
+  --gt-dir "$MS_ODD_DATA_ROOT/02_gt" \
+  --regenerate-existing \
+  "$RECORDING"
 ```
 
-생성 후 다음 파일을 browser에서 연다.
+#### 2) Autosave server 실행
+
+GT 작성 결과를 JSON으로 저장하려면 생성된 explorer를 local server로 연다.
+
+Windows PowerShell:
+
+```powershell
+python scripts/odld_explorer/serve_gt_authoring_explorers.py `
+  --directory (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers_gt_authoring_all_tags") `
+  --gt-dir (Join-Path $env:MS_ODD_DATA_ROOT "02_gt") `
+  --host 127.0.0.1 `
+  --port 8080
+```
+
+Linux/macOS:
+
+```bash
+python scripts/odld_explorer/serve_gt_authoring_explorers.py \
+  --directory "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers_gt_authoring_all_tags" \
+  --gt-dir "$MS_ODD_DATA_ROOT/02_gt" \
+  --host 127.0.0.1 \
+  --port 8080
+```
+
+server 실행 후 browser에서 다음 주소를 연다.
 
 ```text
-$MS_ODD_OUTPUT_ROOT/frame_gt_authoring/index.html
+http://127.0.0.1:8080/index.html
 ```
+
+GT는 다음 위치에 recording별 JSON으로 저장된다.
+
+```text
+$MS_ODD_DATA_ROOT/02_gt/<RECORDING_ID>_frame_gt.json
+```
+
+GT authoring 중에는 server process를 종료하지 않는다. 작업이 끝나면 terminal에서 `Ctrl+C`로 종료한다.
 
 ### 8.5 Local VLM Inference
 
@@ -361,6 +407,8 @@ python -m ms_odd_tagging.frame_inputs.builder --help
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
 python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py --help
+python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py --help
+python scripts/odld_explorer/serve_gt_authoring_explorers.py --help
 ```
 
 위 명령은 data/output path를 사용하지 않으므로 Linux/macOS와 Windows PowerShell에서 동일하다.
@@ -375,4 +423,5 @@ python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py -
 - Smoke Test 성공 후 전체 Recording 실행
 - 실행 종료 후 Runtime Summary와 failed recording 확인
 - 결과 검토 시 generic explorer 대신 Full ODLD Scenario Explorer 사용
+- GT 작성 시 별도 Frame GT Reviewer 대신 Integrated ODLD GT Authoring 사용
 - output을 Git에 commit하지 않기
