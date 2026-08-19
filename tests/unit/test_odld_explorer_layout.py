@@ -12,7 +12,6 @@ import generate_dataset_explorers as base_explorer  # noqa: E402
 import add_gt_authoring_to_tagged_explorers as gt_authoring_explorer  # noqa: E402
 import add_bev_lane_poc_overlay_to_explorer as bev_lane_overlay  # noqa: E402
 import add_lanelet2_poc_overlay_to_explorer as lanelet2_overlay  # noqa: E402
-import generate_odld_dataset_explorers_w_frame_scenario_tag as frame_explorer  # noqa: E402
 import generate_odld_dataset_explorers_w_scenario_tag as odld_explorer  # noqa: E402
 import odld_explorer_common as explorer_common  # noqa: E402
 
@@ -41,7 +40,7 @@ def minimal_explorer_data() -> dict:
     }
 
 
-def test_specialized_generators_share_index_and_manifest_utilities() -> None:
+def test_event_generator_uses_shared_index_and_manifest_utilities() -> None:
     shared_names = (
         "index_html",
         "row_from_explorer",
@@ -54,7 +53,6 @@ def test_specialized_generators_share_index_and_manifest_utilities() -> None:
     for name in shared_names:
         shared = getattr(explorer_common, name)
         assert getattr(odld_explorer, name) is shared
-        assert getattr(frame_explorer, name) is shared
 
 
 def test_shared_recording_selection_is_stable(tmp_path: Path) -> None:
