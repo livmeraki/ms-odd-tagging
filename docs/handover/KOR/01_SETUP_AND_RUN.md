@@ -305,39 +305,37 @@ Ground Truth 작성에는 별도의 `ms_odd_tagging.gt_comparison.authoring` HTM
 
 먼저 8.3의 Full ODLD Scenario Explorer가 생성되어 있어야 한다.
 
-#### 1) GT authoring explorer 생성
+#### 1) 생성된 모든 recording의 GT authoring explorer 생성
+
+`recordings` positional argument를 생략하면 `07_odld_scenario_explorers`에 현재 생성되어 있는 모든 compatible recording을 대상으로 GT authoring explorer를 만든다. 이것을 기본 사용 방식으로 권장한다.
 
 Windows PowerShell:
 
 ```powershell
-$RECORDING = "<RECORDING_ID>"
-
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py `
   --source-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
   --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers_gt_authoring_all_tags") `
   --frame-input-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "02_frame_inputs") `
   --gt-dir (Join-Path $env:MS_ODD_DATA_ROOT "02_gt") `
-  --regenerate-existing `
-  $RECORDING
+  --regenerate-existing
 ```
 
 Linux/macOS:
 
 ```bash
-RECORDING="<RECORDING_ID>"
-
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py \
   --source-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
   --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers_gt_authoring_all_tags" \
   --frame-input-root "$MS_ODD_OUTPUT_ROOT/02_frame_inputs" \
   --gt-dir "$MS_ODD_DATA_ROOT/02_gt" \
-  --regenerate-existing \
-  "$RECORDING"
+  --regenerate-existing
 ```
+
+특정 recording만 다시 생성하고 싶을 때에만 command 마지막에 `<RECORDING_ID>`를 추가한다.
 
 #### 2) Autosave server 실행
 
-GT 작성 결과를 JSON으로 저장하려면 생성된 explorer를 local server로 연다.
+GT 작성 결과를 JSON으로 저장하려면 생성된 explorer 전체를 local server로 연다.
 
 Windows PowerShell:
 
@@ -365,7 +363,7 @@ server 실행 후 browser에서 다음 주소를 연다.
 http://127.0.0.1:8080/index.html
 ```
 
-GT는 다음 위치에 recording별 JSON으로 저장된다.
+index에서 생성된 recording들을 선택해 GT를 작성한다. GT는 다음 위치에 recording별 JSON으로 저장된다.
 
 ```text
 $MS_ODD_DATA_ROOT/02_gt/<RECORDING_ID>_frame_gt.json
