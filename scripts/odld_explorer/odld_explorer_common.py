@@ -155,6 +155,19 @@ def inject_lane_tracker(output_path: Path, following_lane_result: dict) -> None:
     render_original_explorer_with_lane_tracker(
         output_path, following_lane_result, output_path
     )
+    # The generated explorer and the generated OD+LD index live in the same
+    # output directory in the current handover flow. Older templates pointed
+    # one directory up to a legacy index filename, which breaks the button.
+    page = output_path.read_text(encoding="utf-8")
+    page = page.replace(
+        '../dataset_odld_explorer_w_scenario_tag_index.html',
+        'index.html',
+    )
+    page = page.replace(
+        '../dataset_trajectory_object_explorer_index.html',
+        'index.html',
+    )
+    output_path.write_text(page, encoding="utf-8")
 
 
 def row_from_explorer(output_path: Path) -> dict:
