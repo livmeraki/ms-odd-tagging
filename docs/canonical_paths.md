@@ -77,9 +77,9 @@ Canonical normalization now lives in `ms_odd_tagging.canonical`; active per-fram
 ## Visualization ownership
 
 `ms-odd explore` and `ms_odd_tagging.visualization.scenario_explorer` are the
-canonical generic explorer entrypoints. Rich ODLD event-tag and per-frame-tag
-generators remain specialized scripts because their input contracts differ.
-They share presentation and manifest utilities through
+canonical generic explorer entrypoints. The rich ODLD event-tag generator
+remains a specialized developer tool; the obsolete per-frame-tag adapter was
+removed. Shared presentation and manifest utilities remain in
 `scripts/odld_explorer/odld_explorer_common.py`; overlay-specific behavior stays
 with its lane, topology, VLM, GT-authoring, or review tool. See
 `docs/visualization_tools.md`.
