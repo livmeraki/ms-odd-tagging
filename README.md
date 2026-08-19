@@ -114,6 +114,11 @@ python -m ms_odd_tagging.visualization.scenario_explorer \
   outputs/01_canonical --output-dir outputs/06_scenario_explorers
 ```
 
+This is also available as `ms-odd explore`. It is the canonical generic
+visualization command. The richer event-tag and per-frame-tag ODLD generators
+under `scripts/odld_explorer/` remain specialized developer tools with distinct
+input contracts; see [docs/visualization_tools.md](docs/visualization_tools.md).
+
 ## Per-frame model inference
 
 ```bash

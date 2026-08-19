@@ -72,3 +72,14 @@ Canonical normalization now lives in `ms_odd_tagging.canonical`; active per-fram
 ## Evaluation ownership
 
 `ms_odd_tagging.evaluation.rule_based` owns GT validation, rule-prediction comparison, metric calculation, and report generation. `ms_odd_tagging.gt_comparison` retains GT authoring and label-support tools. The historical `gt_comparison.rule_based_evaluation` module is a compatibility alias to the evaluation owner.
+
+
+## Visualization ownership
+
+`ms-odd explore` and `ms_odd_tagging.visualization.scenario_explorer` are the
+canonical generic explorer entrypoints. Rich ODLD event-tag and per-frame-tag
+generators remain specialized scripts because their input contracts differ.
+They share presentation and manifest utilities through
+`scripts/odld_explorer/odld_explorer_common.py`; overlay-specific behavior stays
+with its lane, topology, VLM, GT-authoring, or review tool. See
+`docs/visualization_tools.md`.

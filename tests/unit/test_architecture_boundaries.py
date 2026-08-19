@@ -42,6 +42,7 @@ def test_ownership_registries_keep_experiments_explicit() -> None:
 def test_unified_cli_classifies_every_command() -> None:
     assert COMMANDS["pipeline"].category == "production"
     assert COMMANDS["evaluate-rules"].category == "tool"
+    assert COMMANDS["explore"].target == "ms_odd_tagging.visualization.scenario_explorer:main"
     assert COMMANDS["qwen-poc"].category == "experiment"
     assert all(command.target.count(":") == 1 for command in COMMANDS.values())
 

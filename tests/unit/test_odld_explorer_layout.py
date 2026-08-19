@@ -12,7 +12,9 @@ import generate_dataset_explorers as base_explorer  # noqa: E402
 import add_gt_authoring_to_tagged_explorers as gt_authoring_explorer  # noqa: E402
 import add_bev_lane_poc_overlay_to_explorer as bev_lane_overlay  # noqa: E402
 import add_lanelet2_poc_overlay_to_explorer as lanelet2_overlay  # noqa: E402
+import generate_odld_dataset_explorers_w_frame_scenario_tag as frame_explorer  # noqa: E402
 import generate_odld_dataset_explorers_w_scenario_tag as odld_explorer  # noqa: E402
+import odld_explorer_common as explorer_common  # noqa: E402
 
 
 def minimal_explorer_data() -> dict:
@@ -37,6 +39,36 @@ def minimal_explorer_data() -> dict:
         "objectRelations": {"frames": []},
         "pathCrossingRelations": {"frames": [], "egoPath": []},
     }
+
+
+def test_specialized_generators_share_index_and_manifest_utilities() -> None:
+    shared_names = (
+        "index_html",
+        "row_from_explorer",
+        "explorer_output_name",
+        "recording_from_canonical_path",
+        "read_manifest_rows",
+        "row_from_generated_data",
+        "select_canonical_paths",
+    )
+    for name in shared_names:
+        shared = getattr(explorer_common, name)
+        assert getattr(odld_explorer, name) is shared
+        assert getattr(frame_explorer, name) is shared
+
+
+def test_shared_recording_selection_is_stable(tmp_path: Path) -> None:
+    expected = []
+    for recording in ("Rec_B", "Rec_A", "Rec_C"):
+        path = tmp_path / f"{recording}_canonical_odld_frames.json"
+        path.write_text("{}", encoding="utf-8")
+        expected.append(path)
+
+    assert explorer_common.select_canonical_paths(tmp_path) == sorted(expected)
+    assert explorer_common.select_canonical_paths(tmp_path, ["Rec_C", "Rec_A"]) == [
+        tmp_path / "Rec_A_canonical_odld_frames.json",
+        tmp_path / "Rec_C_canonical_odld_frames.json",
+    ]
 
 
 def test_playback_controls_are_in_top_bar_with_faster_speeds() -> None:

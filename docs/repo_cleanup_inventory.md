@@ -79,8 +79,8 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 | Generic local model tagger | `tagger/model_based/local_vllm.py` | Legacy/canonical compatibility | Older general model-facing inference path | Do not delete without downstream caller audit |
 | Rule-based evaluation | `evaluation/rule_based.py` | Tool | GT validation, prediction comparison, metrics, and reports | Keep as canonical evaluation owner |
 | GT authoring and label support | `gt_comparison/` | Tool/support | Manual GT creation, taxonomy labels, matching helpers, and compatibility imports | Preserve separately |
-| Visualization | `visualization/` + package-specific overlays | Tool | Generic explorer plus algorithm-specific debug overlays | Preserve; avoid premature merge |
-| ODLD explorer scripts | `scripts/odld_explorer/` | Tool/legacy mixture | Large authoring/debug/generator scripts with potentially unique behavior | Needs separate entrypoint audit; no deletion this pass |
+| Visualization | `visualization/` + package-specific overlays | Tool | `ms-odd explore` is the generic canonical entrypoint; algorithm-specific overlays remain specialized | Keep boundary and specialized overlays |
+| ODLD explorer scripts | `scripts/odld_explorer/` | Specialized tools | Event/window-tag and per-frame-tag modes have distinct inputs; shared index/manifest/path code is centralized in `odld_explorer_common.py` | Retain both adapters; continue modularizing only proven-identical code |
 | Root compatibility wrappers | `run_*.py` | Compatibility | Convenient source-tree execution, especially without install | Keep for now; `run_pipeline.py` is documented |
 | Lane continuation patch | `docs/archive/lane_continuation_current_working.patch` | Legacy artifact | Preserved for comparison without cluttering the repository root | Compare before deletion |
 | Historical brainstorm | `docs/archive/brainstorm.md` | Historical design artifact | Preserved outside the runtime/documentation entry path | Retain as archive |
@@ -188,3 +188,19 @@ Six modules with no tracked callers, command exposure, tests, or unique implemen
 - `tagger/event_segmentation.py`.
 
 The active `input_generator/windows.py` legacy implementation and the established canonical/frame-input compatibility aliases remain because they still have callers or an explicit migration contract. The active rule-evaluation implementation is owned by `evaluation/rule_based.py`; the old `gt_comparison/rule_based_evaluation.py` path remains a compatibility alias.
+
+
+## Visualization and evaluation consolidation
+
+Rule evaluation is physically owned by `evaluation/rule_based.py`, and the old
+`gt_comparison.rule_based_evaluation` module is a compatibility alias. The
+canonical visualization command is `ms-odd explore`, backed by
+`visualization/scenario_explorer.py`.
+
+The three historical ODLD explorer generators were compared. The raw OD script
+is a base renderer, while the two ODLD scripts consume different tag sources
+(event/window results versus per-frame tag files), so neither adapter was
+deleted. Their identical index HTML, embedded-payload parsing, manifest, output
+name, and recording-path helpers were extracted into
+`scripts/odld_explorer/odld_explorer_common.py`. Specialized lane, topology,
+VLM, GT-authoring, and review overlays remain separate by design.
