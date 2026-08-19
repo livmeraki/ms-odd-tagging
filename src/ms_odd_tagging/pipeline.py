@@ -56,10 +56,10 @@ def write_runtime_report(
 ) -> Path:
     runtime_dir = output_root / "runtime_logs"
     runtime_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().astimezone()
-    report_path = runtime_dir / f"pipeline_{timestamp.strftime('%Y%m%d_%H%M%S')}.json"
+    recorded_at = datetime.now().astimezone()
+    report_path = runtime_dir / f"pipeline_{recorded_at.strftime('%Y%m%d_%H%M%S')}.json"
     payload = {
-        "started_at": timestamp.isoformat(timespec="seconds"),
+        "recorded_at": recorded_at.isoformat(timespec="seconds"),
         "recordings": recordings,
         "stages": stage_timings,
         "total_elapsed_seconds": round(total_elapsed, 3),
