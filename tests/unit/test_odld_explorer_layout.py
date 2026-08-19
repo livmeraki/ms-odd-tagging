@@ -94,6 +94,17 @@ def test_odld_sidebar_controls_do_not_move_into_top_playback_bar() -> None:
     assert page.index('id="showTags"') < page.index('for="classFilter"')
 
 
+def test_odld_plotly_traces_omit_undefined_optional_properties() -> None:
+    page = odld_explorer.scene_html(minimal_explorer_data())
+
+    assert "marker: selected ? {size: 7, color: '#dc2626'} : undefined" not in page
+    assert "text: selected ? x.map(() => relation.trackId) : undefined" not in page
+    assert "trace.marker = {size: 7, color: '#dc2626'};" in page
+    assert "trace.text = x.map(() => relation.trackId);" in page
+    assert "const plotTraces = traces.filter(" in page
+    assert "Plotly.react('map', plotTraces," in page
+
+
 def test_gt_authoring_index_uses_odld_card_filter_layout(tmp_path: Path) -> None:
     source_dir = tmp_path / "source"
     source_dir.mkdir()
