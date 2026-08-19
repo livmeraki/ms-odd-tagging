@@ -10,7 +10,7 @@ the two physical edges pass direction, overlap, and lane-width validation.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 
@@ -119,7 +119,6 @@ class LaneGeometry:
     geometry_recovered: bool = False
     recovery_method: str | None = None
     recovery_evidence: dict[str, Any] | None = None
-    curvature_continuations: tuple[dict[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -140,7 +139,6 @@ class LaneGeometry:
             "geometry_recovered": self.geometry_recovered,
             "recovery_method": self.recovery_method,
             "recovery_evidence": self.recovery_evidence,
-            "curvature_continuations": list(self.curvature_continuations),
         }
 
 
@@ -287,369 +285,10 @@ def _recover_full_edge_pair(
     }
 
 
-def _lane_width_evidence(
-    left: list[tuple[float, float]],
-    right: list[tuple[float, float]],
-    *,
-    minimum_lane_width_m: float = 2.0,
-    maximum_lane_width_m: float = 6.0,
-    maximum_width_range_m: float = 2.5,
-) -> tuple[bool, dict[str, Any]]:
-    if len(left) < 2 or len(right) < 2:
-        return False, {"reason": "insufficient_boundary_points"}
-    count = max(8, min(80, max(len(left), len(right))))
-    left_r = resample_polyline(left, count)
-    right_r = resample_polyline(right, count)
-    direct = sum(distance(a, b) for a, b in zip(left_r, right_r))
-    reverse = sum(distance(a, b) for a, b in zip(left_r, reversed(right_r)))
-    if reverse < direct:
-        right_r = list(reversed(right_r))
-    widths = [distance(a, b) for a, b in zip(left_r, right_r)]
-    sorted_widths = sorted(widths)
-    median_width = sorted_widths[len(sorted_widths) // 2]
-    evidence = {
-        "minimum_lane_width_m": round(min(widths), 3),
-        "median_lane_width_m": round(median_width, 3),
-        "maximum_lane_width_m": round(max(widths), 3),
-        "lane_width_range_m": round(max(widths) - min(widths), 3),
-    }
-    valid = (
-        median_width >= minimum_lane_width_m
-        and median_width <= maximum_lane_width_m
-        and max(widths) - min(widths) <= maximum_width_range_m
-    )
-    if not valid:
-        evidence["reason"] = "implausible_lane_width"
-    return valid, evidence
-
-
-def _maximum_segment_gap(points: list[tuple[float, float]]) -> float:
-    if len(points) < 2:
-        return 0.0
-    return max(distance(a, b) for a, b in zip(points, points[1:]))
-
-
-def _projected_span(
-    points: list[tuple[float, float]],
-    axis: tuple[float, float],
-) -> tuple[float, float] | None:
-    if not points:
-        return None
-    stations = [point[0] * axis[0] + point[1] * axis[1] for point in points]
-    return min(stations), max(stations)
-
-
-def _full_edge_expansion_evidence(
-    exact_left: list[tuple[float, float]],
-    exact_right: list[tuple[float, float]],
-    expanded_left: list[tuple[float, float]],
-    expanded_right: list[tuple[float, float]],
-) -> dict[str, Any]:
-    heading = _endpoint_heading(expanded_left)
-    if heading is None:
-        heading = _endpoint_heading(expanded_right)
-    if heading is None:
-        return {}
-    axis = (math.cos(heading), math.sin(heading))
-    exact_left_span = _projected_span(exact_left, axis)
-    exact_right_span = _projected_span(exact_right, axis)
-    expanded_left_span = _projected_span(expanded_left, axis)
-    expanded_right_span = _projected_span(expanded_right, axis)
-    evidence: dict[str, Any] = {}
-    if exact_left_span and expanded_left_span:
-        evidence["left_forward_extension_m"] = round(
-            max(0.0, expanded_left_span[1] - exact_left_span[1]), 3
-        )
-        evidence["left_backward_extension_m"] = round(
-            max(0.0, exact_left_span[0] - expanded_left_span[0]), 3
-        )
-    if exact_right_span and expanded_right_span:
-        evidence["right_forward_extension_m"] = round(
-            max(0.0, expanded_right_span[1] - exact_right_span[1]), 3
-        )
-        evidence["right_backward_extension_m"] = round(
-            max(0.0, exact_right_span[0] - expanded_right_span[0]), 3
-        )
-    return evidence
-
-
-def _lane_median_width(lane: LaneGeometry) -> float | None:
-    if len(lane.left) < 2 or len(lane.right) < 2:
-        return None
-    count = max(8, min(30, max(len(lane.left), len(lane.right))))
-    widths = [
-        distance(a, b)
-        for a, b in zip(
-            resample_polyline(list(lane.left), count),
-            resample_polyline(list(lane.right), count),
-        )
-    ]
-    if not widths:
-        return None
-    return sorted(widths)[len(widths) // 2]
-
-
-def _polyline_curvature(points: tuple[tuple[float, float], ...], *, use_tail: bool) -> float:
-    if len(points) < 3:
-        return 0.0
-    sample = list(points[-5:] if use_tail else points[:5])
-    headings = []
-    lengths = []
-    for a, b in zip(sample, sample[1:]):
-        length = distance(a, b)
-        if length <= 1e-6:
-            continue
-        headings.append(math.atan2(b[1] - a[1], b[0] - a[0]))
-        lengths.append(length)
-    if len(headings) < 2:
-        return 0.0
-    unwrapped = [headings[0]]
-    for heading in headings[1:]:
-        unwrapped.append(unwrapped[-1] + wrap_angle(heading - unwrapped[-1]))
-    arc = sum(lengths)
-    if arc <= 1e-6:
-        return 0.0
-    return (unwrapped[-1] - unwrapped[0]) / arc
-
-
-def _project_constant_curvature(
-    start: tuple[float, float],
-    heading: float,
-    curvature: float,
-    length_m: float,
-    *,
-    steps: int = 12,
-) -> list[tuple[float, float]]:
-    if length_m <= 0:
-        return [start]
-    count = max(3, min(40, steps))
-    points = [start]
-    x, y = start
-    ds = length_m / (count - 1)
-    current_heading = heading
-    for _ in range(1, count):
-        mid_heading = current_heading + curvature * ds * 0.5
-        x += math.cos(mid_heading) * ds
-        y += math.sin(mid_heading) * ds
-        current_heading += curvature * ds
-        points.append((x, y))
-    return points
-
-
-def _curve_heading_at(heading: float, curvature: float, length_m: float) -> float:
-    return heading + curvature * max(0.0, length_m)
-
-
-def _lateral_error_to_heading(
-    source_end: tuple[float, float],
-    heading: float,
-    point: tuple[float, float],
-) -> float:
-    dx, dy = point[0] - source_end[0], point[1] - source_end[1]
-    return abs(-math.sin(heading) * dx + math.cos(heading) * dy)
-
-
-def _continuation_gap_polygon(
-    projected: list[tuple[float, float]],
-    width_m: float,
-) -> list[tuple[float, float]]:
-    if len(projected) < 2:
-        return []
-    left: list[tuple[float, float]] = []
-    right: list[tuple[float, float]] = []
-    half_width = width_m / 2.0
-    for index, point in enumerate(projected):
-        if index + 1 < len(projected):
-            next_point = projected[index + 1]
-            heading = math.atan2(next_point[1] - point[1], next_point[0] - point[0])
-        else:
-            previous = projected[index - 1]
-            heading = math.atan2(point[1] - previous[1], point[0] - previous[0])
-        normal = (-math.sin(heading), math.cos(heading))
-        left.append((point[0] + normal[0] * half_width, point[1] + normal[1] * half_width))
-        right.append((point[0] - normal[0] * half_width, point[1] - normal[1] * half_width))
-    return left + list(reversed(right))
-
-
-def _curvature_aware_lane_continuations(
-    lanes: dict[str, LaneGeometry],
-    *,
-    maximum_gap_m: float = 15.0,
-    maximum_lateral_error_m: float = 1.25,
-    maximum_heading_difference_deg: float = 18.0,
-    maximum_curvature_difference_per_m: float = 0.08,
-    maximum_lane_width_difference_m: float = 0.9,
-) -> dict[str, LaneGeometry]:
-    updated: dict[str, LaneGeometry] = {}
-    valid_lanes = [
-        lane
-        for lane in lanes.values()
-        if lane.assignment_valid
-        and not lane.intersection_connector
-        and len(lane.centerline) >= 2
-    ]
-    for source in lanes.values():
-        if (
-            not source.assignment_valid
-            or source.intersection_connector
-            or len(source.centerline) < 3
-            or len(source.left) < 2
-            or len(source.right) < 2
-        ):
-            updated[source.lane_id] = source
-            continue
-        source_heading = math.atan2(
-            source.centerline[-1][1] - source.centerline[-2][1],
-            source.centerline[-1][0] - source.centerline[-2][0],
-        )
-        source_curvature = _polyline_curvature(source.centerline, use_tail=True)
-        source_width = _lane_median_width(source)
-        if source_width is None:
-            updated[source.lane_id] = source
-            continue
-        candidates = []
-        debug_candidates = []
-        for destination in valid_lanes:
-            if destination.lane_id == source.lane_id or len(destination.centerline) < 3:
-                continue
-            dx = destination.centerline[0][0] - source.centerline[-1][0]
-            dy = destination.centerline[0][1] - source.centerline[-1][1]
-            forward_gap = math.cos(source_heading) * dx + math.sin(source_heading) * dy
-            gap = math.hypot(dx, dy)
-            if forward_gap <= 0.1 or gap > maximum_gap_m:
-                continue
-            projected = _project_constant_curvature(
-                source.centerline[-1],
-                source_heading,
-                source_curvature,
-                gap,
-            )
-            projected_end = projected[-1]
-            lateral_error = _lateral_error_to_heading(
-                source.centerline[-1],
-                source_heading,
-                destination.centerline[0],
-            )
-            projection_error = distance(projected_end, destination.centerline[0])
-            destination_heading = math.atan2(
-                destination.centerline[1][1] - destination.centerline[0][1],
-                destination.centerline[1][0] - destination.centerline[0][0],
-            )
-            expected_heading = _curve_heading_at(source_heading, source_curvature, gap)
-            heading_difference = abs(math.degrees(wrap_angle(destination_heading - expected_heading)))
-            destination_curvature = _polyline_curvature(destination.centerline, use_tail=False)
-            curvature_difference = abs(destination_curvature - source_curvature)
-            destination_width = _lane_median_width(destination)
-            width_difference = (
-                math.inf
-                if destination_width is None
-                else abs(destination_width - source_width)
-            )
-            rejection_reasons = []
-            if lateral_error > maximum_lateral_error_m:
-                rejection_reasons.append("lateral_error")
-            if heading_difference > maximum_heading_difference_deg:
-                rejection_reasons.append("heading_difference")
-            if curvature_difference > maximum_curvature_difference_per_m:
-                rejection_reasons.append("curvature_difference")
-            if width_difference > maximum_lane_width_difference_m:
-                rejection_reasons.append("lane_width_difference")
-            if (
-                source.left_edge_id == destination.right_edge_id
-                or source.right_edge_id == destination.left_edge_id
-            ):
-                rejection_reasons.append("adjacent_lane_boundary_swap")
-            score = (
-                gap
-                + projection_error * 4.0
-                + lateral_error * 3.0
-                + heading_difference * 0.08
-                + curvature_difference * 15.0
-                + width_difference
-            )
-            record = {
-                "candidate_lane_id": destination.lane_id,
-                "gap_m": round(gap, 3),
-                "lateral_error_m": round(lateral_error, 3),
-                "projection_error_m": round(projection_error, 3),
-                "heading_difference_deg": round(heading_difference, 2),
-                "curvature_difference_per_m": round(curvature_difference, 4),
-                "lane_width_difference_m": round(width_difference, 3)
-                if math.isfinite(width_difference)
-                else None,
-                "score": round(score, 3),
-                "rejection_reasons": rejection_reasons,
-            }
-            debug_candidates.append(record)
-            if rejection_reasons:
-                continue
-            candidates.append((score, destination, projected, record))
-        if not candidates:
-            updated[source.lane_id] = replace(
-                source,
-                curvature_continuations=(
-                    {
-                        "source_lane_id": source.lane_id,
-                        "observed_segment_end_lcs_m": list(source.centerline[-1]),
-                        "source_heading_deg": round(math.degrees(source_heading), 2),
-                        "source_curvature_per_m": round(source_curvature, 5),
-                        "accepted": False,
-                        "candidate_next_segments": debug_candidates[:8],
-                    },
-                ) if debug_candidates else (),
-            )
-            continue
-        _, destination, projected, accepted_record = min(
-            candidates,
-            key=lambda item: (item[0], item[1].lane_id),
-        )
-        gap_polygon = _continuation_gap_polygon(projected, source_width)
-        updated[source.lane_id] = replace(
-            source,
-            curvature_continuations=(
-                {
-                    "source_lane_id": source.lane_id,
-                    "destination_lane_id": destination.lane_id,
-                    "confidence": "inferred_gap_reduced_confidence",
-                    "method": "curvature_aware_lane_continuation",
-                    "observed_segment_end_lcs_m": list(source.centerline[-1]),
-                    "projected_centerline_lcs_m": [list(point) for point in projected],
-                    "inferred_gap_polygon_lcs_m": [list(point) for point in gap_polygon],
-                    "observed_destination_polygon_lcs_m": [
-                        list(point) for point in destination.polygon
-                    ],
-                    "observed_destination_centerline_lcs_m": [
-                        list(point) for point in destination.centerline
-                    ],
-                    "bridged_distance_m": accepted_record["gap_m"],
-                    "source_heading_deg": round(math.degrees(source_heading), 2),
-                    "source_curvature_per_m": round(source_curvature, 5),
-                    "accepted_candidate": accepted_record,
-                    "candidate_next_segments": debug_candidates[:8],
-                    "observed_vs_inferred": {
-                        "source_polygon": "observed_ld",
-                        "gap_polygon": "inferred_projection",
-                        "destination_polygon": "observed_ld",
-                    },
-                },
-            ),
-        )
-    for lane_id, lane in lanes.items():
-        updated.setdefault(lane_id, lane)
-    return updated
-
-
 def build_lane_geometries(
     recording: dict[str, Any],
     *,
     minimum_recovered_boundary_overlap_m: float = 3.0,
-    minimum_full_edge_expansion_m: float = 6.0,
-    maximum_full_edge_segment_gap_m: float = 10.0,
-    continuation_maximum_gap_m: float = 15.0,
-    continuation_maximum_lateral_error_m: float = 1.25,
-    continuation_maximum_heading_difference_deg: float = 18.0,
-    continuation_maximum_curvature_difference_per_m: float = 0.08,
-    continuation_maximum_lane_width_difference_m: float = 0.9,
 ) -> tuple[dict[str, LaneGeometry], list[dict[str, Any]]]:
     store = recording.get("ld_feature_store") or {}
     point_lookup = {
@@ -753,49 +392,6 @@ def build_lane_geometries(
                     recovery_evidence["recovered_sides"] = recovered_sides
                     geometry_recovered = True
                     recovery_method = "validated_aligned_full_edge_pair"
-        elif (
-            not intersection_evidence
-            and left_edge is not None
-            and right_edge is not None
-            and left_attributes.get("pattern") != "virtual"
-            and right_attributes.get("pattern") != "virtual"
-        ):
-            full_left = _full_edge_points(left_edge, point_lookup)
-            full_right = _full_edge_points(right_edge, point_lookup)
-            if (
-                len(full_left) >= len(left)
-                and len(full_right) >= len(right)
-                and _maximum_segment_gap(full_left) <= maximum_full_edge_segment_gap_m
-                and _maximum_segment_gap(full_right) <= maximum_full_edge_segment_gap_m
-            ):
-                expanded = _recover_full_edge_pair(
-                    full_left,
-                    full_right,
-                    minimum_overlap_m=max(
-                        minimum_recovered_boundary_overlap_m,
-                        minimum_full_edge_expansion_m,
-                    ),
-                )
-                if expanded is not None:
-                    expanded_left, expanded_right, expansion_evidence = expanded
-                    expansion_evidence.update(
-                        _full_edge_expansion_evidence(
-                            left,
-                            right,
-                            expanded_left,
-                            expanded_right,
-                        )
-                    )
-                    forward_extension = max(
-                        float(expansion_evidence.get("left_forward_extension_m", 0.0)),
-                        float(expansion_evidence.get("right_forward_extension_m", 0.0)),
-                    )
-                    if forward_extension >= minimum_full_edge_expansion_m:
-                        left, right = expanded_left, expanded_right
-                        recovery_evidence = expansion_evidence
-                        recovery_evidence["recovered_sides"] = ["left", "right"]
-                        geometry_recovered = True
-                        recovery_method = "validated_full_edge_range_expansion"
         boundary_range_valid = exact_boundary_range_valid or geometry_recovered
         drivable_values = [
             attributes.get("drivable")
@@ -808,20 +404,11 @@ def build_lane_geometries(
             drivable_status = "explicitly_drivable"
         else:
             drivable_status = "unknown"
-        width_valid = False
-        if boundary_range_valid:
-            width_valid, _ = _lane_width_evidence(left, right)
-        valid = (
-            boundary_range_valid
-            and width_valid
-            and drivable_status != "explicitly_non_drivable"
-        )
+        valid = boundary_range_valid and drivable_status != "explicitly_non_drivable"
         reason = (
             None
             if valid
             else "explicit_non_drivable_boundary"
-            if boundary_range_valid and width_valid
-            else "implausible_lane_width"
             if boundary_range_valid
             else "invalid_or_incomplete_boundary_range"
         )
@@ -846,18 +433,6 @@ def build_lane_geometries(
             bool(intersection_evidence), tuple(intersection_evidence),
             geometry_recovered, recovery_method, recovery_evidence,
         )
-    result = _curvature_aware_lane_continuations(
-        result,
-        maximum_gap_m=continuation_maximum_gap_m,
-        maximum_lateral_error_m=continuation_maximum_lateral_error_m,
-        maximum_heading_difference_deg=continuation_maximum_heading_difference_deg,
-        maximum_curvature_difference_per_m=(
-            continuation_maximum_curvature_difference_per_m
-        ),
-        maximum_lane_width_difference_m=(
-            continuation_maximum_lane_width_difference_m
-        ),
-    )
     return result, topologies
 
 

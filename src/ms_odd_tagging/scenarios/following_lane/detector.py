@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from ms_odd_tagging.canonical.core import LEAD_CLASSES
+from ms_odd_tagging.input_generator.canonical import LEAD_CLASSES
 
 from .lane_geometry import (
     adjacent_lanes,
@@ -48,11 +48,6 @@ DEFAULT_CONFIG = {
     "dashed_drivable_boundary_score_bonus": 0.75,
     "same_logical_lane_score_bonus": 0.9,
     "minimum_recovered_boundary_overlap_m": 3.0,
-    "lane_continuation_maximum_gap_m": 15.0,
-    "lane_continuation_maximum_lateral_error_m": 1.25,
-    "lane_continuation_maximum_heading_difference_deg": 18.0,
-    "lane_continuation_maximum_curvature_difference_per_m": 0.08,
-    "lane_continuation_maximum_lane_width_difference_m": 0.9,
     "maximum_observed_route_upstream_gap_m": 25.0,
 }
 
@@ -106,19 +101,6 @@ def run_following_lane(recording: dict[str, Any], config: dict[str, Any] | None 
         recording,
         minimum_recovered_boundary_overlap_m=settings[
             "minimum_recovered_boundary_overlap_m"
-        ],
-        continuation_maximum_gap_m=settings["lane_continuation_maximum_gap_m"],
-        continuation_maximum_lateral_error_m=settings[
-            "lane_continuation_maximum_lateral_error_m"
-        ],
-        continuation_maximum_heading_difference_deg=settings[
-            "lane_continuation_maximum_heading_difference_deg"
-        ],
-        continuation_maximum_curvature_difference_per_m=settings[
-            "lane_continuation_maximum_curvature_difference_per_m"
-        ],
-        continuation_maximum_lane_width_difference_m=settings[
-            "lane_continuation_maximum_lane_width_difference_m"
         ],
     )
     logical_lane_ids = build_logical_lane_groups(lanes, topologies)
