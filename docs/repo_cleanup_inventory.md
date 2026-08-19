@@ -80,7 +80,7 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 | Rule-based evaluation | `evaluation/rule_based.py` | Tool | GT validation, prediction comparison, metrics, and reports | Keep as canonical evaluation owner |
 | GT authoring and label support | `gt_comparison/` | Tool/support | Manual GT creation, taxonomy labels, matching helpers, and compatibility imports | Preserve separately |
 | Visualization | `visualization/` + package-specific overlays | Tool | `ms-odd explore` is the generic canonical entrypoint; algorithm-specific overlays remain specialized | Keep boundary and specialized overlays |
-| ODLD explorer scripts | `scripts/odld_explorer/` | Specialized tools | Event/window-tag and per-frame-tag modes have distinct inputs; shared index/manifest/path code is centralized in `odld_explorer_common.py` | Retain both adapters; continue modularizing only proven-identical code |
+| ODLD explorer scripts | `scripts/odld_explorer/` | Specialized tool | Event-tag mode consumes the supported recording-level rule-event output; shared index/manifest/path code is centralized in `odld_explorer_common.py` | Retain the event-tag generator as the sole rich ODLD explorer |
 | Root compatibility wrappers | `run_*.py` | Compatibility | Convenient source-tree execution, especially without install | Keep for now; `run_pipeline.py` is documented |
 | Lane continuation patch | `docs/archive/lane_continuation_current_working.patch` | Legacy artifact | Preserved for comparison without cluttering the repository root | Compare before deletion |
 | Historical brainstorm | `docs/archive/brainstorm.md` | Historical design artifact | Preserved outside the runtime/documentation entry path | Retain as archive |
@@ -198,9 +198,9 @@ canonical visualization command is `ms-odd explore`, backed by
 `visualization/scenario_explorer.py`.
 
 The three historical ODLD explorer generators were compared. The raw OD script
-is a base renderer, while the two ODLD scripts consume different tag sources
-(event/window results versus per-frame tag files), so neither adapter was
-deleted. Their identical index HTML, embedded-payload parsing, manifest, output
-name, and recording-path helpers were extracted into
-`scripts/odld_explorer/odld_explorer_common.py`. Specialized lane, topology,
-VLM, GT-authoring, and review overlays remain separate by design.
+remains the base renderer, and the event-tag generator remains the sole rich ODLD
+explorer because the supported pipeline produces recording-level event intervals.
+The obsolete per-frame-tag compatibility generator was removed. Shared index
+HTML, embedded-payload parsing, manifest, output-name, and recording-path helpers
+remain in `scripts/odld_explorer/odld_explorer_common.py`. Specialized lane,
+topology, VLM, GT-authoring, and review overlays remain separate by design.
