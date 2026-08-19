@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from ms_odd_tagging.common.config import DATA_RAW, OUTPUT_ROOT
@@ -15,7 +17,17 @@ from ms_odd_tagging.common.config import DATA_RAW, OUTPUT_ROOT
 SRC_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_stage(index: int, total: int, module: str, arguments: list[str]) -> None:
+def format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, remaining = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {remaining:.1f}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{int(hours)}h {int(minutes)}m {remaining:.1f}s"
+
+
+def run_stage(index: int, total: int, module: str, arguments: list[str]) -> float:
     command = [sys.executable, "-m", module, *arguments]
     print(f"\n==> Stage {index}/{total}: {module}", flush=True)
     print(f"    {' '.join(command)}", flush=True)
@@ -29,7 +41,48 @@ def run_stage(index: int, total: int, module: str, arguments: list[str]) -> None
     start = time.monotonic()
     subprocess.run(command, check=True, env=env)
     elapsed = time.monotonic() - start
-    print(f"<== Stage {index}/{total} complete in {elapsed:.1f}s", flush=True)
+    print(
+        f"<== Stage {index}/{total} complete in {format_elapsed(elapsed)}",
+        flush=True,
+    )
+    return elapsed
+
+
+def write_runtime_report(
+    output_root: Path,
+    recordings: list[str],
+    stage_timings: list[dict[str, object]],
+    total_elapsed: float,
+) -> Path:
+    runtime_dir = output_root / "runtime_logs"
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().astimezone()
+    report_path = runtime_dir / f"pipeline_{timestamp.strftime('%Y%m%d_%H%M%S')}.json"
+    payload = {
+        "started_at": timestamp.isoformat(timespec="seconds"),
+        "recordings": recordings,
+        "stages": stage_timings,
+        "total_elapsed_seconds": round(total_elapsed, 3),
+    }
+    report_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return report_path
+
+
+def print_runtime_summary(
+    stage_timings: list[dict[str, object]], total_elapsed: float, report_path: Path
+) -> None:
+    print("\n=== Runtime Summary ===", flush=True)
+    for stage in stage_timings:
+        elapsed = float(stage["elapsed_seconds"])
+        print(
+            f"- Stage {stage['stage']}: {stage['name']} -> {format_elapsed(elapsed)}",
+            flush=True,
+        )
+    print(f"- Total pipeline -> {format_elapsed(total_elapsed)}", flush=True)
+    print(f"- Runtime log -> {report_path}", flush=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,6 +133,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    pipeline_start = time.monotonic()
+    stage_timings: list[dict[str, object]] = []
+
     canonical_root = args.output_root / "01_canonical"
     frame_input_root = args.output_root / "02_frame_inputs"
     canonical_args = [
@@ -89,13 +145,28 @@ def main() -> int:
     ]
     canonical_args.extend(args.recordings)
     stage_total = 1 if args.stop_after == "canonical" else 2
-    run_stage(
+
+    canonical_elapsed = run_stage(
         1,
         stage_total,
         "ms_odd_tagging.canonical.builder",
         canonical_args,
     )
+    stage_timings.append(
+        {
+            "stage": 1,
+            "name": "canonicalization",
+            "module": "ms_odd_tagging.canonical.builder",
+            "elapsed_seconds": round(canonical_elapsed, 3),
+        }
+    )
+
     if args.stop_after == "canonical":
+        total_elapsed = time.monotonic() - pipeline_start
+        report_path = write_runtime_report(
+            args.output_root, args.recordings, stage_timings, total_elapsed
+        )
+        print_runtime_summary(stage_timings, total_elapsed, report_path)
         return 0
 
     model_args = [
@@ -115,12 +186,27 @@ def main() -> int:
         model_args.append("--refresh-analysis")
     if args.profile_generation:
         model_args.append("--profile-generation")
-    run_stage(
+
+    frame_input_elapsed = run_stage(
         2,
         stage_total,
         "ms_odd_tagging.frame_inputs.builder",
         model_args,
     )
+    stage_timings.append(
+        {
+            "stage": 2,
+            "name": "frame_input_bev_generation",
+            "module": "ms_odd_tagging.frame_inputs.builder",
+            "elapsed_seconds": round(frame_input_elapsed, 3),
+        }
+    )
+
+    total_elapsed = time.monotonic() - pipeline_start
+    report_path = write_runtime_report(
+        args.output_root, args.recordings, stage_timings, total_elapsed
+    )
+    print_runtime_summary(stage_timings, total_elapsed, report_path)
     return 0
 
 
