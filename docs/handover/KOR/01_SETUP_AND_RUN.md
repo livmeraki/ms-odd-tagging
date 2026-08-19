@@ -8,7 +8,7 @@
 
 현재 package는 Python 3.10 이상을 요구한다.
 
-다음 명령은 Linux/macOS, Windows PowerShell, Windows Command Prompt에서 동일하게 사용할 수 있다.
+다음 명령은 Linux/macOS와 Windows PowerShell에서 동일하게 사용할 수 있다.
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -16,9 +16,9 @@ python -m pytest
 ```
 
 > **Windows shell 주의사항**  
-> Windows Terminal은 shell 자체가 아니라 PowerShell, Command Prompt(CMD), WSL 등을 실행하는 terminal application이다.  
-> 이 문서의 Windows 예시는 별도 표기가 없으면 **PowerShell 기준**으로 작성한다.  
-> Linux/macOS의 `export`와 줄바꿈용 `\`는 PowerShell/CMD에서 그대로 사용할 수 없다.
+> Windows에서는 **PowerShell 기준**으로 실행한다.  
+> Windows Terminal을 사용하는 경우 PowerShell profile을 열어서 실행하면 된다.  
+> Linux/macOS의 `export`와 줄바꿈용 `\`는 PowerShell에서 그대로 사용할 수 없다.
 
 package를 editable install하지 않을 경우 `PYTHONPATH=src`를 설정해야 한다.
 
@@ -34,19 +34,13 @@ Windows PowerShell:
 $env:PYTHONPATH = "src"
 ```
 
-Windows Command Prompt (CMD):
-
-```cmd
-set PYTHONPATH=src
-```
-
 ## 3. 주요 dependency
 
 `pyproject.toml` 기준 기본 runtime dependency에는 Pillow와 Shapely가 포함된다. Shapely는 LD topology의 intersection geometry 구성 및 분류에 사용되므로 setup 시 함께 설치되어야 한다. 개발 환경에는 pytest와 numpy가 포함된다.
 
 VLM server를 사용할 경우 `server` optional dependency에 vLLM, tokenizers, numpy, sympy, networkx 등이 정의되어 있다.
 
-다음 설치 명령은 Linux/macOS와 Windows에서 동일하다.
+다음 설치 명령은 Linux/macOS와 Windows PowerShell에서 동일하다.
 
 ```bash
 python -m pip install -e ".[server]"
@@ -81,13 +75,6 @@ Windows PowerShell:
 ```powershell
 $env:MS_ODD_DATA_ROOT = "D:\path\to\ms-odd-tagging-data\data"
 $env:MS_ODD_OUTPUT_ROOT = "D:\path\to\ms-odd-tagging-data\outputs"
-```
-
-Windows Command Prompt (CMD):
-
-```cmd
-set MS_ODD_DATA_ROOT=D:\path\to\ms-odd-tagging-data\data
-set MS_ODD_OUTPUT_ROOT=D:\path\to\ms-odd-tagging-data\outputs
 ```
 
 > 위 환경변수 설정은 현재 terminal session에만 적용된다. 새 terminal을 열면 다시 설정해야 한다.
@@ -138,7 +125,7 @@ python run_pipeline.py <RECORDING_ID> \
   --frame-limit 1
 ```
 
-Windows PowerShell / CMD:
+Windows PowerShell:
 
 ```powershell
 python run_pipeline.py <RECORDING_ID> --frame-limit 1
@@ -151,7 +138,7 @@ python run_pipeline.py Rec_Drv_GER_MACHET18_20260319_151819 \
   --frame-limit 1
 ```
 
-예시 — Windows PowerShell / CMD:
+예시 — Windows PowerShell:
 
 ```powershell
 python run_pipeline.py Rec_Drv_GER_MACHET18_20260319_151819 --frame-limit 1
@@ -196,7 +183,7 @@ python run_pipeline.py <RECORDING_ID> \
   --stop-after canonical
 ```
 
-Windows PowerShell / CMD:
+Windows PowerShell:
 
 ```powershell
 python run_pipeline.py <RECORDING_ID> --stop-after canonical
@@ -214,7 +201,7 @@ Smoke Test가 정상 동작한 뒤 실제 sampling 범위로 frame input과 BEV�
 
 기본 sampling rate는 1 FPS이다.
 
-다음 명령은 Linux/macOS와 Windows에서 동일하다.
+다음 명령은 Linux/macOS와 Windows PowerShell에서 동일하다.
 
 ```bash
 python run_pipeline.py <RECORDING_ID>
@@ -242,7 +229,7 @@ python run_pipeline.py <RECORDING_ID> --all-frames
 python -m ms_odd_tagging.tagger.rule_based.registry --help
 ```
 
-위 명령은 Linux/macOS와 Windows에서 동일하다.
+위 명령은 Linux/macOS와 Windows PowerShell에서 동일하다.
 
 설정 파일은 기본적으로 다음을 사용한다.
 
@@ -266,7 +253,7 @@ python -m ms_odd_tagging.visualization.scenario_explorer \
   --output-dir outputs/07_scenario_explorers
 ```
 
-Windows PowerShell / CMD:
+Windows PowerShell:
 
 ```powershell
 python -m ms_odd_tagging.visualization.scenario_explorer outputs/01_canonical --output-dir outputs/07_scenario_explorers
@@ -287,7 +274,7 @@ python -m ms_odd_tagging.gt_comparison.authoring \
   --all
 ```
 
-Windows PowerShell / CMD:
+Windows PowerShell:
 
 ```powershell
 python -m ms_odd_tagging.gt_comparison.authoring --frame-input-root outputs/02_frame_inputs_revised --output-root outputs/frame_gt_authoring --all
@@ -319,7 +306,7 @@ python -m ms_odd_tagging.tagger.model_based.local_vllm \
   --endpoint http://127.0.0.1:8001/v1/chat/completions
 ```
 
-Windows PowerShell / CMD:
+Windows PowerShell:
 
 ```powershell
 python -m ms_odd_tagging.tagger.model_based.local_vllm --recording <RECORDING_ID> --model-input-root outputs/02_frame_inputs --output-root outputs/04_tagging --endpoint http://127.0.0.1:8001/v1/chat/completions
@@ -333,7 +320,7 @@ VLM 기능은 optional이며, deterministic rule pipeline을 먼저 확인한 �
 
 각 module의 command option을 직접 확인하려면 다음 명령을 사용한다.
 
-다음 명령은 Linux/macOS와 Windows에서 동일하다.
+다음 명령은 Linux/macOS와 Windows PowerShell에서 동일하다.
 
 ```bash
 python -m ms_odd_tagging.canonical.builder --help
@@ -346,7 +333,7 @@ python -m ms_odd_tagging.visualization.scenario_explorer --help
 ## 9. 실행 전 / 문제 발생 시 체크리스트
 
 - Python 3.10+인지 확인
-- Windows에서는 현재 사용 중인 shell이 PowerShell인지 CMD인지 확인
+- Windows에서는 PowerShell을 사용하고 있는지 확인
 - package install 또는 `PYTHONPATH=src` 설정
 - recording에 OD/LD/trajectory가 모두 있는지 확인
 - external data root 환경변수 확인
