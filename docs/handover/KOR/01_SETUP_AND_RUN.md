@@ -278,43 +278,7 @@ python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
 
 #### 선택한 여러 Recording 생성
 
-Windows PowerShell:
-
-```powershell
-$RECORDINGS = @(
-  "Rec_A",
-  "Rec_B",
-  "Rec_C"
-)
-
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
-  --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
-  --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --window-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "legacy/windows") `
-  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
-  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers/index.html") `
-  --regenerate-existing `
-  $RECORDINGS
-```
-
-Linux/macOS:
-
-```bash
-RECORDINGS=("Rec_A" "Rec_B" "Rec_C")
-
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
-  --source-root "$MS_ODD_DATA_ROOT/01_raw" \
-  --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --window-dir "$MS_ODD_OUTPUT_ROOT/legacy/windows" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
-  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
-  --regenerate-existing \
-  "${RECORDINGS[@]}"
-```
-
-#### 앞의 10개 Recording 생성
-
-이미 canonical이 생성된 recording 중 이름순 앞의 10개를 선택한다. ODLD explorer는 canonical file을 기준으로 생성되므로 raw directory가 아니라 `$MS_ODD_OUTPUT_ROOT/01_canonical`에서 선택하는 것이 안전하다.
+이미 canonical이 생성된 recording 중 이름순 앞의 10개를 선택해 한 번에 생성하는 예시이다. ODLD explorer는 canonical file을 기준으로 생성되므로 raw directory가 아니라 `$MS_ODD_OUTPUT_ROOT/01_canonical`에서 선택한다.
 
 Windows PowerShell:
 
@@ -325,6 +289,7 @@ $RECORDINGS = Get-ChildItem (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
   Select-Object -First 10 |
   ForEach-Object { $_.BaseName -replace '_canonical_odld_frames$', '' }
 
+# 실제 선택된 recording 확인
 $RECORDINGS
 
 python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
@@ -337,17 +302,13 @@ python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
   $RECORDINGS
 ```
 
-11~20번째 recording처럼 다음 batch를 생성하려면 selection 부분만 다음과 같이 바꾼다.
+11~20번째 recording처럼 다음 batch를 생성하려면 selection 부분의 `Select-Object`만 다음과 같이 바꾼다.
 
 ```powershell
-$RECORDINGS = Get-ChildItem (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  -Filter "*_canonical_odld_frames.json" -File |
-  Sort-Object Name |
-  Select-Object -Skip 10 -First 10 |
-  ForEach-Object { $_.BaseName -replace '_canonical_odld_frames$', '' }
+Select-Object -Skip 10 -First 10
 ```
 
-실행 전에 `$RECORDINGS`를 출력해 실제 선택된 recording을 확인하는 것을 권장한다.
+예를 들어 21~30번째 recording은 `Select-Object -Skip 20 -First 10`을 사용한다.
 
 #### 생성 가능한 모든 Recording 생성
 
