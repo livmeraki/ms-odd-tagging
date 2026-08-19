@@ -25,6 +25,7 @@ configs/server.yaml
 *.pem
 
 # Data and generated outputs
+/artifacts/
 data/01_raw/**
 data/01_raw_odld/**
 data/02_gt/**
