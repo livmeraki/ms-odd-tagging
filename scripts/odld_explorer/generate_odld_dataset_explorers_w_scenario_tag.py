@@ -2261,18 +2261,16 @@ function trafficLightStoplineTraces() {
     const selected = relation.trackId === selectedStoplineId;
     const x = [...track.x, track.x[0]];
     const y = [...track.y, track.y[0]];
-    traces.push({
+    const trace = {
       type: 'scatter', mode: selected ? 'lines+markers+text' : 'lines',
       name: selected ? 'relevant TL stopline' : 'nearby stopline',
       x, y,
-      text: selected ? x.map(() => relation.trackId) : undefined,
       textposition: 'top center',
       line: {
         color: selected ? '#dc2626' : '#fb923c',
         width: selected ? 7 : 3,
         dash: selected ? 'solid' : 'dot'
       },
-      marker: selected ? {size: 7, color: '#dc2626'} : undefined,
       customdata: x.map(() => [
         relation.trackId,
         selected ? frame.stopline.distanceM : relation.signedDistanceM,
@@ -2284,7 +2282,12 @@ function trafficLightStoplineTraces() {
         '<br>distance=%{customdata[1]:.2f} m' +
         '<br>relation=%{customdata[2]}' +
         '<br>confidence=%{customdata[3]}<extra></extra>'
-    });
+    };
+    if (selected) {
+      trace.text = x.map(() => relation.trackId);
+      trace.marker = {size: 7, color: '#dc2626'};
+    }
+    traces.push(trace);
   }
   return traces;
 }
@@ -3079,6 +3082,21 @@ def scene_html(data: dict, plotly_script_src: str | None = None) -> str:
         "renderTimeline();\n",
         "renderTimeline();\nrenderLdTimeline();\nrenderTagTimeline();\n",
         "LD and tag timeline initialization",
+    )
+    page = replace_once(
+        page,
+        "  Plotly.react('map', traces, {",
+        "  const plotTraces = traces.filter(\n"
+        "    trace => trace && typeof trace === 'object'\n"
+        "  );\n"
+        "  if (plotTraces.length !== traces.length) {\n"
+        "    console.warn(\n"
+        "      'Dropped invalid Plotly traces:',\n"
+        "      traces.length - plotTraces.length\n"
+        "    );\n"
+        "  }\n"
+        "  Plotly.react('map', plotTraces, {",
+        "Plotly trace validation",
     )
     return page
 
