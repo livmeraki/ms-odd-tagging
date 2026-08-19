@@ -209,7 +209,7 @@ Batch 중 일부 recording에 필수 파일이 없거나 processing error가 발
 - `$env:MS_ODD_OUTPUT_ROOT\02_frame_inputs`에 frame input / BEV가 생성되었는지 확인
 - 일부 BEV를 열어 Ego, road geometry, 주변 object 위치가 정상인지 확인
 
-> `run_pipeline.py`의 전체 실행은 현재 **input generation pipeline 전체 실행**을 의미한다. Rule-based tagging, Scenario Explorer, Frame GT Reviewer, VLM은 이후 필요에 따라 별도로 사용한다.
+> `run_pipeline.py`의 전체 실행은 현재 **input generation pipeline 전체 실행**을 의미한다. Rule-based tagging, Full ODLD Scenario Explorer, Frame GT Reviewer, VLM은 이후 필요에 따라 별도로 사용한다.
 
 ---
 
@@ -221,7 +221,7 @@ Batch 중 일부 recording에 필수 파일이 없거나 processing error가 발
 |---|---|
 | Frame Input 없이 Canonical 결과만 생성 | Canonical만 생성 |
 | Rule scenario 구성 및 detector 확인 | Rule-based Tagging 구성 확인 |
-| 결과를 시각적으로 확인 | Scenario Explorer |
+| OD + LD + Ego Trajectory + Scenario Tag를 함께 시각적으로 확인 | Full ODLD Scenario Explorer |
 | Ground Truth 작성 / 검토 | Frame GT Reviewer |
 | VLM 실험 실행 | Local VLM Inference |
 
@@ -253,27 +253,51 @@ configs/direct_scenarios.yaml
 
 새 scenario를 추가하거나 detector를 수정하기 전에는 `enabled_scenarios`와 각 threshold의 `provenance`를 확인한다. Rule / Geometry algorithm의 상세 내용은 `05_ALGORITHMS.md`를 확인한다.
 
-### 8.3 Scenario Explorer
+### 8.3 Full ODLD Scenario Explorer
 
-Canonical / tagging 결과를 시각적으로 확인하고 디버깅할 때 사용한다.
+최종 결과 확인과 디버깅에는 generic `ms_odd_tagging.visualization.scenario_explorer` 대신 다음 full ODLD event-tag explorer를 사용한다.
+
+이 explorer는 raw OD/LD, Ego Trajectory, canonical data와 scenario tag를 함께 표시한다. 현재 script는 canonical data에서 rule event를 직접 생성할 수 있으며, `legacy/windows`에 기존 window 결과가 있으면 호환 입력으로 확인한다.
+
+먼저 실행할 recording을 지정한다.
 
 Windows PowerShell:
 
 ```powershell
-python -m ms_odd_tagging.visualization.scenario_explorer `
-  (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers")
+$RECORDING = "<RECORDING_ID>"
+
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
+  --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
+  --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
+  --window-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "legacy/windows") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers/index.html") `
+  --regenerate-existing `
+  $RECORDING
 ```
 
 Linux/macOS:
 
 ```bash
-python -m ms_odd_tagging.visualization.scenario_explorer \
-  "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers"
+RECORDING="<RECORDING_ID>"
+
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
+  --source-root "$MS_ODD_DATA_ROOT/01_raw" \
+  --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
+  --window-dir "$MS_ODD_OUTPUT_ROOT/legacy/windows" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
+  --regenerate-existing \
+  "$RECORDING"
 ```
 
-rule 결과가 이상할 경우 explorer에서 OD / LD / Ego Trajectory를 함께 확인한다.
+생성 후 다음 index를 browser에서 연다.
+
+```text
+$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html
+```
+
+rule 결과가 이상할 경우 이 explorer에서 OD / LD / Ego Trajectory / Scenario Event를 함께 확인한다.
 
 ### 8.4 Frame GT Reviewer
 
@@ -336,7 +360,7 @@ python -m ms_odd_tagging.canonical.builder --help
 python -m ms_odd_tagging.frame_inputs.builder --help
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
-python -m ms_odd_tagging.visualization.scenario_explorer --help
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py --help
 ```
 
 위 명령은 data/output path를 사용하지 않으므로 Linux/macOS와 Windows PowerShell에서 동일하다.
@@ -350,4 +374,5 @@ python -m ms_odd_tagging.visualization.scenario_explorer --help
 - 첫 실행은 `--frame-limit 1` Smoke Test부터 수행
 - Smoke Test 성공 후 전체 Recording 실행
 - 실행 종료 후 Runtime Summary와 failed recording 확인
+- 결과 검토 시 generic explorer 대신 Full ODLD Scenario Explorer 사용
 - output을 Git에 commit하지 않기
