@@ -29,7 +29,9 @@ $env:PYTHONPATH = "src"
 
 ## 3. 주요 dependency
 
-`pyproject.toml` 기준 기본 dependency는 Pillow이며, 개발 환경에는 pytest가 포함된다. VLM server를 사용할 경우 `server` optional dependency에 vLLM, tokenizers, numpy, sympy, networkx 등이 정의되어 있다.
+`pyproject.toml` 기준 기본 runtime dependency에는 Pillow와 Shapely가 포함된다. Shapely는 LD topology의 intersection geometry 구성 및 분류에 사용되므로 setup 시 함께 설치되어야 한다. 개발 환경에는 pytest와 numpy가 포함된다.
+
+VLM server를 사용할 경우 `server` optional dependency에 vLLM, tokenizers, numpy, sympy, networkx 등이 정의되어 있다.
 
 ```bash
 python -m pip install -e ".[server]"
@@ -202,6 +204,6 @@ python -m ms_odd_tagging.visualization.scenario_explorer --help
 - package install 또는 `PYTHONPATH=src` 설정
 - recording에 OD/LD/trajectory가 모두 있는지 확인
 - external data root 환경변수 확인
-- `python -m pytest` 통과 여부 확인
+- `python -m pytest` 실행 후 failure가 있으면 설치 문제인지 known code/test issue인지 구분해서 확인
 - smoke test는 `--frame-limit 1`부터 수행
 - output을 Git에 commit하지 않기
