@@ -11,10 +11,9 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ms_odd_tagging.common.config import DATA_GT, FRAME_INPUTS, OUTPUT_ROOT
 
-DEFAULT_DATA_ROOT = Path(
-    "/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data"
-)
+
 TARGET_LABELS = ("changing_lane_to_left", "changing_lane_to_right")
 STRATEGY_NAME = "topology_turn_aware_lane_change"
 RECENT_STRATEGY_EVIDENCE_KEYS = (
@@ -244,10 +243,10 @@ restore();render();
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--frame-input-root", type=Path, default=DEFAULT_DATA_ROOT / "outputs/02_frame_inputs")
-    parser.add_argument("--explorer-event-root", type=Path, default=DEFAULT_DATA_ROOT / "outputs/07_odld_scenario_explorers_finished_frame_inputs")
-    parser.add_argument("--gt-dir", type=Path, default=DEFAULT_DATA_ROOT / "data/02_gt")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_DATA_ROOT / "outputs/08_lane_change_prediction_gt_review")
+    parser.add_argument("--frame-input-root", type=Path, default=FRAME_INPUTS)
+    parser.add_argument("--explorer-event-root", type=Path, default=OUTPUT_ROOT / "07_odld_scenario_explorers_finished_frame_inputs")
+    parser.add_argument("--gt-dir", type=Path, default=DATA_GT)
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_ROOT / "08_lane_change_prediction_gt_review")
     parser.add_argument("--context-samples", type=int, default=1)
     args = parser.parse_args()
 

@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
+from ms_odd_tagging.common.config import CANONICAL
 from ms_odd_tagging.ld_topology.pipeline import classify_recording
 
 
-DATA_ROOT = Path("/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data")
 RECORDING = "Rec_Drv_GER_MACHET18_20260319_144819"
 
 
 def test_ld_topology_real_recording_smoke():
-    source = DATA_ROOT / "outputs" / "01_canonical" / f"{RECORDING}_canonical_odld_frames.json"
+    source = CANONICAL / f"{RECORDING}_canonical_odld_frames.json"
     if not source.is_file():
         pytest.skip(f"external canonical recording is not available: {source}")
     recording = json.loads(source.read_text(encoding="utf-8"))

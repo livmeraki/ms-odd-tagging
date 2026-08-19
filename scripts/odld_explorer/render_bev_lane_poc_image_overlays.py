@@ -12,10 +12,9 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from ms_odd_tagging.common.config import FRAME_INPUTS
 
-DEFAULT_DATA_ROOT = Path(
-    "/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd/ms-odd-tagging-data"
-)
+
 
 
 COLORS = {
@@ -201,7 +200,7 @@ q.addEventListener('input',render);state.addEventListener('change',render);rende
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--result-dir", type=Path, required=True)
-    parser.add_argument("--frame-input-root", type=Path, default=DEFAULT_DATA_ROOT / "outputs/02_frame_inputs")
+    parser.add_argument("--frame-input-root", type=Path, default=FRAME_INPUTS)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--index-path", type=Path)
     args = parser.parse_args()

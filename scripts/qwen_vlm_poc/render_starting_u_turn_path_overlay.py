@@ -15,6 +15,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from ms_odd_tagging.common.config import CANONICAL
+
 from ms_odd_tagging.frame_inputs.model_input import lcs_to_ego
 from ms_odd_tagging.frame_inputs.revised_bev import centered_extent, render_revised_bev_png
 
@@ -28,11 +30,7 @@ DEFAULT_CANDIDATE = (
     / DEFAULT_RECORDING
     / f"{DEFAULT_CANDIDATE_ID}.json"
 )
-DEFAULT_RECORDING_JSON = (
-    Path("/media/stradvision/25eb199d-ae8a-49d6-b7e9-675eb144ddcd")
-    / "ms-odd-tagging-data/outputs/01_canonical"
-    / f"{DEFAULT_RECORDING}_canonical_odld_frames.json"
-)
+DEFAULT_RECORDING_JSON = CANONICAL / f"{DEFAULT_RECORDING}_canonical_odld_frames.json"
 DEFAULT_OUTPUT_DIR = Path("outputs/qwen_vlm_path_overlay_poc") / DEFAULT_RECORDING
 
 
