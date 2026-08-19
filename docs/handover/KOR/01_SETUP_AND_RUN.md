@@ -174,6 +174,8 @@ outputs/02_frame_inputs
 
 기본 Frame Input / BEV sampling rate는 **1 FPS**이다.
 
+> **관찰된 실행 시간:** 현재 Windows 로컬 환경에서 약 1분 길이 recording 1개를 기본 1 FPS로 처리할 때, Canonicalization + Frame Input / BEV 생성까지 대략 **30~40초/recording**이 소요되었다. 실행 시간은 hardware, recording 길이, object/LD 복잡도, cache 및 기존 output 상태에 따라 달라질 수 있다. 실제 측정값은 실행 종료 시 Runtime Summary와 `outputs/runtime_logs/`의 JSON log에서 확인한다.
+
 ### Recording 1개 전체 실행
 
 Linux/macOS:
@@ -349,6 +351,8 @@ python -m ms_odd_tagging.gt_comparison.authoring --frame-input-root outputs/02_f
 ```text
 outputs/frame_gt_authoring/index.html
 ```
+
+을 browser에서 연다.
 
 현재 reviewer는 exact source frame의 BEV를 사용하며 legacy motional window 방식은 active pipeline에서 사용하지 않는다.
 
