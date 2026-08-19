@@ -52,7 +52,7 @@ def test_shared_vlm_contract_does_not_encode_scenario_policy() -> None:
     assert request.metadata == {}
 
 
-def test_legacy_input_generator_modules_alias_their_canonical_owners() -> None:
+def test_legacy_modules_alias_their_canonical_owners() -> None:
     aliases = {
         "ms_odd_tagging.input_generator.canonical": "ms_odd_tagging.canonical.core",
         "ms_odd_tagging.input_generator.canonical_odld": "ms_odd_tagging.canonical.odld",
@@ -62,6 +62,7 @@ def test_legacy_input_generator_modules_alias_their_canonical_owners() -> None:
         "ms_odd_tagging.input_generator.frame_input_builder": "ms_odd_tagging.frame_inputs.builder",
         "ms_odd_tagging.input_generator.bev_renderer": "ms_odd_tagging.frame_inputs.bev_renderer",
         "ms_odd_tagging.input_generator.revised_bev": "ms_odd_tagging.frame_inputs.revised_bev",
+        "ms_odd_tagging.gt_comparison.rule_based_evaluation": "ms_odd_tagging.evaluation.rule_based",
     }
     for legacy_name, owner_name in aliases.items():
         assert importlib.import_module(legacy_name) is importlib.import_module(owner_name)

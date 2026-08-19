@@ -1,6 +1,6 @@
 import pytest
 
-from ms_odd_tagging.gt_comparison.rule_based_evaluation import (
+from ms_odd_tagging.evaluation.rule_based import (
     gt_quality_summary,
     metric_row,
     validate_gt,

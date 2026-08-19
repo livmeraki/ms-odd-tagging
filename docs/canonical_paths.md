@@ -66,4 +66,9 @@ and a deprecation window.
 
 ## Physical implementation ownership
 
-Canonical normalization now lives in `ms_odd_tagging.canonical`; active per-frame JSON, generation policy, and BEV rendering live in `ms_odd_tagging.frame_inputs`. The similarly named modules under `ms_odd_tagging.input_generator` are compatibility aliases only. They resolve to the same module objects so existing imports and monkeypatch points continue to work, but all new code and tests must import the owning packages directly.
+Canonical normalization now lives in `ms_odd_tagging.canonical`; active per-frame JSON, generation policy, and BEV rendering live in `ms_odd_tagging.frame_inputs`; active rule evaluation lives in `ms_odd_tagging.evaluation`. The similarly named modules under `ms_odd_tagging.input_generator` are compatibility aliases only. They resolve to the same module objects so existing imports and monkeypatch points continue to work, but all new code and tests must import the owning packages directly.
+
+
+## Evaluation ownership
+
+`ms_odd_tagging.evaluation.rule_based` owns GT validation, rule-prediction comparison, metric calculation, and report generation. `ms_odd_tagging.gt_comparison` retains GT authoring and label-support tools. The historical `gt_comparison.rule_based_evaluation` module is a compatibility alias to the evaluation owner.

@@ -77,7 +77,8 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 | Lanelet2 PoC | `lanelet2_poc/` | Experiment | Optional Lanelet2-based approach/dependency | Keep isolated |
 | Qwen VLM PoC | `qwen_vlm_poc/` | Experiment/candidate | Scenario-specific prompts/evidence/candidate generation/review | Keep separate from generic model tagger |
 | Generic local model tagger | `tagger/model_based/local_vllm.py` | Legacy/canonical compatibility | Older general model-facing inference path | Do not delete without downstream caller audit |
-| GT comparison/authoring | `gt_comparison/` | Tool | Evaluation and authoring, not detector ownership | Preserve |
+| Rule-based evaluation | `evaluation/rule_based.py` | Tool | GT validation, prediction comparison, metrics, and reports | Keep as canonical evaluation owner |
+| GT authoring and label support | `gt_comparison/` | Tool/support | Manual GT creation, taxonomy labels, matching helpers, and compatibility imports | Preserve separately |
 | Visualization | `visualization/` + package-specific overlays | Tool | Generic explorer plus algorithm-specific debug overlays | Preserve; avoid premature merge |
 | ODLD explorer scripts | `scripts/odld_explorer/` | Tool/legacy mixture | Large authoring/debug/generator scripts with potentially unique behavior | Needs separate entrypoint audit; no deletion this pass |
 | Root compatibility wrappers | `run_*.py` | Compatibility | Convenient source-tree execution, especially without install | Keep for now; `run_pipeline.py` is documented |
@@ -150,7 +151,8 @@ The seven repository-boundary issues now have explicit, testable decisions:
 5. `ms_odd_tagging.vlm` owns transport-neutral contracts and backend status;
    scenario prompts and Qwen evidence remain experimental.
 6. `ms_odd_tagging.evaluation` and `ms_odd_tagging.visualization` are the tool
-   boundaries; GT comparison remains a compatibility implementation package.
+   boundaries; rule evaluation is physically owned by `evaluation`, while GT
+   authoring/label support remains in `gt_comparison`.
 7. `ms-odd` is the unified command surface. Existing commands remain aliases
    during migration.
 
@@ -185,4 +187,4 @@ Six modules with no tracked callers, command exposure, tests, or unique implemen
 - `input_generator/sampler.py`;
 - `tagger/event_segmentation.py`.
 
-The active `input_generator/windows.py` legacy implementation and the established canonical/frame-input compatibility aliases remain because they still have callers or an explicit migration contract. The `evaluation/rule_based.py` facade also remains intentionally as the public evaluation boundary.
+The active `input_generator/windows.py` legacy implementation and the established canonical/frame-input compatibility aliases remain because they still have callers or an explicit migration contract. The active rule-evaluation implementation is owned by `evaluation/rule_based.py`; the old `gt_comparison/rule_based_evaluation.py` path remains a compatibility alias.
