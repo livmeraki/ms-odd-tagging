@@ -107,9 +107,29 @@ OD+LD pipeline을 사용할 recording에는 최소 다음 파일이 필요하다
 
 실제 raw directory layout은 `data/README.md`와 input generator의 loader를 함께 확인한다.
 
-## 6. 가장 빠른 Smoke Test
+## 6. 첫 실행: Smoke Test
 
-OD+LD recording 1개를 canonicalize하고 frame input 1개만 생성한다.
+처음에는 전체 recording을 처리하지 말고, **recording 1개에서 frame input 1개만 생성하여 setup과 입력 경로가 정상인지 확인**한다.
+
+Smoke Test에서 실행되는 순서는 다음과 같다.
+
+```text
+Raw Recording
+     │
+     ▼
+① Canonicalization
+     │
+     ▼
+outputs/01_canonical
+     │
+     ▼
+② Frame Input / BEV 생성 (1 frame)
+     │
+     ▼
+outputs/02_frame_inputs
+```
+
+즉, 아래 Smoke Test는 `Canonical만 생성` 다음에 별도의 작업을 수행하는 것이 아니라, **Canonicalization과 Frame Input 생성까지 한 번에 확인하는 최소 실행**이다.
 
 Linux/macOS:
 
@@ -137,9 +157,37 @@ python run_pipeline.py Rec_Drv_GER_MACHET18_20260319_151819 \
 python run_pipeline.py Rec_Drv_GER_MACHET18_20260319_151819 --frame-limit 1
 ```
 
-> `run_pipeline.py`는 항상 OD+LD+trajectory canonicalization을 수행한다. 별도의 canonical mode option은 없다.
+> `run_pipeline.py`는 항상 OD+LD+trajectory canonicalization을 먼저 수행한다. 별도의 canonical mode option은 없다.
 
-## 7. Canonical만 생성
+### Smoke Test 후 확인할 것
+
+다음 항목이 모두 확인되면 기본 setup과 input generation path가 정상적으로 동작한다고 볼 수 있다.
+
+- terminal에서 **Stage 1/2 (canonicalization)** 과 **Stage 2/2 (frame input generation)** 이 error 없이 완료되었는지 확인
+- `outputs/01_canonical/` 아래에 해당 recording의 canonical 결과가 생성되었는지 확인
+- `outputs/02_frame_inputs/` 아래에 해당 recording의 frame input 결과가 생성되었는지 확인
+- `--frame-limit 1`을 사용했으므로 frame input/BEV가 최소 1개 생성되었는지 확인
+- 생성된 JSON이 비어 있지 않고, BEV image가 정상적으로 열리는지 확인
+
+Smoke Test가 실패하면 이후 기능을 실행하기 전에 **recording 경로, OD/LD/trajectory 파일, 환경변수, Python/package setup**부터 확인한다.
+
+## 7. Smoke Test 이후: 목적에 따라 선택
+
+아래 항목은 **7 → 8 → 9 순서로 반드시 실행하는 pipeline이 아니다.**  
+Smoke Test가 성공한 뒤 필요한 작업에 따라 선택해서 사용한다.
+
+| 목적 | 사용할 항목 |
+|---|---|
+| Canonical 결과만 다시 만들고 싶다 | 7.1 Canonical만 생성 |
+| 더 많은 frame input / BEV를 만들고 싶다 | 7.2 Frame Input / BEV 생성 |
+| Rule scenario 구성과 detector를 확인하고 싶다 | 7.3 Rule-based Tagging 구성 확인 |
+| 결과를 시각적으로 확인하고 싶다 | 7.4 Scenario Explorer |
+| GT를 작성/검토하고 싶다 | 7.5 Frame GT Reviewer |
+| VLM PoC를 실행하고 싶다 | 7.6 Local VLM Inference |
+
+### 7.1 Canonical만 생성
+
+Frame Input / BEV를 만들지 않고 canonicalization 결과만 생성하고 싶을 때 사용한다.
 
 Linux/macOS:
 
@@ -160,7 +208,9 @@ python run_pipeline.py <RECORDING_ID> --stop-after canonical
 outputs/01_canonical/
 ```
 
-## 8. Frame Input / BEV 생성
+### 7.2 Frame Input / BEV 생성
+
+Smoke Test가 정상 동작한 뒤 실제 sampling 범위로 frame input과 BEV를 생성할 때 사용한다.
 
 기본 sampling rate는 1 FPS이다.
 
@@ -184,7 +234,7 @@ python run_pipeline.py <RECORDING_ID> --all-frames
 
 중요한 점은 **BEV/model input이 1 FPS로 sampling되더라도 dynamic rule tagging 자체는 전체 canonical frame을 사용할 수 있다는 것**이다.
 
-## 9. Rule-based Tagging
+### 7.3 Rule-based Tagging 구성 확인
 
 현재 rule registry CLI 확인:
 
@@ -200,11 +250,13 @@ python -m ms_odd_tagging.tagger.rule_based.registry --help
 configs/direct_scenarios.yaml
 ```
 
-새 담당자는 실행 전에 반드시 `enabled_scenarios`와 각 threshold의 `provenance`를 확인한다. `provisional`, `engineering_default`, `poc_requires_calibration` 값은 검증 수준이 다름을 의미한다.
+새 담당자는 detector를 수정하거나 scenario를 추가하기 전에 `enabled_scenarios`와 각 threshold의 `provenance`를 확인한다. `provisional`, `engineering_default`, `poc_requires_calibration` 값은 검증 수준이 다름을 의미한다.
 
-## 10. Scenario Explorer
+Rule / Geometry algorithm의 상세 내용은 `05_ALGORITHMS.md`를 확인한다.
 
-canonical 또는 raw trajectory 기반 standalone explorer 생성:
+### 7.4 Scenario Explorer
+
+canonical 또는 raw trajectory 기반 standalone explorer를 생성하여 OD/LD/Ego Trajectory와 scenario 결과를 시각적으로 확인할 때 사용한다.
 
 Linux/macOS:
 
@@ -220,9 +272,11 @@ Windows PowerShell / CMD:
 python -m ms_odd_tagging.visualization.scenario_explorer outputs/01_canonical --output-dir outputs/07_scenario_explorers
 ```
 
-rule 결과가 이상할 경우 숫자만 보지 말고 explorer에서 OD/LD/ego trajectory를 함께 시각적으로 확인하는 것을 권장한다.
+rule 결과가 이상할 경우 숫자만 보지 말고 explorer에서 OD/LD/Ego Trajectory를 함께 확인하는 것을 권장한다.
 
-## 11. Frame GT Reviewer
+### 7.5 Frame GT Reviewer
+
+자동 tagging 결과와 비교할 Ground Truth를 작성하거나 검토할 때 사용한다.
 
 Linux/macOS:
 
@@ -249,7 +303,9 @@ outputs/frame_gt_authoring/index.html
 
 현재 reviewer는 exact source frame의 BEV를 사용하며 legacy motional window 방식은 active pipeline에서 사용하지 않는다.
 
-## 12. Local VLM Inference
+### 7.6 Local VLM Inference
+
+VLM PoC가 필요한 경우에만 사용한다.
 
 OpenAI-compatible vLLM endpoint 사용 예:
 
@@ -273,7 +329,9 @@ python -m ms_odd_tagging.tagger.model_based.local_vllm --recording <RECORDING_ID
 
 VLM 기능은 optional이며, deterministic rule pipeline을 먼저 확인한 뒤 사용한다.
 
-## 13. 개별 Stage 확인
+## 8. 개별 Stage / CLI 확인
+
+각 module의 command option을 직접 확인하려면 다음 명령을 사용한다.
 
 다음 명령은 Linux/macOS와 Windows에서 동일하다.
 
@@ -285,7 +343,7 @@ python -m ms_odd_tagging.tagger.rule_based.registry --help
 python -m ms_odd_tagging.visualization.scenario_explorer --help
 ```
 
-## 14. 실행 전 체크리스트
+## 9. 실행 전 / 문제 발생 시 체크리스트
 
 - Python 3.10+인지 확인
 - Windows에서는 현재 사용 중인 shell이 PowerShell인지 CMD인지 확인
@@ -293,5 +351,6 @@ python -m ms_odd_tagging.visualization.scenario_explorer --help
 - recording에 OD/LD/trajectory가 모두 있는지 확인
 - external data root 환경변수 확인
 - `python -m pytest` 실행 후 failure가 있으면 설치 문제인지 known code/test issue인지 구분해서 확인
-- smoke test는 `--frame-limit 1`부터 수행
+- 첫 실행은 `--frame-limit 1` Smoke Test부터 수행
+- Smoke Test 성공 후 필요한 기능만 선택해서 실행
 - output을 Git에 commit하지 않기
