@@ -58,6 +58,12 @@ command.
 
 Generated root preview/speed PNGs were removed. The recording-specific speed diagnostic script was moved under `scripts/debug/`. `.gitignore` now prevents those generated images from being recommitted.
 
+### Follow-up caller and artifact audit
+
+The generic local-vLLM tagger remains a supported compatibility backend because it is an installed `ms-odd-tag` entrypoint and is documented in the primary README. Root `run_*.py` launchers also remain supported during the documented deprecation window; installed `ms-odd` commands are the preferred replacements.
+
+The two `artifacts/changing_lane_predicted*.txt` files were verified as generated, recording-specific prediction lists with no repository callers. They were removed from the active tree and `/artifacts/` is now ignored so regenerated diagnostics stay local. Their prior contents remain recoverable from Git history.
+
 ## Current inventory
 
 | Responsibility / Feature | Current path | Status | Ownership / unique behavior | Action |
@@ -76,15 +82,15 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 | BEV lane PoC | `bev_lane_poc/` | Experiment | Separate lane reconstruction hypothesis | Keep isolated |
 | Lanelet2 PoC | `lanelet2_poc/` | Experiment | Optional Lanelet2-based approach/dependency | Keep isolated |
 | Qwen VLM PoC | `qwen_vlm_poc/` | Experiment/candidate | Scenario-specific prompts/evidence/candidate generation/review | Keep separate from generic model tagger |
-| Generic local model tagger | `tagger/model_based/local_vllm.py` | Legacy/canonical compatibility | Older general model-facing inference path | Do not delete without downstream caller audit |
+| Generic local model tagger | `tagger/model_based/local_vllm.py` | Supported compatibility | Installed `ms-odd-tag` backend and documented model-inference workflow | Keep; caller audit completed |
 | Rule-based evaluation | `evaluation/rule_based.py` | Tool | GT validation, prediction comparison, metrics, and reports | Keep as canonical evaluation owner |
 | GT authoring and label support | `gt_comparison/` | Tool/support | Manual GT creation, taxonomy labels, matching helpers, and compatibility imports | Preserve separately |
 | Visualization | `visualization/` + package-specific overlays | Tool | `ms-odd explore` is the generic canonical entrypoint; algorithm-specific overlays remain specialized | Keep boundary and specialized overlays |
 | ODLD explorer scripts | `scripts/odld_explorer/` | Specialized tool | Event-tag mode consumes the supported recording-level rule-event output; shared index/manifest/path code is centralized in `odld_explorer_common.py` | Retain the event-tag generator as the sole rich ODLD explorer |
-| Root compatibility wrappers | `run_*.py` | Compatibility | Convenient source-tree execution, especially without install | Keep for now; `run_pipeline.py` is documented |
+| Root compatibility wrappers | `run_*.py` | Compatibility | Convenient source-tree execution, especially without install | Keep through the documented deprecation window; prefer installed `ms-odd` commands |
 | Lane continuation patch | `docs/archive/lane_continuation_current_working.patch` | Legacy artifact | Preserved for comparison without cluttering the repository root | Compare before deletion |
 | Historical brainstorm | `docs/archive/brainstorm.md` | Historical design artifact | Preserved outside the runtime/documentation entry path | Retain as archive |
-| `artifacts/*.txt` | repository root artifact folder | Artifact | Generated prediction lists may support retrospective/debugging | Do not delete without caller/provenance check |
+| `artifacts/*.txt` | repository root artifact folder | Dead generated output | Recording-specific prediction lists; no repository callers found | Removed and ignored; recoverable from Git history |
 
 ## Regression gate before removal
 
