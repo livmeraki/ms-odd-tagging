@@ -257,9 +257,9 @@ configs/direct_scenarios.yaml
 
 최종 결과 확인과 디버깅에는 generic `ms_odd_tagging.visualization.scenario_explorer` 대신 다음 full ODLD event-tag explorer를 사용한다.
 
-이 explorer는 raw OD/LD, Ego Trajectory, canonical data와 scenario tag를 함께 표시한다. 현재 script는 canonical data에서 rule event를 직접 생성할 수 있으며, `legacy/windows`에 기존 window 결과가 있으면 호환 입력으로 확인한다.
+이 explorer는 raw OD/LD, Ego Trajectory, canonical data와 scenario tag를 함께 표시한다. `recordings` positional argument는 여러 개를 받을 수 있으며, argument를 생략하면 canonical directory에서 생성 가능한 recording 전체를 대상으로 한다.
 
-먼저 실행할 recording을 지정한다.
+#### Recording 1개 생성
 
 Windows PowerShell:
 
@@ -276,10 +276,31 @@ python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
   $RECORDING
 ```
 
+#### 선택한 여러 Recording 생성
+
+Windows PowerShell:
+
+```powershell
+$RECORDINGS = @(
+  "Rec_A",
+  "Rec_B",
+  "Rec_C"
+)
+
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
+  --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
+  --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
+  --window-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "legacy/windows") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers/index.html") `
+  --regenerate-existing `
+  $RECORDINGS
+```
+
 Linux/macOS:
 
 ```bash
-RECORDING="<RECORDING_ID>"
+RECORDINGS=("Rec_A" "Rec_B" "Rec_C")
 
 python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
@@ -288,7 +309,35 @@ python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
   --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
   --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
   --regenerate-existing \
-  "$RECORDING"
+  "${RECORDINGS[@]}"
+```
+
+#### 생성 가능한 모든 Recording 생성
+
+recording argument를 생략한다.
+
+Windows PowerShell:
+
+```powershell
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
+  --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
+  --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
+  --window-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "legacy/windows") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers/index.html") `
+  --regenerate-existing
+```
+
+Linux/macOS:
+
+```bash
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
+  --source-root "$MS_ODD_DATA_ROOT/01_raw" \
+  --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
+  --window-dir "$MS_ODD_OUTPUT_ROOT/legacy/windows" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
+  --regenerate-existing
 ```
 
 생성 후 다음 index를 browser에서 연다.
