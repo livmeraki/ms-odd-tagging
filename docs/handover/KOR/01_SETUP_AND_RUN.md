@@ -2,7 +2,7 @@
 
 ## 1. 목적
 
-이 문서는 새 담당자가 repository를 받아 **환경을 설치하고 recording 1개를 실제로 실행하는 것**까지 빠르게 진행할 수 있도록 정리한 runbook이다.
+이 문서는 새 담당자가 repository를 받아 **환경을 설치하고 recording 1개를 Smoke Test한 뒤 전체 input generation을 실행하는 것**까지 빠르게 진행할 수 있도록 정리한 runbook이다.
 
 ## 2. 기본 환경
 
@@ -183,24 +183,86 @@ outputs/02_frame_inputs/
 
 Smoke Test가 실패한 경우 이후 기능을 실행하기 전에 recording 경로, OD/LD/trajectory 파일, 환경변수, Python/package setup부터 확인한다.
 
+## 8. 전체 Recording 실행
+
+Smoke Test가 정상적으로 완료되었다면, 같은 recording 전체에 대해 input generation을 실행한다.
+
+전체 실행 범위는 다음과 같다.
+
+```text
+Raw Recording
+     │
+     ▼
+① Canonicalization
+     │
+     ▼
+outputs/01_canonical
+     │
+     ▼
+② Frame Input / BEV 생성
+     │
+     ▼
+outputs/02_frame_inputs
+```
+
+기본 Frame Input / BEV sampling rate는 **1 FPS**이다.
+
+Linux/macOS:
+
+```bash
+python run_pipeline.py <RECORDING_ID>
+```
+
+Windows PowerShell:
+
+```powershell
+python run_pipeline.py <RECORDING_ID>
+```
+
+예시:
+
+```powershell
+python run_pipeline.py Rec_Drv_GER_MACHET18_20260319_151819
+```
+
+2 FPS로 생성하려면:
+
+```bash
+python run_pipeline.py <RECORDING_ID> --frames-per-second 2
+```
+
+모든 canonical frame에 대해 Frame Input / BEV를 생성하려면:
+
+```bash
+python run_pipeline.py <RECORDING_ID> --all-frames
+```
+
+### 전체 실행 후 확인
+
+- `Stage 1/2`, `Stage 2/2`가 error 없이 완료되었는지 확인
+- `outputs/01_canonical/`에 recording 전체 canonical 결과가 생성되었는지 확인
+- `outputs/02_frame_inputs/`에 설정한 sampling rate에 맞는 frame input / BEV가 생성되었는지 확인
+- 일부 frame의 JSON과 BEV를 열어 Ego, road geometry, 주변 object 위치가 정상인지 확인
+
+> `run_pipeline.py`의 전체 실행은 현재 **input generation pipeline 전체 실행**을 의미한다.  
+> Rule-based tagging, Scenario Explorer, Frame GT Reviewer, VLM은 이후 필요에 따라 별도로 사용한다.
+
 ---
 
-## 8. Smoke Test 이후에 필요할 때 사용하는 기능
+## 9. 필요할 때 사용하는 추가 기능
 
-아래 항목은 **8.1 → 8.2 → 8.3 순서로 실행하는 pipeline이 아니다.**
-
-Smoke Test가 성공한 뒤, 개발 목적에 따라 필요한 기능만 선택해서 사용한다.
+아래 항목은 **9.1 → 9.2 → 9.3 순서로 실행하는 pipeline이 아니다.**  
+전체 Recording 실행 이후 개발 목적에 따라 필요한 기능만 선택해서 사용한다.
 
 | 하고 싶은 작업 | 사용할 기능 |
 |---|---|
-| Canonical 결과만 만들거나 다시 확인 | Canonical만 생성 |
-| 더 많은 frame input / BEV 생성 | Frame Input / BEV 생성 |
+| Frame Input 없이 Canonical 결과만 생성 | Canonical만 생성 |
 | Rule scenario 구성 및 detector 확인 | Rule-based Tagging 구성 확인 |
 | 결과를 시각적으로 확인 | Scenario Explorer |
 | Ground Truth 작성 / 검토 | Frame GT Reviewer |
 | VLM 실험 실행 | Local VLM Inference |
 
-### 8.1 Canonical만 생성
+### 9.1 Canonical만 생성
 
 **Frame Input / BEV 없이 canonicalization 결과만 필요할 때** 사용하는 선택 명령이다.
 
@@ -223,31 +285,7 @@ python run_pipeline.py <RECORDING_ID> --stop-after canonical
 outputs/01_canonical/
 ```
 
-### 8.2 Frame Input / BEV 생성
-
-Smoke Test가 성공한 뒤 **실제 recording 범위에 대해 frame input과 BEV를 생성할 때** 사용한다.
-
-기본 sampling rate는 1 FPS이다.
-
-```bash
-python run_pipeline.py <RECORDING_ID>
-```
-
-2 FPS:
-
-```bash
-python run_pipeline.py <RECORDING_ID> --frames-per-second 2
-```
-
-모든 canonical frame에 대해 생성:
-
-```bash
-python run_pipeline.py <RECORDING_ID> --all-frames
-```
-
-중요한 점은 **BEV/model input이 sampling되더라도 dynamic rule tagging 자체는 전체 canonical frame을 사용할 수 있다는 것**이다.
-
-### 8.3 Rule-based Tagging 구성 확인
+### 9.2 Rule-based Tagging 구성 확인
 
 현재 rule registry와 사용 가능한 option을 확인할 때 사용한다.
 
@@ -265,7 +303,7 @@ configs/direct_scenarios.yaml
 
 Rule / Geometry algorithm의 상세 내용은 `05_ALGORITHMS.md`를 확인한다.
 
-### 8.4 Scenario Explorer
+### 9.3 Scenario Explorer
 
 **Canonical / tagging 결과를 시각적으로 확인하고 디버깅할 때** 사용하는 별도 visualization tool이다.
 
@@ -285,7 +323,7 @@ python -m ms_odd_tagging.visualization.scenario_explorer outputs/01_canonical --
 
 rule 결과가 이상할 경우 숫자만 확인하지 말고 explorer에서 OD / LD / Ego Trajectory를 함께 시각적으로 확인하는 것을 권장한다.
 
-### 8.5 Frame GT Reviewer
+### 9.4 Frame GT Reviewer
 
 **자동 tagging 결과와 비교할 Ground Truth를 작성하거나 검토할 때** 사용하는 별도 tool이다.
 
@@ -312,7 +350,7 @@ outputs/frame_gt_authoring/index.html
 
 현재 reviewer는 exact source frame의 BEV를 사용하며 legacy motional window 방식은 active pipeline에서 사용하지 않는다.
 
-### 8.6 Local VLM Inference
+### 9.5 Local VLM Inference
 
 VLM PoC가 필요한 경우에만 사용한다.
 
@@ -336,7 +374,7 @@ python -m ms_odd_tagging.tagger.model_based.local_vllm --recording <RECORDING_ID
 
 VLM 기능은 optional이며, deterministic rule pipeline을 먼저 확인한 뒤 사용한다.
 
-## 9. 개별 Stage / CLI 확인
+## 10. 개별 Stage / CLI 확인
 
 각 module의 command option을 직접 확인하려면 다음 명령을 사용한다.
 
@@ -350,7 +388,7 @@ python -m ms_odd_tagging.visualization.scenario_explorer --help
 
 위 명령은 Linux/macOS와 Windows PowerShell에서 동일하다.
 
-## 10. 실행 전 / 문제 발생 시 체크리스트
+## 11. 실행 전 / 문제 발생 시 체크리스트
 
 - Python 3.10+인지 확인
 - Windows에서는 PowerShell 사용 권장
@@ -359,5 +397,6 @@ python -m ms_odd_tagging.visualization.scenario_explorer --help
 - external data root 환경변수 확인
 - `python -m pytest` 실행 후 failure가 있으면 설치 문제인지 known code/test issue인지 구분해서 확인
 - 첫 실행은 `--frame-limit 1` Smoke Test부터 수행
-- Smoke Test 성공 후 필요한 기능만 선택해서 실행
+- Smoke Test 성공 후 전체 Recording 실행
+- 이후 필요한 추가 기능만 선택해서 실행
 - output을 Git에 commit하지 않기
