@@ -70,7 +70,7 @@ Generated root preview/speed PNGs were removed. The recording-specific speed dia
 | Standard frame-input implementation | `frame_inputs/_standard_impl.py` via `frame_inputs/standard.py` | Internal compatibility mode | Exact historical behavior retained behind the owning boundary | Keep while supported by regression tests |
 | Explorer-aligned implementation | `frame_inputs/_explorer_aligned_impl.py` via `frame_inputs/explorer_aligned.py` | Canonical implementation | Active per-frame generation behavior | Keep |
 | Rule-based tagging | `tagger/rule_based/` + `configs/scenario_catalog.csv` + `configs/direct_scenarios.yaml` | Canonical | Unified scenario catalog, detector registry, and thresholds | Keep catalog as source of truth |
-| Shared features | `features/` | Canonical | Cross-detector reusable relations/motion/context | Keep; future duplicate-utility audit |
+| Shared features | `features/` | Canonical | Cross-detector reusable relations/motion/context | Keep; duplicate-utility audit completed |
 | Following-lane | `scenarios/following_lane/` | Canonical/candidate | Active physical lane/lead logic with extensive tests | High risk; defer consolidation |
 | LD topology | `ld_topology/` | Experiment/candidate | Independent topology/intersection approach | Keep isolated until equivalence is proven |
 | BEV lane PoC | `bev_lane_poc/` | Experiment | Separate lane reconstruction hypothesis | Keep isolated |
@@ -170,3 +170,19 @@ independent lane experiments, so no high-risk algorithm was deleted.
   separately and remain advisory until their algorithm is reconciled.
 - Fixed explorer thumbnail generation for older/minimal payloads that omit
   trajectory `x`/`y` arrays.
+
+
+## Duplicate utility and dead-facade audit
+
+The repository-wide audit found no byte-identical Python implementations. Repeated helper names such as `load_json`, `write_json`, and `event_segmentation` have different validation, formatting, atomicity, or temporal semantics and were not merged by name alone.
+
+Six modules with no tracked callers, command exposure, tests, or unique implementation were removed:
+
+- `common/io.py`;
+- `input_generator/bev.py`;
+- `input_generator/compaction.py`;
+- `input_generator/features.py`;
+- `input_generator/sampler.py`;
+- `tagger/event_segmentation.py`.
+
+The active `input_generator/windows.py` legacy implementation and the established canonical/frame-input compatibility aliases remain because they still have callers or an explicit migration contract. The `evaluation/rule_based.py` facade also remains intentionally as the public evaluation boundary.

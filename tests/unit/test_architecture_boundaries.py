@@ -65,3 +65,35 @@ def test_legacy_input_generator_modules_alias_their_canonical_owners() -> None:
     }
     for legacy_name, owner_name in aliases.items():
         assert importlib.import_module(legacy_name) is importlib.import_module(owner_name)
+
+
+def test_verified_dead_facades_stay_removed() -> None:
+    removed = (
+        "src/ms_odd_tagging/common/io.py",
+        "src/ms_odd_tagging/input_generator/bev.py",
+        "src/ms_odd_tagging/input_generator/compaction.py",
+        "src/ms_odd_tagging/input_generator/features.py",
+        "src/ms_odd_tagging/input_generator/sampler.py",
+        "src/ms_odd_tagging/tagger/event_segmentation.py",
+    )
+    assert all(not (ROOT / relative_path).exists() for relative_path in removed)
+
+
+def test_production_source_avoids_moved_input_generator_modules() -> None:
+    forbidden = (
+        "input_generator.canonical",
+        "input_generator.canonical_odld",
+        "input_generator.canonical_builder",
+        "input_generator.frame_input",
+        "input_generator.frame_input_revised",
+        "input_generator.frame_input_builder",
+        "input_generator.bev_renderer",
+        "input_generator.revised_bev",
+    )
+    source_root = ROOT / "src/ms_odd_tagging"
+    for path in source_root.rglob("*.py"):
+        if "input_generator" in path.parts:
+            continue
+        source = path.read_text(encoding="utf-8")
+        for module_name in forbidden:
+            assert module_name not in source, f"{module_name} imported by {path}"
