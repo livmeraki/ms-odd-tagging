@@ -60,6 +60,46 @@ def missing_required_files(source_root: Path, recording: str) -> list[str]:
     ]
 
 
+def average_success_elapsed(recordings: list[dict[str, object]]) -> float | None:
+    values = [
+        float(item["elapsed_seconds"])
+        for item in recordings
+        if item.get("status") == "succeeded"
+    ]
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def average_pipeline_elapsed_per_recording(
+    stage_timings: list[dict[str, object]],
+) -> tuple[float | None, int]:
+    per_recording: dict[str, float] = {}
+    successful_sets: list[set[str]] = []
+
+    for stage in stage_timings:
+        stage_successes: set[str] = set()
+        for item in stage.get("recordings", []):
+            if item.get("status") != "succeeded":
+                continue
+            recording = str(item["recording"])
+            stage_successes.add(recording)
+            per_recording[recording] = per_recording.get(recording, 0.0) + float(
+                item["elapsed_seconds"]
+            )
+        successful_sets.append(stage_successes)
+
+    if not successful_sets:
+        return None, 0
+
+    fully_successful = set.intersection(*successful_sets)
+    if not fully_successful:
+        return None, 0
+
+    values = [per_recording[recording] for recording in fully_successful]
+    return sum(values) / len(values), len(values)
+
+
 def write_runtime_report(
     output_root: Path,
     recordings: list[str],
@@ -71,12 +111,21 @@ def write_runtime_report(
     runtime_dir.mkdir(parents=True, exist_ok=True)
     recorded_at = datetime.now().astimezone()
     report_path = runtime_dir / f"pipeline_{recorded_at.strftime('%Y%m%d_%H%M%S')}.json"
+    average_pipeline_elapsed, average_recording_count = (
+        average_pipeline_elapsed_per_recording(stage_timings)
+    )
     payload = {
         "recorded_at": recorded_at.isoformat(timespec="seconds"),
         "recordings": recordings,
         "stages": stage_timings,
         "failures": failures,
         "total_elapsed_seconds": round(total_elapsed, 3),
+        "average_pipeline_elapsed_seconds_per_successful_recording": (
+            round(average_pipeline_elapsed, 3)
+            if average_pipeline_elapsed is not None
+            else None
+        ),
+        "average_pipeline_recording_count": average_recording_count,
     }
     report_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -96,12 +145,30 @@ def print_runtime_summary(
         elapsed = float(stage["elapsed_seconds"])
         succeeded = int(stage.get("succeeded", 0))
         failed = int(stage.get("failed", 0))
+        average_elapsed = stage.get("average_elapsed_seconds_per_successful_recording")
         print(
             f"- Stage {stage['stage']}: {stage['name']} -> "
             f"{format_elapsed(elapsed)} ({succeeded} succeeded, {failed} failed)",
             flush=True,
         )
+        if average_elapsed is not None:
+            print(
+                f"  Average per successful recording -> "
+                f"{format_elapsed(float(average_elapsed))}",
+                flush=True,
+            )
+
+    average_pipeline_elapsed, average_recording_count = (
+        average_pipeline_elapsed_per_recording(stage_timings)
+    )
     print(f"- Total pipeline -> {format_elapsed(total_elapsed)}", flush=True)
+    if average_pipeline_elapsed is not None:
+        print(
+            f"- Average pipeline per successful recording -> "
+            f"{format_elapsed(average_pipeline_elapsed)} "
+            f"({average_recording_count} recordings)",
+            flush=True,
+        )
     print(f"- Runtime log -> {report_path}", flush=True)
 
     if failures:
@@ -240,12 +307,16 @@ def main() -> int:
         print(f"Completed {recording} in {format_elapsed(elapsed)}", flush=True)
 
     canonical_stage_elapsed = time.monotonic() - canonical_stage_start
+    canonical_average = average_success_elapsed(canonical_per_recording)
     stage_timings.append(
         {
             "stage": 1,
             "name": "canonicalization",
             "module": "ms_odd_tagging.canonical.builder",
             "elapsed_seconds": round(canonical_stage_elapsed, 3),
+            "average_elapsed_seconds_per_successful_recording": (
+                round(canonical_average, 3) if canonical_average is not None else None
+            ),
             "succeeded": len(canonical_successes),
             "failed": len(args.recordings) - len(canonical_successes),
             "recordings": canonical_per_recording,
@@ -333,12 +404,16 @@ def main() -> int:
         print(f"Completed {recording} in {format_elapsed(elapsed)}", flush=True)
 
     frame_stage_elapsed = time.monotonic() - frame_stage_start
+    frame_average = average_success_elapsed(frame_per_recording)
     stage_timings.append(
         {
             "stage": 2,
             "name": "frame_input_bev_generation",
             "module": "ms_odd_tagging.frame_inputs.builder",
             "elapsed_seconds": round(frame_stage_elapsed, 3),
+            "average_elapsed_seconds_per_successful_recording": (
+                round(frame_average, 3) if frame_average is not None else None
+            ),
             "succeeded": len(frame_successes),
             "failed": len(canonical_successes) - len(frame_successes),
             "recordings": frame_per_recording,
