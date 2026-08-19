@@ -54,9 +54,18 @@ data/01_raw
 
 대용량 데이터를 외부 disk에 둘 경우 `.env` 또는 환경변수를 사용한다.
 
+Linux/macOS:
+
 ```bash
 export MS_ODD_DATA_ROOT=/path/to/ms-odd-tagging-data/data
 export MS_ODD_OUTPUT_ROOT=/path/to/ms-odd-tagging-data/outputs
+```
+
+Windows PowerShell:
+
+```powershell
+$env:MS_ODD_DATA_ROOT = "D:\path\to\ms-odd-tagging-data\data"
+$env:MS_ODD_OUTPUT_ROOT = "D:\path\to\ms-odd-tagging-data\outputs"
 ```
 
 machine-specific path를 source code에 hard-code하지 않는다.
