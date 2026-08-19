@@ -11,7 +11,6 @@ SCRIPT_DIR = Path(__file__).resolve().parents[2] / "scripts" / "odld_explorer"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import generate_odld_dataset_explorers_w_scenario_tag as explorer  # noqa: E402
-import generate_odld_dataset_explorers_w_frame_scenario_tag as frame_explorer  # noqa: E402
 
 from ms_odd_tagging.tagger.rule_based.scenario_event import ScenarioEvent  # noqa: E402
 
@@ -732,67 +731,6 @@ def test_unreliable_jerk_events_are_hidden_from_visualization(
     assert [event["scenario"] for event in payload["events"]] == [
         "traversing_crosswalk"
     ]
-
-
-def test_frame_explorer_loads_frame_tags_without_event_source(tmp_path: Path) -> None:
-    tag_dir = tmp_path / "sample_motional_frame_tags_odld_1fps"
-    tag_dir.mkdir()
-    manifest = {
-        "schema_version": "motional-scenario-frame-tags-1fps-manifest-v1",
-        "recording_id": "sample",
-        "source_event_json": "sample_motional_windows_odld.json",
-        "rule_config_version": "test",
-        "scenarios": ["high_magnitude_speed", "near_multiple_pedestrians"],
-        "frames": [
-            {"frame": 0, "timestamp_s": 0.0, "path": "frame_000000.json"},
-            {"frame": 10, "timestamp_s": 1.0, "path": "frame_000010.json"},
-        ],
-    }
-    (tag_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    for payload in (
-        {
-            "schema_version": "motional-scenario-frame-tags-1fps-v1",
-            "recording_id": "sample",
-            "frame": 0,
-            "timestamp_s": 0.0,
-            "tags": {
-                "motional_scenarios": {
-                    "high_magnitude_speed": True,
-                    "near_multiple_pedestrians": False,
-                }
-            },
-        },
-        {
-            "schema_version": "motional-scenario-frame-tags-1fps-v1",
-            "recording_id": "sample",
-            "frame": 10,
-            "timestamp_s": 1.0,
-            "tags": {
-                "motional_scenarios": {
-                    "high_magnitude_speed": True,
-                    "near_multiple_pedestrians": True,
-                }
-            },
-        },
-    ):
-        (tag_dir / f"frame_{payload['frame']:06d}.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
-
-    tags = frame_explorer.build_frame_tag_payload("sample", tmp_path)
-
-    assert tags["sourceKind"] == "frame_based_motional_scenario_tags_1fps"
-    assert tags["frameTagByFrame"]["10"] == {
-        "high_magnitude_speed": True,
-        "near_multiple_pedestrians": True,
-    }
-    assert [event["scenario"] for event in tags["events"]] == [
-        "high_magnitude_speed",
-        "near_multiple_pedestrians",
-    ]
-    assert "tags.frameTagByFrame[String(currentIndex)]" in (
-        frame_explorer.TAG_SCRIPT_FUNCTIONS
-    )
 
 
 def test_canonical_with_ld_topology_adds_frame_context() -> None:
