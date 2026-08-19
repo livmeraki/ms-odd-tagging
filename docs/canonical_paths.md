@@ -35,7 +35,7 @@ The explorer-aligned builder is the only production frame-input route.
 `_frame_input_standard_impl.py`, and
 `_frame_input_explorer_aligned_impl.py` are compatibility/migration internals.
 They are deliberately not installed command targets. The standard renderer path
-remains solely as a regression oracle until output-equivalence fixtures allow
+remains solely as a regression oracle until output-equivalence fixtures allow its deliberate removal.
 
 ## Geometry and scenario ownership
 

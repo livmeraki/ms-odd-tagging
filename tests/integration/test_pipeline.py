@@ -6,8 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ms_odd_tagging.input_generator.canonical import build_recording as build_canonical
-from ms_odd_tagging.input_generator.frame_input import build_recording as build_frames
+from ms_odd_tagging.canonical.odld import build_recording as build_canonical
+from ms_odd_tagging.frame_inputs.explorer_aligned import build_recording as build_frames
 from ms_odd_tagging.tagger.model_based.local_vllm import (
     load_gt_labels,
     output_window_ids,
@@ -28,8 +28,27 @@ RECORDING = "Rec_Drv_GER_MACHET18_20260227_153128"
 def write_synthetic_recording(root: Path) -> None:
     rec_dir = root / RECORDING
     rec_dir.mkdir(parents=True)
-    annotations = {"scene": {"frameCount": 60}, "objects": []}
-    (rec_dir / "annotations.json").write_text(json.dumps(annotations), encoding="utf-8")
+    od_annotations = {
+        "scene": {"id": "synthetic-scene", "name": RECORDING, "frameCount": 60},
+        "objects": [],
+    }
+    ld_annotations = {
+        "scene": {"id": "synthetic-scene", "name": RECORDING, "frameCount": 60},
+        "lanes": {
+            "points": [],
+            "lines": [],
+            "lanes": [],
+            "roadBoundaries": [],
+            "topologies": [],
+        },
+        "roadmarks": [],
+    }
+    (rec_dir / "annotations_OD.json").write_text(
+        json.dumps(od_annotations), encoding="utf-8"
+    )
+    (rec_dir / "annotations_LD.json").write_text(
+        json.dumps(ld_annotations), encoding="utf-8"
+    )
     rows = []
     for idx in range(60):
         timestamp = idx * 0.1
@@ -47,8 +66,8 @@ def test_cli_help_works() -> None:
     repo = Path(__file__).resolve().parents[2]
     env = {**os.environ, "PYTHONPATH": str(repo / "src")}
     for module in (
-        "ms_odd_tagging.input_generator.canonical",
-        "ms_odd_tagging.input_generator.frame_input",
+        "ms_odd_tagging.canonical.builder",
+        "ms_odd_tagging.frame_inputs.builder",
         "ms_odd_tagging.tagger.model_based.local_vllm",
         "ms_odd_tagging.validator.frame_schema",
     ):
@@ -162,7 +181,9 @@ def test_sample_pipeline_and_schema_validation(tmp_path: Path) -> None:
     frame_inputs_dir = tmp_path / "frame_inputs"
     write_synthetic_recording(source_root)
 
-    canonical_path, canonical = build_canonical(source_root, canonical_dir, RECORDING)
+    canonical_path, canonical = build_canonical(
+        source_root, canonical_dir, RECORDING, 100.0, False
+    )
     assert canonical_path.is_file()
     assert canonical["recording"]["frame_count"] == 60
 
@@ -171,9 +192,10 @@ def test_sample_pipeline_and_schema_validation(tmp_path: Path) -> None:
         frame_inputs_dir,
         extent=(45.0, 45.0, 25.0, 95.0),
         size=(320, 288),
-        ld_filters={"roadmark_classes": {"line"}, "line_patterns": {"solid"}},
         max_objects=24,
+        frames_per_second=1.0,
         frame_limit=2,
+        existing_output="regenerate",
     )
     assert count == 2
     assert manifest["generated_frame_count"] == 2

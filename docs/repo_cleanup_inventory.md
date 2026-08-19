@@ -113,32 +113,26 @@ Do not move thresholds from `configs/direct_scenarios.yaml` or rewrite detector 
 
 Do not collapse `qwen_vlm_poc` into `tagger/model_based/local_vllm.py` yet. The former contains scenario-specific evidence construction and experimental candidate generation; the latter is a generic model-facing path. First identify the long-term inference contract, then migrate reusable client/validation utilities.
 
-## Practical target architecture after this pass
+## Current target architecture
 
 ```text
 src/ms_odd_tagging/
-├── common/
-├── input_generator/
-│   ├── canonical_builder.py      # public ODLD entrypoint
-│   ├── canonical.py              # internal OD/trajectory core
-│   ├── canonical_odld.py         # supported ODLD schema
-│   ├── frame_input_builder.py    # public per-frame dispatcher
-│   ├── bev_renderer.py           # renderer ownership
-│   └── ...
-├── features/                     # shared deterministic features
+├── canonical/                    # OD+LD+trajectory normalization implementation
+├── frame_inputs/                 # sampled frame JSON and BEV implementation
+├── common/                       # shared infrastructure utilities
+├── features/                     # shared deterministic measurements
 ├── scenarios/                    # supported scenario-specific pipelines
-├── tagger/
-│   ├── rule_based/
-│   └── model_based/
-├── gt_comparison/                # evaluation/authoring tools
-├── visualization/                # generic visualization
-├── qwen_vlm_poc/                 # explicit experiment
-├── bev_lane_poc/                 # explicit experiment
-├── lanelet2_poc/                 # explicit experiment
-└── ld_topology/                  # explicit candidate/experiment
+├── tagger/                       # rule-based and model-facing tagging
+├── evaluation/                   # public evaluation boundary
+├── visualization/                # generic visualization boundary
+├── input_generator/              # compatibility aliases + legacy window pipeline only
+├── qwen_vlm_poc/                 # explicit VLM experiment
+├── bev_lane_poc/                 # explicit lane experiment
+├── lanelet2_poc/                 # explicit lane experiment
+└── ld_topology/                  # explicit topology candidate
 ```
 
-This is intentionally less aggressive than a wholesale directory rewrite. The current repository already has useful semantic boundaries; the main cleanup need is explicit ownership and stable entrypoints, not moving every file.
+Source packages use semantic responsibility names; only generated output directories use numbered pipeline stages such as `01_canonical` and `02_frame_inputs`.
 
 
 ## Boundary resolution pass

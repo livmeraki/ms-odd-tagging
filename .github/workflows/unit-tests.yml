@@ -33,6 +33,7 @@ jobs:
           tests/unit/test_canonical_odld_scene_identity.py
           tests/unit/test_static_od_persistence.py
           tests/unit/test_generation_profile.py
+          tests/integration/test_pipeline.py
 
   supported-unit-suite:
     runs-on: ubuntu-latest

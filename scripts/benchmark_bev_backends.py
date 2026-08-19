@@ -18,7 +18,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageStat
 
 from ms_odd_tagging.common.config import CANONICAL, OUTPUT_ROOT
-from ms_odd_tagging.input_generator import revised_bev
+from ms_odd_tagging.frame_inputs import revised_bev
 from ms_odd_tagging.frame_inputs.standard import (
     canonical_recording_id,
     sample_frames_by_rate,

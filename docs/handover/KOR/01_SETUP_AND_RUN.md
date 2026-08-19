@@ -189,8 +189,8 @@ VLM 기능은 optional이며, deterministic rule pipeline을 먼저 확인한 �
 ## 13. 개별 Stage 확인
 
 ```bash
-python -m ms_odd_tagging.input_generator.canonical_builder --help
-python -m ms_odd_tagging.input_generator.frame_input --help
+python -m ms_odd_tagging.canonical.builder --help
+python -m ms_odd_tagging.frame_inputs.builder --help
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
 python -m ms_odd_tagging.visualization.scenario_explorer --help
