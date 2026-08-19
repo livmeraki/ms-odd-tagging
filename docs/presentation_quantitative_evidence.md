@@ -211,7 +211,7 @@ git rev-parse HEAD
 git log --all --date=iso --pretty=format:'%H%x09%ad%x09%d%x09%s'
 
 $env:PYTHONPATH='src'
-& 'C:\Users\StradVision\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -m ms_odd_tagging.simplified_taxonomy.aggregate_score --prediction-root outputs\06_gt_comparison\predictions --output outputs\06_gt_comparison\aggregate_f1_current_30gt.json --review-dir outputs\06_gt_comparison\f1_review_current_30gt
+python -m ms_odd_tagging.simplified_taxonomy.aggregate_score --prediction-root outputs\06_gt_comparison\predictions --output outputs\06_gt_comparison\aggregate_f1_current_30gt.json --review-dir outputs\06_gt_comparison\f1_review_current_30gt
 Get-FileHash outputs\06_gt_comparison\aggregate_f1_current_30gt.json -Algorithm SHA256
 
 $a = Get-Content -Raw outputs\06_gt_comparison\aggregate_f1_current_30gt.json | ConvertFrom-Json
