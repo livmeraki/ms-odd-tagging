@@ -121,8 +121,8 @@ Defaults are tuned for the local VLM audit path:
 
 - endpoint: `http://127.0.0.1:8001/v1/chat/completions`
 - model: `Qwen/Qwen3-VL-8B-Instruct`
-- max model length: `16384`
-- multimodal limit: `image=6`
+- max model length: `12000`
+- multimodal limit: `{"image":6}`
 
 Override the model with a positional argument or override server settings with
 environment variables such as `MS_ODD_VLLM_PORT`, `MS_ODD_VLLM_MAX_MODEL_LEN`,
