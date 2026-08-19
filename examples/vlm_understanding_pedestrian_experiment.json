@@ -1,0 +1,96 @@
+{
+  "legend": {
+    "green filled rectangle with triangular nose": "ego vehicle; nose points forward",
+    "orange circle with short body": "pedestrian",
+    "orange arrow": "pedestrian motion direction",
+    "blue filled rectangle": "traffic vehicle",
+    "red stripes": "crosswalk",
+    "blue dashed lines": "lane boundaries",
+    "image up": "ahead relative to ego",
+    "image down": "behind relative to ego",
+    "image left": "left relative to ego",
+    "image right": "right relative to ego"
+  },
+  "scenes": [
+    {
+      "scene_id": "positive_crossing_ahead",
+      "bev": "pseudo_bev_pedestrian/positive_crossing_ahead.png",
+      "difficulty": "positive_clear",
+      "expected_presence": "yes",
+      "expected_relation": "ahead",
+      "expected_path_interaction": "yes",
+      "expected_waiting": "yes",
+      "notes": "One pedestrian is crossing the ego path while ego is stopped."
+    },
+    {
+      "scene_id": "positive_approaching_left",
+      "bev": "pseudo_bev_pedestrian/positive_approaching_left.png",
+      "difficulty": "positive_left",
+      "expected_presence": "yes",
+      "expected_relation": "left",
+      "expected_path_interaction": "yes",
+      "expected_waiting": "yes",
+      "notes": "Pedestrian approaches the crosswalk and ego path from the left."
+    },
+    {
+      "scene_id": "positive_approaching_right",
+      "bev": "pseudo_bev_pedestrian/positive_approaching_right.png",
+      "difficulty": "positive_right",
+      "expected_presence": "yes",
+      "expected_relation": "right",
+      "expected_path_interaction": "yes",
+      "expected_waiting": "yes",
+      "notes": "Pedestrian approaches the crosswalk and ego path from the right."
+    },
+    {
+      "scene_id": "positive_multiple_one_crossing",
+      "bev": "pseudo_bev_pedestrian/positive_multiple_one_crossing.png",
+      "difficulty": "positive_distractors",
+      "expected_presence": "yes",
+      "expected_relation": "ahead",
+      "expected_path_interaction": "yes",
+      "expected_waiting": "yes",
+      "notes": "Multiple pedestrians exist; only the nearest ahead crosses the ego path."
+    },
+    {
+      "scene_id": "negative_no_pedestrian",
+      "bev": "pseudo_bev_pedestrian/negative_no_pedestrian.png",
+      "difficulty": "negative_absent",
+      "expected_presence": "no",
+      "expected_relation": "not_applicable",
+      "expected_path_interaction": "no",
+      "expected_waiting": "no",
+      "notes": "Empty crosswalk; no pedestrian exists."
+    },
+    {
+      "scene_id": "negative_sidewalk_only",
+      "bev": "pseudo_bev_pedestrian/negative_sidewalk_only.png",
+      "difficulty": "negative_irrelevant_pedestrian",
+      "expected_presence": "yes",
+      "expected_relation": "left",
+      "expected_path_interaction": "no",
+      "expected_waiting": "no",
+      "notes": "Pedestrian remains on the left sidewalk and does not approach the ego path."
+    },
+    {
+      "scene_id": "negative_other_lane_crossing",
+      "bev": "pseudo_bev_pedestrian/negative_other_lane_crossing.png",
+      "difficulty": "negative_other_lane",
+      "expected_presence": "yes",
+      "expected_relation": "right",
+      "expected_path_interaction": "no",
+      "expected_waiting": "no",
+      "notes": "Pedestrian crosses on the far side without intersecting the highlighted ego path."
+    },
+    {
+      "scene_id": "negative_stopped_for_lead",
+      "bev": "pseudo_bev_pedestrian/negative_stopped_for_lead.png",
+      "difficulty": "negative_wrong_stop_cause",
+      "expected_presence": "no",
+      "expected_relation": "not_applicable",
+      "expected_path_interaction": "no",
+      "expected_waiting": "no",
+      "notes": "Ego is stopped behind a lead vehicle; an empty crosswalk is not pedestrian yielding."
+    }
+  ]
+}
