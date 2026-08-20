@@ -21,19 +21,13 @@ def _active_scenarios(document: dict[str, Any]) -> list[str]:
     return sorted(str(name) for name, active in motional.items() if active is True)
 
 
-def load_current_frame_predictions(recording_dir: Path) -> dict[int, dict[str, Any]]:
-    """Map current pipeline 1-FPS frame tags into the simplified taxonomy.
-
-    The cleanup pipeline writes one JSON per sampled frame under
-    ``recording_frame_tags_1fps``.  This is the canonical prediction source for
-    the simplified manual-GT workspace; no duplicate *_simplified_prediction.json
-    export is required.
-    """
+def _frame_tag_records(recording_dir: Path) -> list[dict[str, Any]]:
+    """Load current 1-FPS frame tags with frame index, timestamp and mapped tags."""
     directory = frame_tag_dir(recording_dir)
     if not directory.is_dir():
-        return {}
+        return []
 
-    predictions: dict[int, dict[str, Any]] = {}
+    records: list[dict[str, Any]] = []
     for path in sorted(directory.glob("frame_*.json")):
         try:
             document = json.loads(path.read_text(encoding="utf-8"))
@@ -44,9 +38,26 @@ def load_current_frame_predictions(recording_dir: Path) -> dict[int, dict[str, A
         value = document.get("frame", document.get("frame_index"))
         if not isinstance(value, int):
             continue
+        timestamp = document.get("timestamp_s")
+        if not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool):
+            timestamp = None
         labels = _active_scenarios(document)
-        predictions[value] = map_scenario_labels(labels).to_dict()
-    return predictions
+        records.append(
+            {
+                "frame_index": value,
+                "timestamp": float(timestamp) if timestamp is not None else None,
+                "prediction": map_scenario_labels(labels).to_dict(),
+            }
+        )
+    return records
+
+
+def load_current_frame_predictions(recording_dir: Path) -> dict[int, dict[str, Any]]:
+    """Return current mapped predictions keyed by their source frame index."""
+    return {
+        int(record["frame_index"]): record["prediction"]
+        for record in _frame_tag_records(recording_dir)
+    }
 
 
 def current_prediction_tags(recording_dir: Path) -> list[str]:
@@ -70,21 +81,57 @@ def apply_current_predictions(
     recording_dir: Path,
     *,
     prefill_unreviewed: bool = True,
+    sample_hz: float = 1.0,
 ) -> int:
-    """Attach current predictions to editor rows and optionally prefill GT.
+    """Attach current frame-tag predictions to GT editor rows.
 
-    Existing reviewed GT always wins.  Prediction-prefilled rows remain
+    The frame-input generator and the frame-tag exporter use different 1-FPS
+    sampling policies. Therefore their sampled source frame indices can differ
+    even when they represent the same instant (for example frame 11 vs frame 10).
+
+    Matching policy:
+    1. exact source-frame index when available;
+    2. otherwise nearest timestamp within half of one requested sample period.
+
+    Existing reviewed GT always wins. Prediction-prefilled rows remain
     ``reviewed=False`` until the annotator explicitly saves/reviews them.
-    Returns the number of rows with an exact frame-index prediction match.
+    Returns the number of rows that received a prediction.
     """
-    predictions = load_current_frame_predictions(recording_dir)
+    records = _frame_tag_records(recording_dir)
+    if not records:
+        return 0
+
+    by_index = {int(record["frame_index"]): record for record in records}
+    timed = [record for record in records if isinstance(record.get("timestamp"), float)]
+    tolerance_s = 0.5 / sample_hz if sample_hz > 0 else 0.5
+
     matched = 0
     for row in rows:
-        prediction = predictions.get(row.get("frame_index"))
+        row_index = row.get("frame_index")
+        record = by_index.get(row_index) if isinstance(row_index, int) else None
+
+        if record is None:
+            row_timestamp = row.get("timestamp")
+            if isinstance(row_timestamp, (int, float)) and not isinstance(row_timestamp, bool) and timed:
+                candidate = min(
+                    timed,
+                    key=lambda item: abs(float(item["timestamp"]) - float(row_timestamp)),
+                )
+                delta = abs(float(candidate["timestamp"]) - float(row_timestamp))
+                if delta <= tolerance_s + 1e-9:
+                    record = candidate
+
+        if record is None:
+            continue
+
+        prediction = record.get("prediction")
         if not isinstance(prediction, dict):
             continue
         matched += 1
         row["prediction"] = prediction
+        row["prediction_source_frame_index"] = record["frame_index"]
+        row["prediction_source_timestamp"] = record.get("timestamp")
         if prefill_unreviewed and row.get("reviewed") is not True:
             row["gt"] = deepcopy(prediction)
+
     return matched
