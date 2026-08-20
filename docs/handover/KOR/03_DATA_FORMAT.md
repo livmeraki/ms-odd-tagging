@@ -117,7 +117,7 @@ BEV 또는 geometry feature를 생성할 때 `ld_feature_store`와 frame-level L
 
 기본 sampling은 1 FPS이다.
 
-현재 active frame reviewer는 각 sampled source frame의 exact BEV를 사용한다. legacy 5-second motional window나 start/middle/end image 묶음을 기본 입력으로 사용하지 않는다.
+각 sampled frame은 해당 source frame의 canonical state를 기반으로 생성되며 GT Workspace와 VLM evidence 구성에 사용된다.
 
 ## 8. Rule Event와 Model Input의 분리
 
