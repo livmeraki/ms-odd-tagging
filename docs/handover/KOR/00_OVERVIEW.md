@@ -14,13 +14,14 @@ STRADVISION에서는 기존에 주행 환경과 주변 조건을 분류하는 OD
 ## 2. 현재 시스템 구조
 
 STRADVISION의 ALT (Auto Labeling Tool)를 통해 생성된 다음 데이터를 주요 입력으로 사용한다.
+
 - OD Annotation: 주변 객체의 위치·종류 등 물체 감지 정보
 - LD Annotation: 차선, 차선 경계, 정지선·횡단보도 등 도로 구조 감지 정보
 - Ego Trajectory: Ego Vehicle의 시간에 따른 위치·진행 방향 변화 정보
 
 이 입력을 이용해 Ego Vehicle의 속도/가감속, 회전, lane 관계, crosswalk/stopline/intersection과의 공간 관계, 주변 객체와의 상호작용을 시간적으로 분석하고 Motional Scenario를 판별한다.
 
-전체 흐름은 다음과 같다.
+현재 기본 실행 흐름은 다음과 같다.
 
 ```text
 OD + LD + Ego Trajectory
@@ -28,14 +29,21 @@ OD + LD + Ego Trajectory
           ▼
    Canonical Data
           │
-    ┌─────┴─────┐
-    ▼           ▼
-Rule / Geometry  VLM-assisted tagging
-    │           │
-    └─────┬─────┘
           ▼
-Motional Scenario Output
+ Frame Input / BEV
+ + Rule-based frame tags
+          │
+          ▼
+ Simplified Taxonomy
+   GT Workspace
+          │
+          ▼
+ Reviewed Manual GT
 ```
+
+Rule / Geometry가 현재 deterministic tagging의 중심이며, 일부 semantic scenario에는 VLM-assisted path가 별도로 존재한다.
+
+`run_pipeline.py`를 기본 option으로 실행하면 input generation 이후 `ms_odd_tagging.simplified_taxonomy.gt_workspace_profiled`가 기본 GT reviewer로 실행된다. unattended/batch run에서는 `--no-gt-workspace`로 이를 생략한다.
 
 ## 3. Scenario 지원 현황
 
@@ -46,6 +54,7 @@ configs/scenario_catalog.csv
 ```
 
 각 scenario가 다음 중 어떤 방식으로 처리되는지 확인할 수 있다.
+
 - `rule`: Rule / Geometry / Temporal logic이 최종 scenario를 판별
 - `vlm`: Rule 기반 candidate selection 후 VLM이 최종 scenario를 판별
 - `unsupported`: 현재 자동 tagging path가 없음
@@ -64,7 +73,10 @@ Scenario별 상세 지원 현황과 상태 기준은 `04_SCENARIO_STATUS.md`를 
   - Rule만으로 판단하기 어려운 일부 scenario에 VLM 기반 판별 적용
 
 - **검토 및 유지보수 환경 구축**
-  - GT Reviewer / Scenario Explorer를 통해 자동 tagging 결과를 직접 확인·비교할 수 있도록 구성
+  - `recording_frame_tags_1fps`의 current prediction을 사용하는 Simplified Taxonomy GT Workspace를 기본 reviewer로 연결
+  - BEV와 prediction이 서로 다른 sampled source frame을 사용할 수 있어 frame index 우선 + timestamp fallback alignment를 적용
+  - reviewed GT를 `outputs/06_gt_comparison/gt`에 autosave
+  - Full ODLD Scenario Explorer를 별도 debugging/visual inspection tool로 유지
   - Scenario별 지원 방식과 현재 상태를 하나의 `scenario_catalog.csv`에서 관리
 
 ## 5. Handover Document Guide
@@ -72,7 +84,7 @@ Scenario별 상세 지원 현황과 상태 기준은 `04_SCENARIO_STATUS.md`를 
 | 순서 | 문서 | 목적 |
 |---:|---|---|
 | 00 | `00_OVERVIEW.md` | 프로젝트 배경, 목적, 구조, 현재 범위 |
-| 01 | `01_SETUP_AND_RUN.md` | 설치, 데이터 경로, 실행 명령 |
+| 01 | `01_SETUP_AND_RUN.md` | 설치, 데이터 경로, 실행 명령, 기본 GT Workspace |
 | 02 | `02_PIPELINE.md` | 단계별 pipeline과 module 관계 |
 | 03 | `03_DATA_FORMAT.md` | OD / LD / Trajectory / Canonical 형식 |
 | 04 | `04_SCENARIO_STATUS.md` | scenario catalog와 구현 상태 |
