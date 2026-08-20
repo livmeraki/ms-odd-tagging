@@ -488,18 +488,3 @@ python scripts/odld_explorer/serve_gt_authoring_explorers.py --help
 ```
 
 위 명령은 data/output path를 사용하지 않으므로 Linux/macOS와 Windows PowerShell에서 동일하다.
-
-## 10. 실행 전 / 문제 발생 시 체크리스트
-
-- Python 3.10+인지 확인
-- package install 또는 `PYTHONPATH=src` 설정
-- `MS_ODD_DATA_ROOT`, `MS_ODD_OUTPUT_ROOT` 설정 확인
-- `$MS_ODD_DATA_ROOT/01_raw/<RECORDING_ID>`에 OD/LD/trajectory가 모두 있는지 확인
-- 첫 실행은 `--frame-limit 1` Smoke Test부터 수행
-- Smoke Test 성공 후 전체 Recording 실행
-- 실행 종료 후 Runtime Summary와 failed recording 확인
-- Full ODLD Scenario Explorer는 `generate_odld_dataset_explorers_w_stage_progress.py` 사용
-- Full ODLD Scenario Explorer 실행 시 `legacy/windows` 또는 `--window-dir`를 사용하지 않음
-- Explorer 결과는 `$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers`에서 확인
-- GT 작성 시 별도 Frame GT Reviewer 대신 Integrated ODLD GT Authoring 사용
-- output을 Git에 commit하지 않기
