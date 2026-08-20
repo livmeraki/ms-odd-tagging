@@ -2,9 +2,9 @@
 
 ## 1. 전체 흐름
 
-현재 repository는 raw OD/LD annotation과 ego trajectory를 공통 canonical representation으로 정합한 뒤, deterministic rule/geometry tagging과 VLM-assisted tagging을 분리하여 수행한다.
+현재 repository는 raw OD/LD annotation과 ego trajectory를 하나의 canonical representation으로 정합한 뒤, deterministic rule/geometry tagging과 VLM-assisted tagging을 수행한다.
 
-VLM은 전체 frame을 직접 판단하는 기본 경로가 아니다. 먼저 Rule / Geometry / Temporal logic으로 **VLM이 필요한 구간(candidate / episode)** 을 좁힌 뒤, 해당 candidate에 대해서만 BEV/evidence를 구성하고 VLM이 최종 semantic 판단을 수행한다.
+VLM은 전체 frame을 직접 판단하는 기본 경로가 아니다. 먼저 Rule / Geometry / Temporal logic으로 **VLM이 필요한 구간(candidate / episode)** 을 좁힌 뒤, 해당 candidate에 대해서만 BEV/evidence를 구성하고 VLM이 semantic 판단을 수행한다.
 
 ```text
 Raw Recording
@@ -13,7 +13,7 @@ Raw Recording
 └── traj_lcs.txt
         │
         ▼
-OD+LD Canonicalization
+OD+LD+Trajectory Canonicalization
         │
         ▼
 outputs/01_canonical
@@ -58,31 +58,51 @@ Scenario Detection  / Episode Selection│
 
 ## 2. Stage 1 — Canonicalization
 
-관련 module:
+공식 entry point:
 
 ```text
-src/ms_odd_tagging/input_generator/canonical.py
-src/ms_odd_tagging/input_generator/canonical_odld.py
+src/ms_odd_tagging/canonical/builder.py
 ```
 
-지원되는 canonical path는 OD+LD 하나이다. `canonical.py`는 별도 mode가 아니라 `canonical_odld.py`가 재사용하는 내부 OD/trajectory core로만 유지한다.
+현재 지원되는 canonical path는 **OD + LD + Ego Trajectory 통합 경로 하나**이다. 과거 `src/ms_odd_tagging/input_generator/canonical.py`, `canonical_odld.py`는 compatibility alias였으며 cleanup branch에서 제거했다.
 
-Canonicalization은 raw OD, LD, trajectory를 frame 기준으로 동기화하고 LD feature store 및 frame-level nearby feature reference를 구성한다.
+Canonicalization은 다음 세 입력을 함께 정합한다.
+
+```text
+annotations_OD.json
+annotations_LD.json
+traj_lcs.txt
+```
+
+주요 역할:
+
+- OD object state와 ego trajectory frame alignment
+- ego speed / acceleration / yaw-rate 등 기본 motion state 구성
+- recording-level LD geometry normalization
+- `ld_feature_store` 구성
+- frame별 nearby LD feature reference 구성
+- downstream rule/geometry/VLM candidate 단계가 공유하는 canonical frame sequence 생성
+
+현재 active canonical schema:
+
+```text
+odld-trajectory-canonical-frame-v1
+```
 
 주요 contract:
 
-- OD schema: `od-trajectory-canonical-frame-v1`
-- OD+LD schema: `odld-trajectory-canonical-frame-v1`
-- 숫자 0은 valid data이며 `null`로 변환하면 안 된다.
-- OD+LD BEV에는 `ld_feature_store`와 frame-level `ld.nearby_feature_ids`가 모두 필요하다.
+- 숫자 `0`은 valid data이며 `null`로 변환하면 안 된다.
+- source frame index와 trajectory alignment를 보존한다.
+- complete LD geometry는 recording-wide `ld_feature_store`에 저장한다.
+- 각 frame은 `ld.nearby_feature_ids` 등 compact reference를 사용한다.
+- downstream code는 별도 OD-only canonical schema를 전제로 하지 않는다.
 
 ## 3. Stage 2 — Frame Input / BEV
 
-관련 module:
+공식 module:
 
 ```text
-src/ms_odd_tagging/input_generator/frame_input.py
-src/ms_odd_tagging/input_generator/frame_input_revised.py
+src/ms_odd_tagging/frame_inputs/builder.py
 ```
 
 기본 pipeline은 real timestamp 기준 1 FPS로 frame을 선택해 각 timestamp마다 독립적인:
@@ -92,9 +112,7 @@ src/ms_odd_tagging/input_generator/frame_input_revised.py
 
 를 생성한다.
 
-과거의 5초 window + start/middle/end keyframe 방식은 legacy helper로 남아 있으나 현재 frame reviewer와 active input pipeline의 기본 방식은 아니다.
-
-`frame_input_revised.py`는 additive experiment이며 기존 generator를 대체하지 않는다.
+과거 5초 window + start/middle/end keyframe 방식은 legacy helper이며 현재 active frame reviewer와 input pipeline의 기본 방식이 아니다.
 
 ## 4. Rule-based Feature Extraction
 
@@ -112,7 +130,7 @@ src/ms_odd_tagging/features/traffic_relations.py
 src/ms_odd_tagging/features/traffic_light_context.py
 ```
 
-각 detector가 raw JSON 구조를 중복 해석하지 않고, 먼저 계산된 공통 relation/feature를 재사용하는 방향으로 구성되어 있다.
+각 detector가 raw JSON을 다시 해석하지 않고 canonical data와 공통 feature/relation을 재사용하는 방향으로 구성되어 있다.
 
 ## 5. Rule-based Scenario Detection
 
@@ -137,7 +155,7 @@ traffic_interactions.py
 
 registry는 configuration의 `enabled_scenarios`와 detector mapping을 기준으로 전체 recording을 평가하고 시간 구간을 가진 `ScenarioEvent`를 생성한다.
 
-Deterministic rule로 충분히 판별 가능한 scenario는 이 단계에서 최종 결과가 결정된다. VLM이 필요한 scenario는 별도 candidate selection 단계로 넘긴다.
+Deterministic rule로 충분히 판별 가능한 scenario는 이 단계에서 최종 결과가 결정된다. VLM이 필요한 scenario는 candidate selection 단계로 넘긴다.
 
 ## 6. Event Segmentation
 
@@ -160,7 +178,7 @@ src/ms_odd_tagging/tagger/rule_based/event_segmentation.py
 src/ms_odd_tagging/tagger/rule_based/scenario_event.py
 ```
 
-## 7. Lane / Topology 관련 별도 기능
+## 7. Lane / Topology
 
 Lane 이해는 여러 scenario의 기반 기능이다.
 
@@ -209,8 +227,6 @@ Canonical + Rule/Geometry Feature
 src/ms_odd_tagging/qwen_vlm_poc/
 ```
 
-`qwen_vlm_poc`에는 candidate generation, evidence construction, prompt, validation, merging, visualization이 분리되어 있다.
-
 현재 configuration의 VLM group은 다음과 같이 관리된다.
 
 ```text
@@ -219,7 +235,7 @@ starting_u_turn
 traffic_light_episode
 ```
 
-`traffic_light_episode`는 하나의 candidate/episode에서 traffic-light 관련 여러 최종 scenario를 판별하기 위한 group이다. 현재 group에 포함되는 label은 `qwen_vlm_poc/config.py`와 `configs/scenario_catalog.csv`를 source of truth로 확인한다.
+`traffic_light_episode`는 하나의 candidate/episode에서 traffic-light 관련 여러 최종 scenario를 판별하기 위한 group이다. 실제 label 목록은 `qwen_vlm_poc/config.py`와 `configs/scenario_catalog.csv`를 source of truth로 확인한다.
 
 현재 config의 주요 candidate window 관련 값 예시는 다음과 같다.
 
@@ -231,17 +247,13 @@ acceptance_threshold = 0.72
 review_threshold = 0.45
 ```
 
-이 값은 실험/설정에 따라 변경될 수 있으므로 문서에 적힌 숫자보다 실제 config를 우선한다.
-
-권장 원칙은 다음과 같다.
+문서의 숫자보다 실제 config를 우선한다.
 
 > 계산 가능한 scenario를 VLM에 먼저 맡기지 않는다. Rule/geometry로 candidate와 evidence를 만들고, 의미적 판단이 필요한 candidate에만 VLM을 적용한다.
 
-즉, VLM은 전체 recording의 모든 frame을 brute-force로 inference하는 단계가 아니라, deterministic pipeline이 좁힌 **candidate/episode의 semantic verifier/classifier**에 가깝다.
-
 ## 9. Frame-level Tag Export / GT Workspace
 
-Rule/VLM 결과는 평가 및 reviewer에서 사용할 수 있도록 frame-level tag로 변환한다.
+Rule/VLM 결과는 평가와 reviewer에서 사용할 수 있도록 frame-level tag로 변환한다.
 
 현재 1 FPS frame tag output:
 
@@ -257,7 +269,7 @@ outputs/02_frame_inputs/<RECORDING_ID>/recording_frame_tags_1fps/
 src/ms_odd_tagging/simplified_taxonomy/
 ```
 
-GT Workspace는 current `recording_frame_tags_1fps` prediction을 simplified taxonomy로 mapping하여 prediction reference로 표시하고, 아직 review하지 않은 frame에는 prediction을 prefill한다. 단, 사람이 `Save` 또는 `Save + Next`를 수행하기 전까지 해당 frame은 reviewed GT로 간주하지 않는다.
+GT Workspace는 current `recording_frame_tags_1fps` prediction을 simplified taxonomy로 mapping하여 prediction reference로 표시하고, 아직 review하지 않은 frame에는 prediction을 prefill한다. 사람이 `Save` 또는 `Save + Next`를 수행하기 전까지 해당 frame은 reviewed GT로 간주하지 않는다.
 
 Frame Input과 frame-tag export의 1 FPS sampling frame index가 다를 수 있으므로 prediction alignment는 exact frame index를 우선하고, exact match가 없으면 timestamp 기준 nearest match를 사용한다.
 
@@ -276,6 +288,8 @@ GT comparison은 사람이 작성한 GT와 자동 결과를 matching하여 metri
 
 ## 11. Pipeline 설계 시 유지해야 할 계약
 
+- canonical input은 OD + LD + Ego Trajectory 통합 경로 하나로 유지한다.
+- 별도 OD-only canonical schema를 active contract로 만들지 않는다.
 - model input에 rule-derived answer를 직접 넣지 않는다.
 - VLM은 전체 frame brute-force inference가 아니라 candidate/episode selection 이후 필요한 구간에만 적용한다.
 - VLM candidate selection과 VLM final judgment를 구분한다.
