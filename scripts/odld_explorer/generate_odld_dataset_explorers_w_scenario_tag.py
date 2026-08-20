@@ -35,6 +35,12 @@ from odld_explorer_common import (
     row_has_valid_manifest_metadata,
     select_canonical_paths,
 )
+from ms_odd_tagging.common.config import (
+    CANONICAL,
+    DATA_RAW,
+    ODLD_SCENARIO_EXPLORERS,
+    WINDOWS,
+)
 from ms_odd_tagging.common.progress import ProgressReporter
 from ms_odd_tagging.features.ego_motion import extract_ego_motion_features
 from ms_odd_tagging.features.road_feature_relations import (
@@ -59,21 +65,11 @@ from ms_odd_tagging.scenarios.following_lane.explorer_visualization import (
 )
 
 
-DEFAULT_SOURCE_ROOT = Path(
-    "2600_MV2_ODLD_traj_annotations/2600_MV2_ODLD_traj_annotations"
-)
-DEFAULT_CANONICAL_DIR = Path(
-    "quick_exploration_outputs/scenario_tagging_pipeline_odld/01_canonical_frames"
-)
-DEFAULT_WINDOW_DIR = Path(
-    "quick_exploration_outputs/scenario_tagging_pipeline_odld/02_motional_windows"
-)
-DEFAULT_OUTPUT_DIR = Path(
-    "quick_exploration_outputs/dataset_scene_explorers_odld_w_scenario_tag"
-)
-DEFAULT_INDEX_PATH = Path(
-    "quick_exploration_outputs/dataset_odld_explorer_w_scenario_tag_index.html"
-)
+DEFAULT_SOURCE_ROOT = DATA_RAW
+DEFAULT_CANONICAL_DIR = CANONICAL
+DEFAULT_WINDOW_DIR = WINDOWS
+DEFAULT_OUTPUT_DIR = ODLD_SCENARIO_EXPLORERS
+DEFAULT_INDEX_PATH = ODLD_SCENARIO_EXPLORERS / "index.html"
 DEFAULT_LD_TOPOLOGY_CONFIG = Path("configs/ld_topology.json")
 EXPLORER_DATA_MARKER = re.compile(r"const DATA = (\{.*?\});\s*const ", re.DOTALL)
 HIDDEN_VISUALIZATION_SCENARIOS = {"high_magnitude_jerk"}
