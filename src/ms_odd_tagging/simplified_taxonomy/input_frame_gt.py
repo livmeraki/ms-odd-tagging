@@ -34,14 +34,6 @@ def _sample_rows_by_time(
     source_hz: float,
     sample_hz: float,
 ) -> list[dict[str, Any]]:
-    """Sample generated rows on a timestamp grid without assuming frame_index cadence.
-
-    frame_inputs_revised is itself commonly generated at 1 fps using timestamps, so
-    generated frame indices need not be exact multiples of 10 (for example 0, 11,
-    21, ...). Applying ``frame_index % 10`` a second time drops valid frames. This
-    helper keeps every already-generated 1 fps frame, while still allowing an
-    all-frame input tree to be downsampled to the requested rate.
-    """
     if not rows:
         return []
 
@@ -63,7 +55,6 @@ def _sample_rows_by_time(
                 next_sample_time += period_s
         return selected
 
-    # Timestamp is normally available. Keep a deterministic fallback for old files.
     step = max(1, round(source_hz / sample_hz))
     return [row for pos, row in enumerate(rows) if pos % step == 0]
 
@@ -74,13 +65,7 @@ def discover_completed_rows(
     source_hz: float = 10.0,
     sample_hz: float = 1.0,
 ) -> list[dict[str, Any]]:
-    """Snapshot fully readable input frames without modifying generator output.
-
-    A frame is considered usable only when both frame.json and bev_revised.png exist
-    and frame.json parses successfully. Sampling is timestamp-based, not based on
-    ``frame_index % N``, because revised frame inputs may already have been sampled
-    on a timestamp grid and therefore have non-uniform source-frame index gaps.
-    """
+    """Return readable current frame inputs without modifying generator output."""
     if source_hz <= 0 or sample_hz <= 0:
         raise ValueError("source_hz and sample_hz must be positive")
     if not recording_dir.is_dir():
@@ -91,7 +76,7 @@ def discover_completed_rows(
         if not frame_dir.is_dir():
             continue
         frame_json = frame_dir / "frame.json"
-        bev_png = frame_dir / "bev_revised.png"
+        bev_png = frame_dir / "bev.png"
         if not frame_json.is_file() or not bev_png.is_file():
             continue
         try:
@@ -125,15 +110,9 @@ def generate_review_from_input_frames(
     source_hz: float = 10.0,
     sample_hz: float = 1.0,
 ) -> Path:
-    rows = discover_completed_rows(
-        recording_dir,
-        source_hz=source_hz,
-        sample_hz=sample_hz,
-    )
+    rows = discover_completed_rows(recording_dir, source_hz=source_hz, sample_hz=sample_hz)
     if not rows:
-        raise ValueError(
-            "no completed frames found; expected frame_XXXXXX/frame.json and bev_revised.png"
-        )
+        raise ValueError("no completed frames found; expected frame_XXXXXX/frame.json and bev.png")
     output_html.parent.mkdir(parents=True, exist_ok=True)
     output_html.write_text(_html(rows, recording_dir.name, sample_hz), encoding="utf-8")
     return output_html
@@ -141,15 +120,12 @@ def generate_review_from_input_frames(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Generate manual GT HTML directly from completed frame_inputs_revised folders. "
-            "The source recording directory is read-only and incomplete frames are skipped."
-        )
+        description="Generate manual GT HTML from current outputs/02_frame_inputs recording folders."
     )
     parser.add_argument(
         "recording_dir",
         type=Path,
-        help="outputs/02_frame_inputs_revised/<recording>",
+        help="outputs/02_frame_inputs/<recording>",
     )
     parser.add_argument(
         "--output",
@@ -169,18 +145,12 @@ def main() -> int:
         sample_hz=args.sample_hz,
     )
     if not rows:
-        raise SystemExit(
-            "No completed frames found. Waiting/incomplete frame folders were not touched."
-        )
+        raise SystemExit("No completed frames found. Incomplete frame folders were skipped.")
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        _html(rows, args.recording_dir.name, args.sample_hz),
-        encoding="utf-8",
-    )
-    print(f"Completed input frames in snapshot: {len(rows)}")
+    args.output.write_text(_html(rows, args.recording_dir.name, args.sample_hz), encoding="utf-8")
+    print(f"Completed input frames: {len(rows)}")
     print(f"Frame range: {rows[0]['frame_index']}..{rows[-1]['frame_index']}")
     print(f"Manual GT review: {args.output}")
-    print("Source recording directory was read-only; incomplete frames were skipped.")
     return 0
 
 
