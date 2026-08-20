@@ -3,119 +3,130 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+from copy import deepcopy
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
 from .input_frame_gt import discover_completed_rows
-from .input_frame_gt_server import (
-    _existing_gt_by_frame,
-    _inject_bulk_yes_no,
-    _inject_equal_height_sidebar,
-    _prepare_rows,
-)
+from .input_frame_gt_server import _blank_gt, _existing_gt_by_frame, _inject_bulk_yes_no
 from .manual_gt import _html
+from .mapper import map_scenario_labels
 
-
-def _sampled_frame_indices(recording_dir: Path, source_hz: float, sample_hz: float) -> list[int]:
-    """Use the same timestamp-based sampling as the editor itself."""
-    try:
-        rows = discover_completed_rows(
-            recording_dir,
-            source_hz=source_hz,
-            sample_hz=sample_hz,
-        )
-    except ValueError:
-        return []
-    return [row["frame_index"] for row in rows]
-
-
-def _prediction_path(prediction_root: Path, recording: str) -> Path:
-    return prediction_root / f"{recording}_simplified_prediction.json"
+FRAME_TAG_DIRNAME = "recording_frame_tags_1fps"
 
 
 def _gt_path(gt_root: Path, recording: str) -> Path:
     return gt_root / f"{recording}_manual_gt.json"
 
 
-def _gt_document_meta(path: Path) -> dict:
-    if not path.is_file():
-        return {"gt_finished": False}
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"gt_finished": False}
-    if not isinstance(document, dict):
-        return {"gt_finished": False}
-    return {"gt_finished": document.get("gt_finished") is True}
+def _frame_tag_records(recording_dir: Path) -> list[dict]:
+    directory = recording_dir / FRAME_TAG_DIRNAME
+    if not directory.is_dir():
+        return []
 
-
-def _prediction_tags(path: Path) -> list[str]:
-    """Collect recording-level scenario/object-related tags from prediction output."""
-    if not path.is_file():
-        return []
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(document, dict):
-        return []
-    frames = next(
-        (
-            document.get(key)
-            for key in ("frames", "frame_tags", "results")
-            if isinstance(document.get(key), list)
-        ),
-        None,
-    )
-    if not isinstance(frames, list):
-        return []
-    tags: set[str] = set()
-    for frame in frames:
-        if not isinstance(frame, dict):
+    records: list[dict] = []
+    for path in sorted(directory.glob("frame_*.json")):
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
             continue
-        for key in ("scenario_tags", "scenarios", "tags", "scenario_labels", "tagged_scenarios"):
-            scenario_tags = frame.get(key)
-            if not isinstance(scenario_tags, list):
-                continue
-            for tag in scenario_tags:
-                if isinstance(tag, str) and tag:
-                    tags.add(tag)
-                elif isinstance(tag, dict):
-                    label = tag.get("scenario") or tag.get("name") or tag.get("label")
-                    if isinstance(label, str) and label:
-                        tags.add(label)
-        simplified = frame.get("simplified_tags")
-        if isinstance(simplified, dict):
-            for key in ("interaction_tags", "source_scenarios", "unmapped_scenarios"):
-                values = simplified.get(key)
-                if isinstance(values, list):
-                    tags.update(tag for tag in values if isinstance(tag, str) and tag)
+        if not isinstance(document, dict):
+            continue
+
+        frame_index = document.get("frame", document.get("frame_index"))
+        if not isinstance(frame_index, int):
+            continue
+
+        timestamp = document.get("timestamp_s")
+        if not isinstance(timestamp, (int, float)) or isinstance(timestamp, bool):
+            timestamp = None
+
+        motional = ((document.get("tags") or {}).get("motional_scenarios") or {})
+        if not isinstance(motional, dict):
+            motional = {}
+        labels = sorted(str(name) for name, active in motional.items() if active is True)
+
+        records.append(
+            {
+                "frame_index": frame_index,
+                "timestamp": float(timestamp) if timestamp is not None else None,
+                "labels": labels,
+                "prediction": map_scenario_labels(labels).to_dict(),
+            }
+        )
+    return records
+
+
+def _prediction_tags(recording_dir: Path) -> list[str]:
+    tags: set[str] = set()
+    for record in _frame_tag_records(recording_dir):
+        tags.update(record["labels"])
     return sorted(tags)
 
 
-def _recording_summary(
-    recording_dir: Path,
-    prediction_root: Path,
-    gt_root: Path,
-    source_hz: float,
-    sample_hz: float,
-) -> dict:
+def _prepare_rows(rows: list[dict], recording_dir: Path, gt_path: Path, sample_hz: float) -> int:
+    existing_gt = _existing_gt_by_frame(gt_path)
+    records = _frame_tag_records(recording_dir)
+    by_index = {record["frame_index"]: record for record in records}
+    timed = [record for record in records if isinstance(record.get("timestamp"), float)]
+    tolerance_s = 0.5 / sample_hz if sample_hz > 0 else 0.5
+
+    matched = 0
+    for row in rows:
+        frame_index = row["frame_index"]
+        record = by_index.get(frame_index)
+
+        if record is None and timed:
+            row_timestamp = row.get("timestamp")
+            if isinstance(row_timestamp, (int, float)) and not isinstance(row_timestamp, bool):
+                candidate = min(
+                    timed,
+                    key=lambda item: abs(float(item["timestamp"]) - float(row_timestamp)),
+                )
+                if abs(float(candidate["timestamp"]) - float(row_timestamp)) <= tolerance_s + 1e-9:
+                    record = candidate
+
+        prediction = record["prediction"] if record is not None else {}
+        row["prediction"] = prediction
+        if record is not None:
+            matched += 1
+            row["prediction_source_frame_index"] = record["frame_index"]
+            row["prediction_source_timestamp"] = record.get("timestamp")
+
+        if frame_index in existing_gt:
+            row["gt"] = existing_gt[frame_index]
+            row["reviewed"] = True
+        else:
+            row["gt"] = deepcopy(prediction) if prediction else _blank_gt()
+            row["reviewed"] = False
+
+    return matched
+
+
+def _gt_finished(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(document, dict) and document.get("gt_finished") is True
+
+
+def _recording_summary(recording_dir: Path, gt_root: Path, source_hz: float, sample_hz: float) -> dict:
     recording = recording_dir.name
-    sampled = _sampled_frame_indices(recording_dir, source_hz, sample_hz)
+    try:
+        rows = discover_completed_rows(recording_dir, source_hz=source_hz, sample_hz=sample_hz)
+    except ValueError:
+        rows = []
     gt_path = _gt_path(gt_root, recording)
-    prediction_path = _prediction_path(prediction_root, recording)
     gt_by_frame = _existing_gt_by_frame(gt_path)
-    gt_meta = _gt_document_meta(gt_path)
-    reviewed = sum(1 for idx in sampled if idx in gt_by_frame)
-    total = len(sampled)
-    if total and reviewed >= total:
-        status = "done"
-    elif reviewed:
-        status = "in_progress"
-    else:
-        status = "not_started"
+    reviewed = sum(1 for row in rows if row["frame_index"] in gt_by_frame)
+    total = len(rows)
+    status = "done" if total and reviewed >= total else "in_progress" if reviewed else "not_started"
+    prediction_dir = recording_dir / FRAME_TAG_DIRNAME
     return {
         "recording": recording,
         "total": total,
@@ -123,9 +134,9 @@ def _recording_summary(
         "remaining": max(0, total - reviewed),
         "percent": round(100.0 * reviewed / total, 1) if total else 0.0,
         "status": status,
-        "gt_finished": gt_meta["gt_finished"],
-        "prediction": prediction_path.is_file(),
-        "object_tags": _prediction_tags(prediction_path),
+        "gt_finished": _gt_finished(gt_path),
+        "prediction": prediction_dir.is_dir(),
+        "object_tags": _prediction_tags(recording_dir),
     }
 
 
@@ -134,48 +145,27 @@ def _dashboard_html() -> str:
 <html><head><meta charset="utf-8"><title>GT Workspace</title>
 <style>
 *{box-sizing:border-box}html,body{height:100%;margin:0;font-family:Arial,sans-serif;background:#0b1020;color:#e5e7eb}
-#app{height:100%;display:grid;grid-template-columns:310px 1fr;overflow:hidden}
-aside{height:100%;min-height:0;background:#111827;border-right:1px solid #334155;display:flex;flex-direction:column;min-width:0;overflow:hidden}
-.brand{flex:0 0 auto;padding:16px;border-bottom:1px solid #334155}.brand h2{margin:0 0 5px}.muted{color:#94a3b8;font-size:12px}
-.controls{flex:0 0 auto;padding:10px;border-bottom:1px solid #334155;display:grid;gap:8px}input,select{width:100%;padding:8px;border-radius:7px;border:1px solid #475569;background:#1f2937;color:#e5e7eb}
-.selection-actions{flex:0 0 auto;padding:8px 10px;border-bottom:1px solid #334155;display:grid;grid-template-columns:1fr 1fr;gap:6px}.selection-actions button{padding:7px 8px;background:#273449;color:#e5e7eb;border:1px solid #475569;border-radius:7px;cursor:pointer}.selection-actions #exportRecordings{grid-column:1/-1;background:#1d4ed8;border-color:#3b82f6}.selection-actions button:disabled{opacity:.45;cursor:not-allowed}
-#selectionCount{grid-column:1/-1;font-size:12px;color:#cbd5e1}
-.recording-select{width:14px;height:14px;margin:0 7px 0 0;padding:0;vertical-align:-2px;accent-color:#38bdf8}
-#summary{font-size:12px;color:#cbd5e1}.list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:6px;scrollbar-gutter:stable}.list::-webkit-scrollbar{width:11px}.list::-webkit-scrollbar-track{background:#0f172a}.list::-webkit-scrollbar-thumb{background:#475569;border-radius:8px;border:2px solid #0f172a}.list::-webkit-scrollbar-thumb:hover{background:#64748b}.rec{width:100%;text-align:left;background:#182235;color:#e5e7eb;border:1px solid transparent;border-radius:8px;padding:9px;margin:3px 0;cursor:pointer}.rec:hover{border-color:#475569}.rec.active{border-color:#38bdf8;background:#172033}.rec.missing{opacity:.55}.top{display:flex;justify-content:space-between;gap:8px}.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:600}.pct{font-size:11px;color:#cbd5e1}.bar{height:5px;background:#334155;border-radius:4px;overflow:hidden;margin-top:6px}.fill{height:100%;background:#38bdf8}.meta{margin-top:5px;font-size:11px;color:#94a3b8}.tags{margin-top:5px;font-size:10px;color:#7dd3fc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dot{font-weight:bold}.done .dot{color:#22c55e}.in_progress .dot{color:#f59e0b}.not_started .dot{color:#64748b}
-main{height:100%;min-width:0;display:flex;flex-direction:column}.mainbar{height:48px;flex:0 0 48px;padding:8px 14px;background:#0f172a;border-bottom:1px solid #334155;display:flex;align-items:center;justify-content:space-between;gap:12px}.mainbar-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}.mainbar button{padding:7px 10px;background:#334155;color:white;border:1px solid #475569;border-radius:7px;cursor:pointer}.finish-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:#cbd5e1;white-space:nowrap}.finish-toggle input{width:auto;margin:0;accent-color:#22c55e}.finish-mark{color:#22c55e;font-weight:800;margin-right:4px}.rec.gt-finished{border-color:#166534}.rec.gt-finished .name{color:#dcfce7}#current{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.frame{flex:1;width:100%;border:0;background:#111827}.empty{flex:1;display:flex;align-items:center;justify-content:center;color:#64748b}
-@media(max-width:900px){#app{grid-template-columns:240px 1fr}}
+#app{height:100%;display:grid;grid-template-columns:300px 1fr;overflow:hidden}
+aside{min-height:0;background:#111827;border-right:1px solid #334155;display:flex;flex-direction:column}
+header{padding:14px;border-bottom:1px solid #334155}h2{margin:0 0 5px}.muted{font-size:12px;color:#94a3b8}
+.controls{padding:9px;border-bottom:1px solid #334155;display:grid;gap:7px}input,select{width:100%;padding:8px;border:1px solid #475569;border-radius:6px;background:#1f2937;color:#e5e7eb}
+#summary{font-size:11px;color:#cbd5e1}.list{flex:1;min-height:0;overflow:auto;padding:6px}.rec{width:100%;text-align:left;padding:9px;margin:3px 0;border:1px solid transparent;border-radius:7px;background:#182235;color:#e5e7eb;cursor:pointer}.rec:hover,.rec.active{border-color:#38bdf8}.rec.missing{opacity:.55}.name{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.meta{font-size:11px;color:#94a3b8;margin-top:4px}.bar{height:5px;background:#334155;border-radius:4px;overflow:hidden;margin-top:5px}.fill{height:100%;background:#38bdf8}
+main{height:100%;min-width:0;display:flex;flex-direction:column}.mainbar{height:48px;flex:0 0 48px;padding:8px 12px;background:#0f172a;border-bottom:1px solid #334155;display:flex;align-items:center;justify-content:space-between;gap:8px}.mainbar button{padding:7px 10px;background:#334155;color:white;border:1px solid #475569;border-radius:6px;cursor:pointer}.finish{font-size:12px;color:#cbd5e1}.frame{flex:1;min-height:0;width:100%;border:0;background:#111827}.empty{flex:1;display:flex;align-items:center;justify-content:center;color:#64748b}
+@media(max-width:850px){#app{grid-template-columns:230px 1fr}}
 </style></head><body><div id="app">
-<aside><div class="brand"><h2>GT Workspace</h2><div class="muted">All recordings · one autosave server</div></div>
-<div class="controls"><input id="search" placeholder="Search file / recording name"><select id="objectFilter"><option value="">All object/scenario tags</option></select><select id="filter"><option value="all">All</option><option value="unfinished" selected>Unfinished</option><option value="gt_unfinished">GT not finished</option><option value="gt_finished">GT finished ✓</option><option value="not_started">Not started</option><option value="in_progress">In progress</option><option value="done">Done</option><option value="missing_prediction">Missing prediction</option></select><div id="summary"></div></div>
-<div class="selection-actions"><button id="selectVisible" type="button">Select visible</button><button id="clearSelection" type="button">Clear selected</button><button id="exportRecordings" type="button">Export recordings</button><div id="selectionCount"></div></div>
+<aside><header><h2>GT Workspace</h2><div class="muted">current frame inputs + current 1 FPS tags</div></header>
+<div class="controls"><input id="search" placeholder="Search recording"><select id="filter"><option value="unfinished">Unfinished</option><option value="all">All</option><option value="not_started">Not started</option><option value="in_progress">In progress</option><option value="done">Done</option><option value="missing_prediction">Missing prediction</option></select><div id="summary"></div></div>
 <div id="list" class="list"></div></aside>
-<main><div class="mainbar"><div id="current">Choose a recording</div><div class="mainbar-actions"><label class="finish-toggle"><input id="finishToggle" type="checkbox" disabled onchange="setGtFinished(this.checked)"> GT finished</label><button onclick="refresh()">Refresh</button><button onclick="nextUnfinished()">Next unfinished →</button></div></div><div id="empty" class="empty">Select a recording from the left.</div><iframe id="editor" class="frame" style="display:none"></iframe></main>
+<main><div class="mainbar"><div id="current">Choose a recording</div><div><label class="finish"><input id="finishToggle" type="checkbox" disabled> GT finished</label> <button id="refresh">Refresh</button> <button id="next">Next unfinished →</button></div></div><div id="empty" class="empty">Select a recording.</div><iframe id="editor" class="frame" style="display:none"></iframe></main>
 </div><script>
-let recordings=[],selected=null,selectedRecordings=new Set(),selectionInitialized=false;
-async function refresh(){
-  recordings=await fetch('/api/recordings').then(r=>r.json());
-  const available=new Set(recordings.map(r=>r.recording));
-  selectedRecordings=new Set([...selectedRecordings].filter(name=>available.has(name)));
-  if(!selectionInitialized){selectedRecordings=new Set(available);selectionInitialized=true;} populateObjectFilter(); renderList();
-  if(selected && recordings.some(r=>r.recording===selected)){selectRecording(selected,false);}
-}
-function populateObjectFilter(){const select=document.getElementById('objectFilter');const previous=select.value;const tags=[...new Set(recordings.flatMap(r=>Array.isArray(r.object_tags)?r.object_tags:[]))].sort();select.innerHTML='<option value="">All object/scenario tags</option>';for(const tag of tags){const option=document.createElement('option');option.value=tag;option.textContent=tag;select.appendChild(option);}if(tags.includes(previous))select.value=previous;}
-function visible(r){const q=document.getElementById('search').value.trim().toLowerCase(),f=document.getElementById('filter').value,tag=document.getElementById('objectFilter').value;if(q&&!r.recording.toLowerCase().includes(q))return false;if(tag&&!(r.object_tags||[]).includes(tag))return false;if(f==='unfinished'&&r.status==='done')return false;if(f==='gt_unfinished'&&r.gt_finished)return false;if(f==='gt_finished'&&!r.gt_finished)return false;if(f==='missing_prediction'&&r.prediction)return false;if(['not_started','in_progress','done'].includes(f)&&r.status!==f)return false;return true;}
-function renderList(){const list=document.getElementById('list');list.innerHTML='';const shown=recordings.filter(visible);for(const r of shown){const b=document.createElement('button');b.className=`rec ${r.status} ${r.prediction?'':'missing'} ${r.gt_finished?'gt-finished':''} ${selected===r.recording?'active':''}`;b.onclick=()=>selectRecording(r.recording,true);const mark=r.gt_finished?'<span class="finish-mark">✓</span>':'';const activeTag=document.getElementById('objectFilter').value;const tagLine=activeTag?`<div class="tags">tag: ${activeTag}</div>`:'';b.innerHTML=`<div class="top"><span class="name">${mark}<span class="dot">●</span> ${r.recording}</span><span class="pct">${r.percent}%</span></div><div class="bar"><div class="fill" style="width:${r.percent}%"></div></div><div class="meta">${r.reviewed}/${r.total} reviewed${r.gt_finished?' · GT finished ✓':''}${r.prediction?'':' · no prediction'}</div>${tagLine}`;list.appendChild(b);}const done=recordings.filter(r=>r.status==='done').length, finished=recordings.filter(r=>r.gt_finished).length;const reviewed=recordings.reduce((a,r)=>a+r.reviewed,0), total=recordings.reduce((a,r)=>a+r.total,0);document.getElementById('summary').textContent=`showing ${shown.length}/${recordings.length} · ${finished}/${recordings.length} GT finished · ${done}/${recordings.length} frame-complete · ${reviewed}/${total} frames`;}
-function selectRecording(name,reload){selected=name;const r=recordings.find(x=>x.recording===name);document.getElementById('current').textContent=r?`${r.gt_finished?'✓ ':''}${name} · ${r.reviewed}/${r.total}`:name;const toggle=document.getElementById('finishToggle');toggle.disabled=!r;toggle.checked=!!r?.gt_finished;document.getElementById('empty').style.display='none';const f=document.getElementById('editor');f.style.display='block';const url='/editor/'+encodeURIComponent(name);if(reload||!f.src.endsWith(url))f.src=url;renderList();}
-function updateSelectionCount(){document.getElementById('selectionCount').textContent=`${selectedRecordings.size}/${recordings.length} selected`;document.getElementById('exportRecordings').disabled=selectedRecordings.size===0;}
-function decorateRecordingSelections(){const shown=recordings.filter(visible),buttons=[...document.querySelectorAll('#list .rec')];buttons.forEach((button,index)=>{const recording=shown[index];if(!recording)return;const input=document.createElement('input');input.type='checkbox';input.className='recording-select';input.setAttribute('aria-label',`Select ${recording.recording}`);input.checked=selectedRecordings.has(recording.recording);input.addEventListener('click',event=>event.stopPropagation());input.addEventListener('change',()=>{if(input.checked)selectedRecordings.add(recording.recording);else selectedRecordings.delete(recording.recording);updateSelectionCount();});button.querySelector('.name')?.prepend(input);});}
-const renderRecordingList=renderList;renderList=function(){renderRecordingList();decorateRecordingSelections();updateSelectionCount();};
-function selectVisibleRecordings(){selectedRecordings=new Set(recordings.filter(visible).map(r=>r.recording));renderList();}
-function clearSelectedRecordings(){selectedRecordings.clear();renderList();}
-function exportRecordings(){const chosen=recordings.filter(r=>selectedRecordings.has(r.recording));if(!chosen.length)return;const payload={schema_version:'gt-workspace-recording-selection-v1',exported_at:new Date().toISOString(),recording_count:chosen.length,recordings:chosen.map(r=>r.recording)};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)+'\n'],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='selected_recordings.json';a.style.display='none';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);}
-document.getElementById('selectVisible').addEventListener('click',selectVisibleRecordings);
-document.getElementById('clearSelection').addEventListener('click',clearSelectedRecordings);
-document.getElementById('exportRecordings').addEventListener('click',exportRecordings);
-async function setGtFinished(value){if(!selected)return;const response=await fetch('/finish/'+encodeURIComponent(selected),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gt_finished:!!value})});if(!response.ok){alert('Failed to save GT finished status.');const r=recordings.find(x=>x.recording===selected);document.getElementById('finishToggle').checked=!!r?.gt_finished;return;}const r=recordings.find(x=>x.recording===selected);if(r)r.gt_finished=!!value;selectRecording(selected,false);}
-function nextUnfinished(){const unfinished=recordings.filter(r=>!r.gt_finished&&r.total>0&&visible(r));if(!unfinished.length)return;let idx=selected?unfinished.findIndex(r=>r.recording===selected):-1;selectRecording(unfinished[(idx+1+unfinished.length)%unfinished.length].recording,true);}
-document.getElementById('search').addEventListener('input',renderList);document.getElementById('objectFilter').addEventListener('change',renderList);document.getElementById('filter').addEventListener('change',renderList);
-window.addEventListener('message',async e=>{if(!e.data||!['gt-saved','gt-complete'].includes(e.data.type))return;await refresh();});
+let recordings=[],selected=null;
+function visible(r){const q=document.getElementById('search').value.trim().toLowerCase(),f=document.getElementById('filter').value;if(q&&!r.recording.toLowerCase().includes(q))return false;if(f==='unfinished'&&r.status==='done')return false;if(f==='missing_prediction'&&r.prediction)return false;if(['not_started','in_progress','done'].includes(f)&&r.status!==f)return false;return true;}
+function render(){const list=document.getElementById('list');list.innerHTML='';const shown=recordings.filter(visible);for(const r of shown){const b=document.createElement('button');b.className=`rec ${r.prediction?'':'missing'} ${selected===r.recording?'active':''}`;b.onclick=()=>selectRecording(r.recording,true);b.innerHTML=`<div class="name">${r.gt_finished?'✓ ':''}${r.recording}</div><div class="bar"><div class="fill" style="width:${r.percent}%"></div></div><div class="meta">${r.reviewed}/${r.total} reviewed · ${r.percent}%${r.prediction?'':' · no frame tags'}</div>`;list.appendChild(b);}const reviewed=recordings.reduce((a,r)=>a+r.reviewed,0),total=recordings.reduce((a,r)=>a+r.total,0);document.getElementById('summary').textContent=`${shown.length}/${recordings.length} recordings · ${reviewed}/${total} frames reviewed`;}
+async function refresh(){recordings=await fetch('/api/recordings').then(r=>r.json());render();if(selected&&recordings.some(r=>r.recording===selected))selectRecording(selected,false);}
+function selectRecording(name,reload){selected=name;const r=recordings.find(x=>x.recording===name);document.getElementById('current').textContent=r?`${name} · ${r.reviewed}/${r.total}`:name;const toggle=document.getElementById('finishToggle');toggle.disabled=!r;toggle.checked=!!r?.gt_finished;document.getElementById('empty').style.display='none';const f=document.getElementById('editor');f.style.display='block';const url='/editor/'+encodeURIComponent(name);if(reload||!f.src.endsWith(url))f.src=url;render();}
+async function setFinished(){if(!selected)return;await fetch('/finish/'+encodeURIComponent(selected),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({gt_finished:document.getElementById('finishToggle').checked})});await refresh();}
+function nextUnfinished(){const list=recordings.filter(r=>!r.gt_finished&&r.total>0);if(!list.length)return;let i=selected?list.findIndex(r=>r.recording===selected):-1;selectRecording(list[(i+1+list.length)%list.length].recording,true);}
+document.getElementById('search').addEventListener('input',render);document.getElementById('filter').addEventListener('change',render);document.getElementById('refresh').onclick=refresh;document.getElementById('next').onclick=nextUnfinished;document.getElementById('finishToggle').onchange=setFinished;window.addEventListener('message',e=>{if(e.data&&['gt-saved','gt-complete'].includes(e.data.type))refresh();});
 refresh().then(()=>{const first=recordings.find(r=>!r.gt_finished&&r.total>0)||recordings[0];if(first)selectRecording(first.recording,true);});
 </script></body></html>'''
 
@@ -188,17 +178,25 @@ const __workspaceRecording={json.dumps(recording)};
 const __workspacePersist=persist;
 persist=function(){{
   __workspacePersist();
-  const reviewed=rows.filter(r=>r.reviewed).map(r=>({{
-    frame_index:r.frame_index,timestamp:r.timestamp,gt:r.gt,reviewed:true
-  }}));
-  fetch(__workspaceEndpoint,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{
-    recording_id:__workspaceRecording,sampling_hz:{sample_hz},frames:reviewed
-  }})}}).then(()=>{{
-    window.parent.postMessage({{type: reviewed.length===rows.length?'gt-complete':'gt-saved',recording:__workspaceRecording,reviewed:reviewed.length,total:rows.length}},'*');
-  }}).catch(err=>console.warn('GT autosave failed',err));
+  const reviewed=rows.filter(r=>r.reviewed).map(r=>({{frame_index:r.frame_index,timestamp:r.timestamp,gt:r.gt,reviewed:true}}));
+  fetch(__workspaceEndpoint,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{recording_id:__workspaceRecording,sampling_hz:{sample_hz},frames:reviewed}})}})
+    .then(()=>window.parent.postMessage({{type:reviewed.length===rows.length?'gt-complete':'gt-saved',recording:__workspaceRecording}},'*'))
+    .catch(err=>console.warn('GT autosave failed',err));
 }};
 </script>'''
     return html.replace("</body>", script + "</body>")
+
+
+def _inject_workspace_layout(html: str) -> str:
+    css = '''<style>
+html,body{height:100%;overflow:hidden}
+body{margin:0;padding:8px}
+.container,.grid{max-height:calc(100vh - 16px)}
+.card{min-height:0;overflow:auto}
+#bevImg,#bev{max-height:calc(100vh - 150px);width:auto;max-width:100%;object-fit:contain}
+@media(max-width:1000px){html,body{height:auto;overflow:auto}.container,.grid{max-height:none}.card{overflow:visible}#bevImg,#bev{max-height:none}}
+</style>'''
+    return html.replace("</head>", css + "</head>", 1)
 
 
 def _safe_recording(frame_root: Path, recording: str) -> Path | None:
@@ -215,7 +213,7 @@ def _write_json_atomic(path: Path, document: dict) -> None:
     tmp.replace(path)
 
 
-def _make_handler(frame_root: Path, prediction_root: Path, gt_root: Path, source_hz: float, sample_hz: float):
+def _make_handler(frame_root: Path, gt_root: Path, source_hz: float, sample_hz: float):
     class Handler(BaseHTTPRequestHandler):
         def _send_bytes(self, payload: bytes, content_type: str, status: int = 200) -> None:
             self.send_response(status)
@@ -235,7 +233,7 @@ def _make_handler(frame_root: Path, prediction_root: Path, gt_root: Path, source
                 return
             if path == "/api/recordings":
                 summaries = [
-                    _recording_summary(d, prediction_root, gt_root, source_hz, sample_hz)
+                    _recording_summary(d, gt_root, source_hz, sample_hz)
                     for d in sorted(frame_root.iterdir(), key=lambda p: p.name)
                     if d.is_dir()
                 ]
@@ -251,17 +249,14 @@ def _make_handler(frame_root: Path, prediction_root: Path, gt_root: Path, source
                     rows = discover_completed_rows(recording_dir, source_hz=source_hz, sample_hz=sample_hz)
                     if not rows:
                         raise ValueError("no completed sampled frames")
-                    prediction = _prediction_path(prediction_root, recording)
-                    _prepare_rows(rows, prediction if prediction.is_file() else None, _gt_path(gt_root, recording))
+                    matched = _prepare_rows(rows, recording_dir, _gt_path(gt_root, recording), sample_hz)
                     for row in rows:
                         row["bev_uri"] = f"/bev/{quote(recording, safe='')}/{row['frame_index']}"
                     html = _html(rows, recording, sample_hz)
-                    old_key = f"simplified-gt-v3:{recording}"
-                    workspace_key = f"simplified-gt-workspace-v1:{recording}:{len(rows)}:{rows[-1]['frame_index']}"
-                    html = html.replace(old_key, workspace_key)
-                    html = _inject_equal_height_sidebar(html)
                     html = _inject_bulk_yes_no(html)
+                    html = _inject_workspace_layout(html)
                     html = _inject_workspace_autosave(html, recording, sample_hz)
+                    html = html.replace("</body>", f"<script>console.info('prediction rows matched: {matched}/{len(rows)}')</script></body>")
                     self._send_text(html)
                 except Exception as exc:
                     self._send_text(f"<pre>Failed to load {recording}: {exc}</pre>", status=500)
@@ -278,7 +273,7 @@ def _make_handler(frame_root: Path, prediction_root: Path, gt_root: Path, source
                 if recording_dir is None:
                     self.send_error(404)
                     return
-                image = recording_dir / f"frame_{frame_index:06d}" / "bev_revised.png"
+                image = recording_dir / f"frame_{frame_index:06d}" / "bev.png"
                 if not image.is_file():
                     self.send_error(404)
                     return
@@ -316,7 +311,8 @@ def _make_handler(frame_root: Path, prediction_root: Path, gt_root: Path, source
                         if isinstance(loaded, dict):
                             existing = loaded
                     except (OSError, json.JSONDecodeError):
-                        existing = {}
+                        pass
+
                 if action == "save":
                     frames = payload.get("frames", []) if isinstance(payload, dict) else []
                     document = {
@@ -327,12 +323,11 @@ def _make_handler(frame_root: Path, prediction_root: Path, gt_root: Path, source
                         "frames": frames,
                     }
                 else:
-                    gt_finished = payload.get("gt_finished") is True if isinstance(payload, dict) else False
                     document = {
                         "schema_version": existing.get("schema_version", "simplified-manual-gt-v1"),
                         "recording_id": recording,
                         "sampling_hz": existing.get("sampling_hz", sample_hz),
-                        "gt_finished": gt_finished,
+                        "gt_finished": payload.get("gt_finished") is True if isinstance(payload, dict) else False,
                         "frames": existing.get("frames", []),
                     }
                 _write_json_atomic(gt_path, document)
@@ -349,9 +344,10 @@ def _make_handler(frame_root: Path, prediction_root: Path, gt_root: Path, source
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Unified manual GT workspace for all simplified-taxonomy recordings.")
-    parser.add_argument("--frame-root", type=Path, default=Path("outputs/02_frame_inputs_revised"))
-    parser.add_argument("--prediction-root", type=Path, default=Path("outputs/06_gt_comparison/predictions"))
+    parser = argparse.ArgumentParser(
+        description="Simplified Taxonomy GT Workspace using current frame inputs and recording_frame_tags_1fps."
+    )
+    parser.add_argument("--frame-root", type=Path, default=Path("outputs/02_frame_inputs"))
     parser.add_argument("--gt-root", type=Path, default=Path("outputs/06_gt_comparison/gt"))
     parser.add_argument("--source-hz", type=float, default=10.0)
     parser.add_argument("--sample-hz", type=float, default=1.0)
@@ -362,21 +358,23 @@ def main() -> int:
     if not args.frame_root.is_dir():
         raise SystemExit(f"Frame root does not exist: {args.frame_root}")
     args.gt_root.mkdir(parents=True, exist_ok=True)
+
     recordings = [p for p in args.frame_root.iterdir() if p.is_dir()]
     if not recordings:
         raise SystemExit(f"No recording directories found under {args.frame_root}")
 
     server = ThreadingHTTPServer(
         (args.host, args.port),
-        _make_handler(args.frame_root, args.prediction_root, args.gt_root, args.source_hz, args.sample_hz),
+        _make_handler(args.frame_root, args.gt_root, args.source_hz, args.sample_hz),
     )
-    url = f"http://{args.host}:{args.port}"
-    print(f"GT Workspace: {url}")
-    print(f"Recordings: {len(recordings)}")
+    print(f"GT Workspace: http://{args.host}:{args.port}")
     print(f"Frame root: {args.frame_root}")
-    print(f"Prediction root: {args.prediction_root}")
-    print(f"GT autosave root: {args.gt_root}")
-    print("Keep this process running while annotating. Ctrl+C stops the workspace.")
+    print(f"GT root: {args.gt_root}")
+    print(f"Prediction source: <recording>/{FRAME_TAG_DIRNAME}")
+    print("Prediction alignment: exact frame index, then nearest timestamp within half a sample period.")
+    print("Unreviewed frames are prediction-prefilled when a prediction is available.")
+    print("Ctrl+C stops the workspace.")
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
