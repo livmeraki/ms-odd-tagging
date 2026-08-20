@@ -2,30 +2,34 @@
 
 Autonomous-driving Motional Scenario tagging from OD/LD annotations and ego trajectory.
 
-## Repository layout
-
-```text
-configs/                  scenario and pipeline configuration
-data/                     local input layout and data policy
-docs/                     handover and technical documentation
-prompts/                  VLM prompts
-scripts/                  operational and visualization scripts
-src/ms_odd_tagging/       Python package
- tests/                    automated tests
-```
-
-The active input path is:
+## Current workflow
 
 ```text
 annotations_OD.json + annotations_LD.json + traj_lcs.txt
         ↓
-Canonicalization
+OD+LD+Trajectory Canonicalization
         ↓
 outputs/01_canonical
         ↓
-Frame Input / BEV generation
+Rule / geometry analysis + per-frame input / BEV generation
         ↓
 outputs/02_frame_inputs
+        ├── frame_XXXXXX/frame.json
+        ├── frame_XXXXXX/bev.png
+        └── recording_frame_tags_1fps/
+```
+
+Semantic cases that require VLM reasoning use candidate/episode selection before Qwen VLM inference. Ground-truth review uses the Simplified Taxonomy GT Workspace.
+
+## Repository layout
+
+```text
+configs/                  active scenario and geometry configuration
+data/                     local data layout documentation
+docs/handover/KOR/        current project documentation
+scripts/odld_explorer/    full OD+LD scenario explorer
+src/ms_odd_tagging/       implementation
+tests/                    automated tests
 ```
 
 The canonical schema is `odld-trajectory-canonical-frame-v1`.
@@ -39,9 +43,7 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-After installation, use the package CLIs rather than repository-root wrapper scripts.
-
-## Run the pipeline
+## Run
 
 ```bash
 ms-odd-tagging <RECORDING_ID>
@@ -53,7 +55,7 @@ Smoke test:
 ms-odd-tagging <RECORDING_ID> --frame-limit 1
 ```
 
-Useful options:
+Common options:
 
 ```bash
 ms-odd-tagging <RECORDING_ID> --frames-per-second 2
@@ -63,7 +65,7 @@ ms-odd-tagging <RECORDING_ID> --existing-output regenerate
 ms-odd-tagging <RECORDING_ID> --stop-after canonical
 ```
 
-Data and output roots can be supplied through environment variables:
+Set external data/output roots when needed:
 
 ```bash
 export MS_ODD_DATA_ROOT=/path/to/data
@@ -78,36 +80,34 @@ annotations_LD.json
 traj_lcs.txt
 ```
 
-## Main CLIs
+## Current CLIs
 
 ```bash
 ms-odd-tagging --help
 ms-odd-canonical --help
 ms-odd-frame-inputs --help
 ms-odd-rules --help
+ms-odd-following-lane --help
 ms-odd-ld-topology --help
-ms-odd-qwen-vlm-poc --help
+ms-odd-qwen-vlm --help
+ms-odd-gt-workspace --help
+ms-odd-validate-frames --help
 ```
-
-`ms-odd-tagging` maps directly to `ms_odd_tagging.pipeline:main`, and `ms-odd-ld-topology` maps directly to `ms_odd_tagging.ld_topology.cli:main` through `pyproject.toml`.
 
 ## Full ODLD Scenario Explorer
 
 ```bash
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
   --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld" \
-  --index-path "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld/index.html" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
   --regenerate-existing
 ```
 
 ## GT Workspace
 
-The current frame reviewer is the Simplified Taxonomy GT Workspace:
-
 ```bash
-python -m ms_odd_tagging.simplified_taxonomy.gt_workspace_profiled \
+ms-odd-gt-workspace \
   --frame-root "$MS_ODD_OUTPUT_ROOT/02_frame_inputs" \
   --gt-root "$MS_ODD_OUTPUT_ROOT/06_gt_comparison/gt" \
   --source-hz 10 \
