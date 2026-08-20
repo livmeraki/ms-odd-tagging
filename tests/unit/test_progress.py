@@ -12,9 +12,9 @@ def test_progress_reporter_prints_counts_and_percentage(capsys) -> None:
     progress.finish()
 
     output = capsys.readouterr().out
-    assert "[sample] 0/4 frames (  0.0%) - starting" in output
-    assert "[sample] 2/4 frames ( 50.0%) - second" in output
-    assert "[sample] 4/4 frames (100.0%) - done" in output
+    assert "[sample] [....................] 0/4 frames (  0.0%) - starting" in output
+    assert "[sample] [==========..........] 2/4 frames ( 50.0%) - second" in output
+    assert "[sample] [====================] 4/4 frames (100.0%) - done" in output
 
 
 def test_progress_reporter_handles_empty_work(capsys) -> None:
