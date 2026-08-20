@@ -27,7 +27,7 @@ Feature Extraction               Generation (1 FPS default)
         ├───────────────┐              │
         │               │              │
         ▼               ▼              │
-Deterministic       VLM Candidate       │
+Deterministic       VLM Candidate      │
 Scenario Detection  / Episode Selection│
         │               │              │
         │               ▼              │
