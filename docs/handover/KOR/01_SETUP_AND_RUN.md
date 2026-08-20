@@ -52,4 +52,42 @@ ms-odd-gt-workspace     Simplified Taxonomy GT Workspace
 ms-odd-validate-frames  frame-input validation
 ```
 
+## 5. Full ODLD Scenario Explorer
+
+Full OD+LD Scenario Explorer를 생성할 때는 stage별 진행 상황을 표시하는 다음 runner를 기본으로 사용한다.
+
+```text
+scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py
+```
+
+이 runner는 현재 ODLD Scenario Explorer 생성 과정을 그대로 실행하면서 recording별 stage 진행률과 각 stage의 소요 시간을 출력한다.
+
+### Linux
+
+```bash
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py \
+  --source-root "$MS_ODD_DATA_ROOT/01_raw" \
+  --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
+  --regenerate-existing
+```
+
+### Windows PowerShell
+
+```powershell
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py `
+  --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
+  --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers\index.html") `
+  --regenerate-existing
+```
+
+생성된 explorer index:
+
+```text
+MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html
+```
+
 설치부터 smoke test까지는 운영체제별 문서를 따른다.
