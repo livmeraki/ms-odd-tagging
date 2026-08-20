@@ -183,12 +183,12 @@ def _make_profiled_handler(
                         raise ValueError("no completed sampled frames")
 
                     gt_path = workspace._gt_path(gt_root, recording)
-                    # First restore reviewed GT. No duplicate prediction file is required.
                     _prepare_rows(rows, None, gt_path)
                     matched = apply_current_predictions(
                         rows,
                         recording_dir,
                         prefill_unreviewed=True,
+                        sample_hz=sample_hz,
                     )
                     for row in rows:
                         row["bev_uri"] = f"/bev/{quote(recording, safe='')}/{row['frame_index']}"
@@ -306,6 +306,7 @@ def main() -> int:
     print(f"GT Workspace profiler: {url}")
     print(f"Recordings: {len(recordings)}")
     print("Prediction source: <frame-root>/<recording>/recording_frame_tags_1fps")
+    print("Prediction alignment: exact frame index, then nearest timestamp within half a sample period.")
     print("Unreviewed GT is prefilled from prediction but remains UNREVIEWED until saved.")
     print("Startup timing before browser request:")
     print(f"  frame-root check     : {frame_root_check_s:.3f} s")
