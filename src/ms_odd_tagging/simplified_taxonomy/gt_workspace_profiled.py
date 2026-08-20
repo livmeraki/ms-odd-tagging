@@ -1,27 +1,30 @@
 from __future__ import annotations
 
 import argparse
+import json
 import mimetypes
 from collections import defaultdict
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 from http.server import ThreadingHTTPServer
 
 from . import gt_workspace as workspace
+from .current_frame_predictions import (
+    apply_current_predictions,
+    current_prediction_tags,
+    frame_tag_dir,
+)
 from .gt_workspace_layout import inject_workspace_layout
-from .input_frame_gt_server import _existing_gt_by_frame
+from .input_frame_gt import discover_completed_rows
+from .input_frame_gt_server import _existing_gt_by_frame, _prepare_rows
+from .manual_gt import _html
 
 
 class _ListLoadProfiler:
-    """Accumulate timing for one /api/recordings list build.
-
-    The existing workspace builds the recording list synchronously by calling
-    ``_recording_summary`` once for every recording. Replacing that function
-    lets us measure the expensive sub-steps without changing GT behavior.
-    """
+    """Accumulate timing for one /api/recordings list build."""
 
     def __init__(self, expected_recordings: int) -> None:
         self.expected_recordings = expected_recordings
@@ -45,7 +48,6 @@ class _ListLoadProfiler:
         sample_s = perf_counter() - t0
 
         gt_path = workspace._gt_path(gt_root, recording)
-        prediction_path = workspace._prediction_path(prediction_root, recording)
 
         t0 = perf_counter()
         gt_by_frame = _existing_gt_by_frame(gt_path)
@@ -56,7 +58,7 @@ class _ListLoadProfiler:
         gt_meta_s = perf_counter() - t0
 
         t0 = perf_counter()
-        object_tags = workspace._prediction_tags(prediction_path)
+        object_tags = current_prediction_tags(recording_dir)
         prediction_tags_s = perf_counter() - t0
 
         t0 = perf_counter()
@@ -70,6 +72,7 @@ class _ListLoadProfiler:
             status = "not_started"
         finalize_s = perf_counter() - t0
 
+        prediction_available = frame_tag_dir(recording_dir).is_dir()
         result = {
             "recording": recording,
             "total": total,
@@ -78,7 +81,7 @@ class _ListLoadProfiler:
             "percent": round(100.0 * reviewed / total, 1) if total else 0.0,
             "status": status,
             "gt_finished": gt_meta["gt_finished"],
-            "prediction": prediction_path.is_file(),
+            "prediction": prediction_available,
             "object_tags": object_tags,
         }
 
@@ -123,7 +126,7 @@ class _ListLoadProfiler:
         print(f"  1. scan/read frame inputs : {totals['sample_frames']:8.3f} s")
         print(f"  2. read reviewed GT      : {totals['read_gt_frames']:8.3f} s")
         print(f"  3. read GT metadata      : {totals['read_gt_meta']:8.3f} s")
-        print(f"  4. read prediction tags  : {totals['read_prediction_tags']:8.3f} s")
+        print(f"  4. read current frame tags: {totals['read_prediction_tags']:7.3f} s")
         print(f"  5. status/finalize       : {totals['finalize']:8.3f} s")
         print(f"  SUM recording summaries  : {totals['total']:8.3f} s")
         print("Slowest recordings:")
@@ -133,13 +136,13 @@ class _ListLoadProfiler:
                 f"{str(item['recording'])}: {float(item['total']):.3f}s "
                 f"(frames {float(item['sample_frames']):.3f}s, "
                 f"GT {float(item['read_gt_frames']) + float(item['read_gt_meta']):.3f}s, "
-                f"prediction {float(item['read_prediction_tags']):.3f}s)"
+                f"frame-tags {float(item['read_prediction_tags']):.3f}s)"
             )
         dominant = max(
             (
                 ("frame input scan", totals["sample_frames"]),
                 ("GT reads", totals["read_gt_frames"] + totals["read_gt_meta"]),
-                ("prediction tag reads", totals["read_prediction_tags"]),
+                ("current frame-tag reads", totals["read_prediction_tags"]),
                 ("finalization", totals["finalize"]),
             ),
             key=lambda pair: pair[1],
@@ -155,12 +158,7 @@ def _make_profiled_handler(
     source_hz: float,
     sample_hz: float,
 ):
-    """Use the normal workspace handler, but serve the current ``bev.png`` name.
-
-    The August simplified-GT workspace expected ``bev_revised.png``. The cleanup
-    pipeline now writes ``bev.png``. Prefer the current file and retain the old
-    filename only as a compatibility fallback.
-    """
+    """Workspace handler using current BEVs and current frame-tag predictions."""
     BaseHandler = workspace._make_handler(
         frame_root, prediction_root, gt_root, source_hz, sample_hz
     )
@@ -168,40 +166,87 @@ def _make_profiled_handler(
     class Handler(BaseHandler):
         def do_GET(self) -> None:  # noqa: N802
             path = unquote(urlparse(self.path).path)
-            if not path.startswith("/bev/"):
-                super().do_GET()
+
+            if path.startswith("/editor/"):
+                recording = path[len("/editor/") :]
+                recording_dir = workspace._safe_recording(frame_root, recording)
+                if recording_dir is None:
+                    self.send_error(404)
+                    return
+                try:
+                    rows = discover_completed_rows(
+                        recording_dir,
+                        source_hz=source_hz,
+                        sample_hz=sample_hz,
+                    )
+                    if not rows:
+                        raise ValueError("no completed sampled frames")
+
+                    gt_path = workspace._gt_path(gt_root, recording)
+                    # First restore reviewed GT. No duplicate prediction file is required.
+                    _prepare_rows(rows, None, gt_path)
+                    matched = apply_current_predictions(
+                        rows,
+                        recording_dir,
+                        prefill_unreviewed=True,
+                    )
+                    for row in rows:
+                        row["bev_uri"] = f"/bev/{quote(recording, safe='')}/{row['frame_index']}"
+
+                    html = _html(rows, recording, sample_hz)
+                    old_key = f"simplified-gt-v3:{recording}"
+                    workspace_key = (
+                        f"simplified-gt-workspace-current-v1:{recording}:"
+                        f"{len(rows)}:{rows[-1]['frame_index']}"
+                    )
+                    html = html.replace(old_key, workspace_key)
+                    html = workspace._inject_equal_height_sidebar(html)
+                    html = workspace._inject_bulk_yes_no(html)
+                    html = workspace._inject_workspace_autosave(html, recording, sample_hz)
+                    note = (
+                        f"<script>console.info('Current frame-tag predictions matched: "
+                        f"{matched}/{len(rows)}');</script>"
+                    )
+                    html = html.replace("</body>", note + "</body>")
+                    self._send_text(html)
+                except Exception as exc:
+                    self._send_text(f"<pre>Failed to load {recording}: {exc}</pre>", status=500)
                 return
 
-            rest = path[len("/bev/") :]
-            try:
-                recording, frame_text = rest.rsplit("/", 1)
-                frame_index = int(frame_text)
-            except ValueError:
-                self.send_error(400)
+            if path.startswith("/bev/"):
+                rest = path[len("/bev/") :]
+                try:
+                    recording, frame_text = rest.rsplit("/", 1)
+                    frame_index = int(frame_text)
+                except ValueError:
+                    self.send_error(400)
+                    return
+
+                recording_dir = workspace._safe_recording(frame_root, recording)
+                if recording_dir is None:
+                    self.send_error(404)
+                    return
+
+                frame_dir = recording_dir / f"frame_{frame_index:06d}"
+                image = frame_dir / "bev.png"
+                if not image.is_file():
+                    image = frame_dir / "bev_revised.png"
+                if not image.is_file():
+                    self.send_error(404)
+                    return
+
+                try:
+                    payload = image.read_bytes()
+                except OSError:
+                    self.send_error(500)
+                    return
+                self._send_bytes(
+                    payload,
+                    mimetypes.guess_type(image.name)[0] or "image/png",
+                )
                 return
 
-            recording_dir = workspace._safe_recording(frame_root, recording)
-            if recording_dir is None:
-                self.send_error(404)
-                return
-
-            frame_dir = recording_dir / f"frame_{frame_index:06d}"
-            image = frame_dir / "bev.png"
-            if not image.is_file():
-                image = frame_dir / "bev_revised.png"
-            if not image.is_file():
-                self.send_error(404)
-                return
-
-            try:
-                payload = image.read_bytes()
-            except OSError:
-                self.send_error(500)
-                return
-            self._send_bytes(
-                payload,
-                mimetypes.guess_type(image.name)[0] or "image/png",
-            )
+            super().do_GET()
 
     return Handler
 
@@ -212,7 +257,10 @@ def main() -> int:
     )
     parser.add_argument("--frame-root", type=Path, default=Path("outputs/02_frame_inputs"))
     parser.add_argument(
-        "--prediction-root", type=Path, default=Path("outputs/06_gt_comparison/predictions")
+        "--prediction-root",
+        type=Path,
+        default=Path("outputs/06_gt_comparison/predictions"),
+        help="Legacy fallback path; current frame tags under frame-root are used by the editor.",
     )
     parser.add_argument("--gt-root", type=Path, default=Path("outputs/06_gt_comparison/gt"))
     parser.add_argument("--source-hz", type=float, default=10.0)
@@ -257,6 +305,8 @@ def main() -> int:
     url = f"http://{args.host}:{args.port}"
     print(f"GT Workspace profiler: {url}")
     print(f"Recordings: {len(recordings)}")
+    print("Prediction source: <frame-root>/<recording>/recording_frame_tags_1fps")
+    print("Unreviewed GT is prefilled from prediction but remains UNREVIEWED until saved.")
     print("Startup timing before browser request:")
     print(f"  frame-root check     : {frame_root_check_s:.3f} s")
     print(f"  GT-root setup        : {gt_root_setup_s:.3f} s")
