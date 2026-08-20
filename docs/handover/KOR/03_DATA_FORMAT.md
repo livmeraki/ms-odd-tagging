@@ -56,73 +56,54 @@ Trajectory row와 annotation frame의 정합은 매우 중요하다. detector �
 
 ## 4. Raw LD Annotation
 
-LD ALT는 OD와 달리 **frame-centric, lane/boundary-centric** 구조이다.
+LD는 recording-level road/lane geometry를 제공하며 lane, boundary, topology, roadmark 등의 구조를 포함한다. Canonicalization 단계에서는 이를 recording-wide feature store로 정규화하고, 각 frame에서는 ego pose 기준 nearby feature를 참조한다.
 
-주요 구조:
+주요 사용 정보:
 
-### Lane lines
+- lane / lane boundary geometry
+- lane topology
+- road boundary
+- crosswalk / stopline 등 roadmark
+- intersection 관련 geometry
 
-`line_predictions_CCS`
-
-일반적으로 L1~L5 / R1~R5 형태의 lane-line candidate가 포함되며 다음과 같은 값이 사용된다.
-
-- `type_shape_infer`
-- `type_sd`
-- `type_color`
-- `ccs_pts`
-- `ccs_left_pts`
-- `ccs_right_pts`
-- `vcs_pts`
-- `src_ics_pts`
-- `confidence`
-
-### Boundary
-
-`boundary_predictions_CCS`
-
-예:
-
-- guardrail
-- curb
-- road edge
-
-### Freespace
-
-`fsd_edges`
-
-free-space boundary geometry를 나타낸다.
-
-## 5. OD와 LD의 중요한 차이
+## 5. OD / LD / Trajectory 정합
 
 ```text
-OD ALT
-scene -> objects -> frames -> bbox3d
-
-LD ALT
-frame -> lane lines / boundaries / freespace
+OD annotation ─┐
+LD annotation ─┼─> Canonicalization
+Trajectory ────┘
 ```
 
-따라서 canonicalization의 핵심은 object-centric OD와 frame-centric LD를 ego trajectory의 공통 시간축에 맞추는 것이다.
+현재 지원되는 canonicalization은 이 세 입력을 함께 사용하는 **OD+LD+Trajectory 단일 경로**이다.
+
+- OD는 frame별 dynamic object 상태를 제공한다.
+- LD는 recording-level static/shared road geometry를 제공한다.
+- Trajectory는 ego pose와 공통 시간축을 제공한다.
+
+따라서 detector에서 OD와 LD를 별도 독립 schema로 취급하기보다 canonical representation을 source of truth로 사용한다.
 
 ## 6. Canonical Data
 
-현재 두 canonical schema가 존재한다.
+현재 active pipeline의 canonical schema는 하나이다.
 
 ```text
-od-trajectory-canonical-frame-v1
 odld-trajectory-canonical-frame-v1
 ```
 
-OD+LD canonical에서는 frame별 dynamic data와 static/shared LD feature store를 분리해 불필요한 geometry duplication을 줄인다.
+Canonical data에서는 frame별 dynamic data와 recording-wide LD feature store를 분리해 불필요한 geometry duplication을 줄인다.
 
 중요 contract:
 
-- `ld_feature_store`: LD geometry의 shared feature 저장소
+- `frames[]`: original source frame index와 timestamp를 유지하는 frame sequence
+- `ego`: ego pose / speed / acceleration / yaw-rate 등
+- `objects`: 해당 frame의 normalized OD object state
+- `ld_feature_store`: recording-wide LD geometry shared feature 저장소
 - `ld.nearby_feature_ids`: 해당 frame에서 사용할 nearby LD feature reference
+- `scenario_signals` / `interaction_candidates`: downstream rule/geometry 판단에 사용하는 derived evidence
 
-BEV 또는 geometry feature를 생성할 때 두 구조가 모두 필요하다.
+BEV 또는 geometry feature를 생성할 때 `ld_feature_store`와 frame-level LD reference가 모두 필요하다.
 
-> 실제 field 이름과 schema는 현재 canonicalizer output을 source of truth로 사용한다. 이 문서의 예시는 구조 이해용이며 schema를 대체하지 않는다.
+> 실제 field 이름과 schema는 현재 `ms_odd_tagging.canonical.builder` output을 source of truth로 사용한다. 이 문서의 예시는 구조 이해용이며 schema를 대체하지 않는다.
 
 ## 7. Frame Input
 
