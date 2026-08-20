@@ -64,7 +64,7 @@ Scenario Detection  / Episode Selection│
 src/ms_odd_tagging/canonical/builder.py
 ```
 
-현재 지원되는 canonical path는 **OD + LD + Ego Trajectory 통합 경로 하나**이다. 과거 `src/ms_odd_tagging/input_generator/canonical.py`, `canonical_odld.py`는 compatibility alias였으며 cleanup branch에서 제거했다.
+현재 canonical path는 **OD + LD + Ego Trajectory 통합 경로 하나**이다.
 
 Canonicalization은 다음 세 입력을 함께 정합한다.
 
@@ -95,7 +95,7 @@ odld-trajectory-canonical-frame-v1
 - source frame index와 trajectory alignment를 보존한다.
 - complete LD geometry는 recording-wide `ld_feature_store`에 저장한다.
 - 각 frame은 `ld.nearby_feature_ids` 등 compact reference를 사용한다.
-- downstream code는 별도 OD-only canonical schema를 전제로 하지 않는다.
+- downstream code는 이 통합 canonical schema를 기준으로 동작한다.
 
 ## 3. Stage 2 — Frame Input / BEV
 
@@ -112,7 +112,7 @@ src/ms_odd_tagging/frame_inputs/builder.py
 
 를 생성한다.
 
-과거 5초 window + start/middle/end keyframe 방식은 legacy helper이며 현재 active frame reviewer와 input pipeline의 기본 방식이 아니다.
+각 sampled frame은 GT Workspace와 VLM evidence 구성에서 사용할 수 있는 frame-level input으로 사용된다.
 
 ## 4. Rule-based Feature Extraction
 
@@ -289,7 +289,6 @@ GT comparison은 사람이 작성한 GT와 자동 결과를 matching하여 metri
 ## 11. Pipeline 설계 시 유지해야 할 계약
 
 - canonical input은 OD + LD + Ego Trajectory 통합 경로 하나로 유지한다.
-- 별도 OD-only canonical schema를 active contract로 만들지 않는다.
 - model input에 rule-derived answer를 직접 넣지 않는다.
 - VLM은 전체 frame brute-force inference가 아니라 candidate/episode selection 이후 필요한 구간에만 적용한다.
 - VLM candidate selection과 VLM final judgment를 구분한다.
