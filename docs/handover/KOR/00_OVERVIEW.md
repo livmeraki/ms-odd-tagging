@@ -72,7 +72,7 @@ Scenario별 상세 지원 현황과 상태 기준은 `04_SCENARIO_STATUS.md`를 
 | 순서 | 문서 | 목적 |
 |---:|---|---|
 | 00 | `00_OVERVIEW.md` | 프로젝트 배경, 목적, 구조, 현재 범위 |
-| 01 | `01_SETUP_AND_RUN.md` | 설치, 데이터 경로, 실행 명령 |
+| 01 | `01_SETUP_AND_RUN.md` | 운영체제별 실행 문서 선택 및 공통 구조 |\n| 01A | `01A_SETUP_AND_RUN_LINUX.md` | Linux Bash 설치와 실행 명령 |\n| 01B | `01B_SETUP_AND_RUN_WINDOWS.md` | Windows PowerShell 설치와 실행 명령 |
 | 02 | `02_PIPELINE.md` | 단계별 pipeline과 module 관계 |
 | 03 | `03_DATA_FORMAT.md` | OD / LD / Trajectory / Canonical 형식 |
 | 04 | `04_SCENARIO_STATUS.md` | scenario catalog와 구현 상태 |
