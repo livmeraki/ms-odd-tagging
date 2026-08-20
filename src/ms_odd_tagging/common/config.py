@@ -42,6 +42,10 @@ TAGGING = OUTPUT_ROOT / "03_tagging"
 VALIDATION = OUTPUT_ROOT / "04_validation"
 GT_COMPARISON = OUTPUT_ROOT / "05_gt_comparison"
 SCENARIO_EXPLORERS = OUTPUT_ROOT / "06_scenario_explorers"
+ODLD_SCENARIO_EXPLORERS = SCENARIO_EXPLORERS / "odld"
+ODLD_GT_AUTHORING_EXPLORERS = SCENARIO_EXPLORERS / "gt_authoring"
+ODLD_GT_COMPARISON_EXPLORERS = SCENARIO_EXPLORERS / "gt_comparison"
+SCENARIO_REVIEW_EXPLORERS = SCENARIO_EXPLORERS / "reviews"
 
 # Transitional compatibility aliases. Explorer-aligned frame generation owns
 # the canonical 02_frame_inputs directory.
