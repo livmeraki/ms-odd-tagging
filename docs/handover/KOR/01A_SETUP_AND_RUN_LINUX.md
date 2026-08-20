@@ -249,7 +249,7 @@ configs/direct_scenarios.yaml
 Explorer output:
 
 ~~~text
-$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers
+$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld
 ~~~
 
 ### 9.1 Recording 1개
@@ -257,11 +257,11 @@ $MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers
 ~~~bash
 RECORDING="<RECORDING_ID>"
 
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py \
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
   --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
-  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld/index.html" \
   --regenerate-existing \
   "$RECORDING"
 ~~~
@@ -283,11 +283,11 @@ done < <(
 
 printf '%s\n' "${RECORDINGS[@]}"
 
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py \
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
   --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
-  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld/index.html" \
   --regenerate-existing \
   "${RECORDINGS[@]}"
 ~~~
@@ -305,18 +305,18 @@ done | sort | tail -n +11 | head -n 10
 recording argument를 생략한다.
 
 ~~~bash
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py \
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
   --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
-  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld/index.html" \
   --regenerate-existing
 ~~~
 
 생성 후 다음 index를 browser에서 연다.
 
 ~~~text
-$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html
+$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld/index.html
 ~~~
 
 ## 10. Integrated ODLD GT Authoring
@@ -327,8 +327,8 @@ $MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html
 
 ~~~bash
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py \
-  --source-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers_gt_authoring_all_tags" \
+  --source-dir "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/gt_authoring" \
   --frame-input-root "$MS_ODD_OUTPUT_ROOT/02_frame_inputs" \
   --gt-dir "$MS_ODD_DATA_ROOT/02_gt" \
   --regenerate-existing
@@ -340,7 +340,7 @@ python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py \
 
 ~~~bash
 python scripts/odld_explorer/serve_gt_authoring_explorers.py \
-  --directory "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers_gt_authoring_all_tags" \
+  --directory "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/gt_authoring" \
   --gt-dir "$MS_ODD_DATA_ROOT/02_gt" \
   --host 127.0.0.1 \
   --port 8080
@@ -387,7 +387,7 @@ python -m ms_odd_tagging.canonical.builder --help
 python -m ms_odd_tagging.frame_inputs.builder --help
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py --help
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py --help
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py --help
 python scripts/odld_explorer/serve_gt_authoring_explorers.py --help
 ~~~

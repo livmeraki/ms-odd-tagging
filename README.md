@@ -114,9 +114,22 @@ python -m ms_odd_tagging.visualization.scenario_explorer \
   outputs/01_canonical --output-dir outputs/06_scenario_explorers
 ```
 
-This is also available as `ms-odd explore`. It is the canonical generic
-visualization command. The richer event-tag ODLD generator under `scripts/odld_explorer/` remains a
-specialized developer tool; see
+This is also available as `ms-odd explore` and remains the generic
+visualization command. For tagging review, use the full ODLD event-tag explorer,
+which includes OD, LD, ego trajectory, scenario tags, and the synchronized
+following-lane debugger:
+
+```bash
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
+  --source-root data/01_raw \
+  --canonical-dir outputs/01_canonical \
+  --output-dir outputs/06_scenario_explorers/odld \
+  --index-path outputs/06_scenario_explorers/odld/index.html \
+  --regenerate-existing
+```
+
+The optional `generate_odld_dataset_explorers_w_stage_progress.py` wrapper now
+uses the same tag-loading and regeneration method. See
 [docs/visualization_tools.md](docs/visualization_tools.md).
 
 ## Per-frame model inference
@@ -158,8 +171,8 @@ current synchronized frame:
 
 ```bash
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py \
-  --source-dir outputs/scenarios/following_lane_phase2_all_tags/04_visualization \
-  --output-dir outputs/06_odld_scenario_explorers_gt_authoring_all_tags \
+  --source-dir outputs/06_scenario_explorers/odld \
+  --output-dir outputs/06_scenario_explorers/gt_authoring \
   --frame-input-root outputs/02_frame_inputs \
   --gt-dir data/02_gt \
   --regenerate-existing

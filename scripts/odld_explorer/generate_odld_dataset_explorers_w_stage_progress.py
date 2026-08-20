@@ -5,9 +5,10 @@ This is a thin runner around generate_odld_dataset_explorers_w_scenario_tag.py.
 It keeps the same explorer output, but exposes the expensive per-recording
 pipeline as 17 concrete stages so long runs do not look frozen.
 
-Rule-based scenario events are always regenerated from the current canonical
-recording and current rule configuration. Historical motional-window files are
-not read by this runner.
+Tag sourcing is identical to the full scenario-tag generator: compatible
+current-config recording events may be reused, otherwise events are regenerated
+from canonical data. Legacy overlapping five-second candidate windows are never
+used as visualization tags.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ STAGE_NAMES = (
     "build traffic-light context",
     "load VLM traffic-light episodes",
     "run following-lane detector",
-    "regenerate rule-based scenario events",
+    "load or regenerate current rule-based scenario events",
     "merge following-lane events into tags",
     "generate debug payloads",
     "serialize explorer HTML",
@@ -63,30 +64,11 @@ class StageProgress:
         self._stage_started_at = time.perf_counter()
 
 
-def build_current_rule_tag_payload(canonical: dict) -> dict:
-    """Generate visualization tags only from current canonical + current rules."""
-    config = gen.load_config()
-    detected, _ = gen.detect_recording_events(canonical, config)
-    events = [gen.tag_event_payload(event.to_dict()) for event in detected]
-    events = [
-        event
-        for event in events
-        if event["scenario"] not in gen.HIDDEN_VISUALIZATION_SCENARIOS
-    ]
-    return {
-        "available": bool(events),
-        "source": None,
-        "sourceKind": "canonical_current_rule_events",
-        "configVersion": config["config_version"],
-        "scenarios": sorted({event["scenario"] for event in events}),
-        "events": events,
-    }
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, default=gen.DEFAULT_SOURCE_ROOT)
     parser.add_argument("--canonical-dir", type=Path, default=gen.DEFAULT_CANONICAL_DIR)
+    parser.add_argument("--window-dir", type=Path, default=gen.DEFAULT_WINDOW_DIR)
     parser.add_argument("--output-dir", type=Path, default=gen.DEFAULT_OUTPUT_DIR)
     parser.add_argument("--index-path", type=Path, default=gen.DEFAULT_INDEX_PATH)
     parser.add_argument(
@@ -180,7 +162,7 @@ def main() -> None:
             f"{len(following_lane_result.get('intervals', []))} following-lane intervals"
         )
 
-        data["tags"] = build_current_rule_tag_payload(canonical)
+        data["tags"] = gen.build_tag_payload(recording, args.window_dir, canonical)
         progress.complete(
             f"{len(data['tags'].get('events', []))} current rule/event intervals"
         )

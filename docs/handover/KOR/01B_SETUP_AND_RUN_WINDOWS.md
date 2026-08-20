@@ -239,7 +239,7 @@ configs\direct_scenarios.yaml
 Explorer output:
 
 ~~~text
-$env:MS_ODD_OUTPUT_ROOT\07_odld_scenario_explorers
+$env:MS_ODD_OUTPUT_ROOT\06_scenario_explorers/odld
 ~~~
 
 ### 9.1 Recording 1개
@@ -247,11 +247,11 @@ $env:MS_ODD_OUTPUT_ROOT\07_odld_scenario_explorers
 ~~~powershell
 $RECORDING = "<RECORDING_ID>"
 
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py `
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
   --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
   --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
-  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers\index.html") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/odld") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/odld\index.html") `
   --regenerate-existing `
   $RECORDING
 ~~~
@@ -267,11 +267,11 @@ $RECORDINGS = Get-ChildItem (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
 
 $RECORDINGS
 
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py `
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
   --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
   --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
-  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers\index.html") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/odld") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/odld\index.html") `
   --regenerate-existing `
   $RECORDINGS
 ~~~
@@ -289,18 +289,18 @@ Select-Object -Skip 10 -First 10
 recording argument를 생략한다.
 
 ~~~powershell
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py `
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
   --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
   --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
-  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers\index.html") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/odld") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/odld\index.html") `
   --regenerate-existing
 ~~~
 
 생성 후 다음 index를 browser에서 연다.
 
 ~~~text
-$env:MS_ODD_OUTPUT_ROOT\07_odld_scenario_explorers\index.html
+$env:MS_ODD_OUTPUT_ROOT\06_scenario_explorers/odld\index.html
 ~~~
 
 ## 10. Integrated ODLD GT Authoring
@@ -311,8 +311,8 @@ $env:MS_ODD_OUTPUT_ROOT\07_odld_scenario_explorers\index.html
 
 ~~~powershell
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py `
-  --source-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
-  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers_gt_authoring_all_tags") `
+  --source-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/odld") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/gt_authoring") `
   --frame-input-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "02_frame_inputs") `
   --gt-dir (Join-Path $env:MS_ODD_DATA_ROOT "02_gt") `
   --regenerate-existing
@@ -324,7 +324,7 @@ python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py `
 
 ~~~powershell
 python scripts/odld_explorer/serve_gt_authoring_explorers.py `
-  --directory (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers_gt_authoring_all_tags") `
+  --directory (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers/gt_authoring") `
   --gt-dir (Join-Path $env:MS_ODD_DATA_ROOT "02_gt") `
   --host 127.0.0.1 `
   --port 8080
@@ -371,7 +371,7 @@ python -m ms_odd_tagging.canonical.builder --help
 python -m ms_odd_tagging.frame_inputs.builder --help
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py --help
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py --help
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py --help
 python scripts/odld_explorer/serve_gt_authoring_explorers.py --help
 ~~~

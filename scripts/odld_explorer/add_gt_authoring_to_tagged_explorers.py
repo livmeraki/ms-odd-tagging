@@ -17,18 +17,14 @@ from generate_odld_dataset_explorers_w_scenario_tag import (
 from ms_odd_tagging.common.config import (
     DATA_GT,
     FRAME_INPUTS_REVISED,
-    OUTPUT_ROOT,
+    ODLD_GT_AUTHORING_EXPLORERS,
+    ODLD_SCENARIO_EXPLORERS,
 )
 from ms_odd_tagging.gt_comparison.authoring import build_review_payload
 
 
-DEFAULT_SOURCE_DIR = (
-    OUTPUT_ROOT
-    / "scenarios"
-    / "following_lane_phase2_all_tags"
-    / "04_visualization"
-)
-DEFAULT_OUTPUT_DIR = OUTPUT_ROOT / "07_odld_scenario_explorers_gt_authoring_all_tags"
+DEFAULT_SOURCE_DIR = ODLD_SCENARIO_EXPLORERS
+DEFAULT_OUTPUT_DIR = ODLD_GT_AUTHORING_EXPLORERS
 
 
 def recording_from_source(path: Path) -> str:

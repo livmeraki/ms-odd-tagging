@@ -2,9 +2,10 @@ data_root: ./data/01_raw
 output_root: ./outputs
 canonical_root: ./outputs/01_canonical
 frame_input_root: ./outputs/02_frame_inputs
-tagging_root: ./outputs/04_tagging
-validation_root: ./outputs/05_validation
-gt_comparison_root: ./outputs/06_gt_comparison
+tagging_root: ./outputs/03_tagging
+validation_root: ./outputs/04_validation
+gt_comparison_root: ./outputs/05_gt_comparison
+scenario_explorer_root: ./outputs/06_scenario_explorers
 gt_label_root: ./data/02_gt
 vllm:
   base_url: http://127.0.0.1:8001/v1/chat/completions
