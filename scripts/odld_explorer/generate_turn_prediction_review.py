@@ -10,7 +10,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ms_odd_tagging.common.config import DATA_GT, FRAME_INPUTS, OUTPUT_ROOT
+from ms_odd_tagging.common.config import (
+    DATA_GT,
+    FRAME_INPUTS,
+    SCENARIO_REVIEW_EXPLORERS,
+)
 
 
 TARGET_LABELS = ("starting_left_turn", "starting_right_turn")
@@ -218,7 +222,7 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=OUTPUT_ROOT / "08_turn_prediction_gt_review",
+        default=SCENARIO_REVIEW_EXPLORERS / "turn_prediction",
     )
     parser.add_argument("--context-samples", type=int, default=1)
     parser.add_argument("recordings", nargs="*")
