@@ -51,7 +51,7 @@ Recall    = TP / (TP + FN)
 F1        = 2 * Precision * Recall / (Precision + Recall)
 ```
 
-## 5. 발표에서 사용한 대표 정량 결과
+## 5. 정량 결과
 
 프로젝트 발표 준비 과정에서 사용한 대표 집계 값:
 
