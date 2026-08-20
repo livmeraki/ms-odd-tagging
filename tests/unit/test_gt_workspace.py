@@ -6,49 +6,65 @@ from pathlib import Path
 from ms_odd_tagging.simplified_taxonomy.gt_workspace import (
     _dashboard_html,
     _prediction_tags,
+    _prepare_rows,
 )
 
 
-def test_prediction_tags_supports_prediction_container_and_tag_variants(tmp_path: Path) -> None:
-    path = tmp_path / "prediction.json"
+def _write_frame_tag(path: Path, frame: int, timestamp_s: float, labels: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
-                "results": [
-                    {
-                        "scenarios": ["starting_left_turn", {"scenario": "stationary"}],
-                        "simplified_tags": {
-                            "interaction_tags": ["pedestrian_crossing"],
-                            "source_scenarios": ["near_multiple_pedestrians"],
-                            "unmapped_scenarios": ["custom_scene"],
-                        },
-                    },
-                    {"tagged_scenarios": [{"name": "following_lane_with_lead"}]},
-                ]
+                "frame": frame,
+                "timestamp_s": timestamp_s,
+                "tags": {
+                    "motional_scenarios": {
+                        label: True for label in labels
+                    }
+                },
             }
         ),
         encoding="utf-8",
     )
 
-    assert _prediction_tags(path) == [
-        "custom_scene",
-        "following_lane_with_lead",
-        "near_multiple_pedestrians",
-        "pedestrian_crossing",
-        "starting_left_turn",
-        "stationary",
+
+def test_prediction_tags_reads_current_recording_frame_tags(tmp_path: Path) -> None:
+    recording = tmp_path / "Rec_A"
+    tags = recording / "recording_frame_tags_1fps"
+    _write_frame_tag(tags / "frame_000000.json", 0, 0.0, ["stationary"])
+    _write_frame_tag(tags / "frame_000010.json", 10, 1.0, ["starting_left_turn"])
+
+    assert _prediction_tags(recording) == ["starting_left_turn", "stationary"]
+
+
+def test_prepare_rows_uses_timestamp_fallback_and_preserves_unreviewed_state(tmp_path: Path) -> None:
+    recording = tmp_path / "Rec_A"
+    tags = recording / "recording_frame_tags_1fps"
+    _write_frame_tag(tags / "frame_000010.json", 10, 1.0, ["stationary"])
+
+    rows = [
+        {
+            "frame_index": 11,
+            "timestamp": 1.02,
+            "prediction": {},
+            "gt": None,
+            "reviewed": False,
+        }
     ]
+    gt_path = tmp_path / "gt" / "Rec_A_manual_gt.json"
+
+    matched = _prepare_rows(rows, recording, gt_path, 1.0)
+
+    assert matched == 1
+    assert rows[0]["prediction_source_frame_index"] == 10
+    assert rows[0]["reviewed"] is False
+    assert rows[0]["prediction"]["ego_motion"]["state"] == "stationary"
+    assert rows[0]["gt"] == rows[0]["prediction"]
 
 
-def test_dashboard_has_bulk_recording_selection_and_download() -> None:
+def test_dashboard_describes_current_prediction_source() -> None:
     page = _dashboard_html()
 
-    assert 'id="selectionCount"' in page
-    assert 'id="selectVisible"' in page
-    assert "decorateRecordingSelections" in page
-    assert "recording-select" in page
-    assert 'id="clearSelection"' in page
-    assert 'id="exportRecordings"' in page
-    assert "selectedRecordings=new Set" in page
-    assert "selected_recordings.json" in page
-    assert "setTimeout(()=>URL.revokeObjectURL(url),1000)" in page
+    assert "current frame inputs + current 1 FPS tags" in page
+    assert "Missing prediction" in page
+    assert "GT finished" in page
