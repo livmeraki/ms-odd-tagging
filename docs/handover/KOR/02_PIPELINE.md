@@ -285,14 +285,3 @@ src/ms_odd_tagging/gt_comparison/
 validator는 frame/model output schema 및 semantic validation을 담당한다.
 
 GT comparison은 사람이 작성한 GT와 자동 결과를 matching하여 metric과 report를 생성하기 위한 기능이다.
-
-## 11. Pipeline 설계 시 유지해야 할 계약
-
-- canonical input은 OD + LD + Ego Trajectory 통합 경로 하나로 유지한다.
-- model input에 rule-derived answer를 직접 넣지 않는다.
-- VLM은 전체 frame brute-force inference가 아니라 candidate/episode selection 이후 필요한 구간에만 적용한다.
-- VLM candidate selection과 VLM final judgment를 구분한다.
-- timestamp와 frame index alignment를 임의로 가정하지 않는다.
-- unsupported semantic label을 약한 evidence로 추측하지 않는다.
-- 1 FPS visualization/reviewer sampling과 full-frame rule evaluation을 구분한다.
-- PoC module을 production/active pipeline과 동일하게 취급하지 않는다.
