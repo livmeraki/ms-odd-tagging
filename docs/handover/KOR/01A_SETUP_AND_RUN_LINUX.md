@@ -392,26 +392,3 @@ python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py --help
 python scripts/odld_explorer/serve_gt_authoring_explorers.py --help
 ~~~
 
-## 13. 자주 발생하는 문제
-
-### Bash syntax error near unexpected token
-
-원인: PowerShell의 Get-ChildItem, Join-Path 또는 $env:... 명령을 Bash에서 실행했다.
-
-해결: 이 문서의 Bash command만 사용한다.
-
-### 환경변수가 비어 있음
-
-~~~bash
-source ~/.bashrc
-printf '%s\n' "$MS_ODD_DATA_ROOT"
-printf '%s\n' "$MS_ODD_OUTPUT_ROOT"
-~~~
-
-### Port 8001이 이미 사용 중
-
-~~~bash
-lsof -i :8001
-~~~
-
-process를 확인한 뒤 필요한 경우 해당 server를 정상 종료한다.
