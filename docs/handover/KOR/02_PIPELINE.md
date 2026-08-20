@@ -2,7 +2,9 @@
 
 ## 1. 전체 흐름
 
-현재 repository는 raw OD/LD annotation과 ego trajectory를 공통 canonical representation으로 정합한 뒤, rule-based tagging과 frame-level model input/BEV 생성을 분리하여 수행한다.
+현재 repository는 raw OD/LD annotation과 ego trajectory를 공통 canonical representation으로 정합한 뒤, deterministic rule/geometry tagging과 VLM-assisted tagging을 분리하여 수행한다.
+
+VLM은 전체 frame을 직접 판단하는 기본 경로가 아니다. 먼저 Rule / Geometry / Temporal logic으로 **VLM이 필요한 구간(candidate / episode)** 을 좁힌 뒤, 해당 candidate에 대해서만 BEV/evidence를 구성하고 VLM이 최종 semantic 판단을 수행한다.
 
 ```text
 Raw Recording
@@ -16,23 +18,43 @@ OD+LD Canonicalization
         ▼
 outputs/01_canonical
         │
-        ├─────────────────────────────┐
-        │                             │
-        ▼                             ▼
-Rule-based feature extraction   Frame input / BEV generation
-+ scenario detectors            (1 FPS default)
-        │                             │
-        ▼                             ▼
-ScenarioEvent                   frame.json + bev.png
-        │                             │
-        │                       Optional VLM / PoC
-        └──────────────┬──────────────┘
-                       ▼
-                Tagging / Validation
-                       │
-                       ▼
-                  GT Comparison
+        ├──────────────────────────────┐
+        │                              │
+        ▼                              ▼
+Rule / Geometry / Temporal       Frame Input / BEV
+Feature Extraction               Generation (1 FPS default)
+        │                              │
+        ├───────────────┐              │
+        │               │              │
+        ▼               ▼              │
+Deterministic       VLM Candidate       │
+Scenario Detection  / Episode Selection│
+        │               │              │
+        │               ▼              │
+        │          Evidence / BEV ◄────┘
+        │               │
+        │               ▼
+        │          VLM Inference
+        │               │
+        │               ▼
+        │          VLM Validation /
+        │          Result Merging
+        │               │
+        └───────┬───────┘
+                ▼
+       Motional Scenario Output
+                │
+                ▼
+   recording_frame_tags_1fps
+                │
+                ▼
+ Simplified Taxonomy GT Workspace
+                │
+                ▼
+          GT Comparison
 ```
+
+핵심은 **Rule path와 VLM path가 병렬적인 두 개의 독립 tagger가 아니라는 점**이다. VLM path도 canonical data와 rule/geometry feature를 사용하며, candidate selection을 통해 필요한 구간만 모델에 전달한다.
 
 ## 2. Stage 1 — Canonicalization
 
@@ -76,7 +98,7 @@ src/ms_odd_tagging/input_generator/frame_input_revised.py
 
 ## 4. Rule-based Feature Extraction
 
-registry는 canonical frame sequence를 받아 scenario detector가 공통으로 사용할 feature를 생성한다.
+registry는 canonical frame sequence를 받아 scenario detector와 VLM candidate selector가 공통으로 사용할 feature를 생성한다.
 
 주요 feature module:
 
@@ -114,6 +136,8 @@ traffic_interactions.py
 ```
 
 registry는 configuration의 `enabled_scenarios`와 detector mapping을 기준으로 전체 recording을 평가하고 시간 구간을 가진 `ScenarioEvent`를 생성한다.
+
+Deterministic rule로 충분히 판별 가능한 scenario는 이 단계에서 최종 결과가 결정된다. VLM이 필요한 scenario는 별도 candidate selection 단계로 넘긴다.
 
 ## 6. Event Segmentation
 
@@ -155,20 +179,89 @@ src/ms_odd_tagging/lanelet2_poc/
 - physical lane assignment와 logical lane continuity를 혼동하지 않는다.
 - intersection 내부/전후에서는 lane ID가 변하기 쉬우므로 lane change detector에 suppression/stability logic이 존재한다.
 
-## 8. Optional VLM Layer
+## 8. VLM Candidate Selection / VLM-assisted Tagging
 
-현재 repository에는 두 종류의 model-related code가 존재한다.
+현재 VLM path의 핵심은 **candidate generation → evidence 구성 → VLM inference → validation/merge** 순서이다.
 
-1. 일반 model-based tagger
-2. `qwen_vlm_poc` package
+```text
+Canonical + Rule/Geometry Feature
+              │
+              ▼
+      Candidate / Episode Selection
+              │
+              ▼
+        Evidence Construction
+     (BEV / frame context / metadata)
+              │
+              ▼
+          VLM Inference
+              │
+              ▼
+      Validation / Confidence Gate
+              │
+              ▼
+        Scenario Result Merge
+```
+
+관련 package:
+
+```text
+src/ms_odd_tagging/qwen_vlm_poc/
+```
 
 `qwen_vlm_poc`에는 candidate generation, evidence construction, prompt, validation, merging, visualization이 분리되어 있다.
 
+현재 configuration의 VLM group은 다음과 같이 관리된다.
+
+```text
+on_intersection
+starting_u_turn
+traffic_light_episode
+```
+
+`traffic_light_episode`는 하나의 candidate/episode에서 traffic-light 관련 여러 최종 scenario를 판별하기 위한 group이다. 현재 group에 포함되는 label은 `qwen_vlm_poc/config.py`와 `configs/scenario_catalog.csv`를 source of truth로 확인한다.
+
+현재 config의 주요 candidate window 관련 값 예시는 다음과 같다.
+
+```text
+window_seconds = 5.0
+candidate_stride_seconds = 2.5
+max_bev_images = 6
+acceptance_threshold = 0.72
+review_threshold = 0.45
+```
+
+이 값은 실험/설정에 따라 변경될 수 있으므로 문서에 적힌 숫자보다 실제 config를 우선한다.
+
 권장 원칙은 다음과 같다.
 
-> 계산 가능한 scenario를 VLM에 먼저 맡기지 않는다. Rule/geometry로 candidate와 evidence를 만들고, 의미적 판단이 필요한 경우에만 VLM을 사용한다.
+> 계산 가능한 scenario를 VLM에 먼저 맡기지 않는다. Rule/geometry로 candidate와 evidence를 만들고, 의미적 판단이 필요한 candidate에만 VLM을 적용한다.
 
-## 9. Validation / GT Comparison
+즉, VLM은 전체 recording의 모든 frame을 brute-force로 inference하는 단계가 아니라, deterministic pipeline이 좁힌 **candidate/episode의 semantic verifier/classifier**에 가깝다.
+
+## 9. Frame-level Tag Export / GT Workspace
+
+Rule/VLM 결과는 평가 및 reviewer에서 사용할 수 있도록 frame-level tag로 변환한다.
+
+현재 1 FPS frame tag output:
+
+```text
+outputs/02_frame_inputs/<RECORDING_ID>/recording_frame_tags_1fps/
+```
+
+각 frame tag JSON은 scenario별 boolean 상태를 포함한다.
+
+기본 GT reviewer는 Simplified Taxonomy GT Workspace이다.
+
+```text
+src/ms_odd_tagging/simplified_taxonomy/
+```
+
+GT Workspace는 current `recording_frame_tags_1fps` prediction을 simplified taxonomy로 mapping하여 prediction reference로 표시하고, 아직 review하지 않은 frame에는 prediction을 prefill한다. 단, 사람이 `Save` 또는 `Save + Next`를 수행하기 전까지 해당 frame은 reviewed GT로 간주하지 않는다.
+
+Frame Input과 frame-tag export의 1 FPS sampling frame index가 다를 수 있으므로 prediction alignment는 exact frame index를 우선하고, exact match가 없으면 timestamp 기준 nearest match를 사용한다.
+
+## 10. Validation / GT Comparison
 
 관련 package:
 
@@ -181,10 +274,12 @@ validator는 frame/model output schema 및 semantic validation을 담당한다.
 
 GT comparison은 사람이 작성한 GT와 자동 결과를 matching하여 metric과 report를 생성하기 위한 기능이다.
 
-## 10. Pipeline 설계 시 유지해야 할 계약
+## 11. Pipeline 설계 시 유지해야 할 계약
 
 - model input에 rule-derived answer를 직접 넣지 않는다.
-- timestamp와 frame index alignment를 임의로 가정하지 않고 canonicalization에서 해결한다.
+- VLM은 전체 frame brute-force inference가 아니라 candidate/episode selection 이후 필요한 구간에만 적용한다.
+- VLM candidate selection과 VLM final judgment를 구분한다.
+- timestamp와 frame index alignment를 임의로 가정하지 않는다.
 - unsupported semantic label을 약한 evidence로 추측하지 않는다.
-- 1 FPS visualization sampling과 full-frame rule evaluation을 구분한다.
+- 1 FPS visualization/reviewer sampling과 full-frame rule evaluation을 구분한다.
 - PoC module을 production/active pipeline과 동일하게 취급하지 않는다.
