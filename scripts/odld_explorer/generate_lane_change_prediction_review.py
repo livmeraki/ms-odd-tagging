@@ -11,7 +11,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ms_odd_tagging.common.config import DATA_GT, FRAME_INPUTS, OUTPUT_ROOT
+from ms_odd_tagging.common.config import (
+    DATA_GT,
+    FRAME_INPUTS,
+    ODLD_SCENARIO_EXPLORERS,
+    SCENARIO_REVIEW_EXPLORERS,
+)
 
 
 TARGET_LABELS = ("changing_lane_to_left", "changing_lane_to_right")
@@ -244,9 +249,9 @@ restore();render();
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frame-input-root", type=Path, default=FRAME_INPUTS)
-    parser.add_argument("--explorer-event-root", type=Path, default=OUTPUT_ROOT / "07_odld_scenario_explorers_finished_frame_inputs")
+    parser.add_argument("--explorer-event-root", type=Path, default=ODLD_SCENARIO_EXPLORERS)
     parser.add_argument("--gt-dir", type=Path, default=DATA_GT)
-    parser.add_argument("--output-dir", type=Path, default=OUTPUT_ROOT / "08_lane_change_prediction_gt_review")
+    parser.add_argument("--output-dir", type=Path, default=SCENARIO_REVIEW_EXPLORERS / "lane_change_prediction")
     parser.add_argument("--context-samples", type=int, default=1)
     args = parser.parse_args()
 
@@ -266,7 +271,7 @@ def main() -> int:
                 "strategy": STRATEGY_NAME,
                 "requires_recent_strategy_evidence": True,
                 "frame_input_root": str(args.frame_input_root),
-                "event_source": "07_odld_scenario_explorers_finished_frame_inputs",
+                "event_source": "06_scenario_explorers/odld",
                 "event_source_root": str(args.explorer_event_root),
                 "gt_dir": str(args.gt_dir),
                 "target_labels": list(TARGET_LABELS),
