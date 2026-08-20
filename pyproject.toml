@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ms-odd-tagging"
 version = "0.1.0"
-description = "Integrated autonomous-driving ODD scenario tagging pipeline."
+description = "Autonomous-driving motional-scenario tagging from OD/LD annotations and ego trajectories."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,30 +14,20 @@ dependencies = [
 ]
 
 [project.scripts]
-ms-odd = "ms_odd_tagging.cli:main"
 ms-odd-tagging = "ms_odd_tagging.pipeline:main"
 ms-odd-canonical = "ms_odd_tagging.canonical.builder:main"
 ms-odd-frame-inputs = "ms_odd_tagging.frame_inputs.builder:main"
-ms-odd-validate-frames = "ms_odd_tagging.validator.frame_schema:main"
-ms-odd-tag = "ms_odd_tagging.tagger.model_based.local_vllm:main"
 ms-odd-rules = "ms_odd_tagging.tagger.rule_based.registry:main"
-ms-odd-scenario-explorer = "ms_odd_tagging.visualization.scenario_explorer:main"
-ms-odd-frame-gt-review = "ms_odd_tagging.gt_comparison.authoring:main"
-ms-odd-evaluate-rules = "ms_odd_tagging.evaluation.rule_based:main"
 ms-odd-following-lane = "ms_odd_tagging.scenarios.following_lane.pipeline:main"
-ms-odd-lanelet2-poc = "ms_odd_tagging.lanelet2_poc.cli:main"
-ms-odd-bev-lane-poc = "ms_odd_tagging.bev_lane_poc.cli:main"
 ms-odd-ld-topology = "ms_odd_tagging.ld_topology.cli:main"
-ms-odd-qwen-vlm-poc = "ms_odd_tagging.qwen_vlm_poc.cli:main"
-ms-odd-qwen-vlm-review = "ms_odd_tagging.qwen_vlm_poc.visualization:main"
+ms-odd-qwen-vlm = "ms_odd_tagging.qwen_vlm_poc.cli:main"
+ms-odd-gt-workspace = "ms_odd_tagging.simplified_taxonomy.gt_workspace:main"
+ms-odd-validate-frames = "ms_odd_tagging.validator.frame_schema:main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
   "numpy>=2.0",
-]
-lanelet2-poc = [
-  "lanelet2>=1.2.2; platform_system == 'Linux'",
 ]
 server = [
   "vllm==0.24.0",
