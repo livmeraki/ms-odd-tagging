@@ -255,9 +255,19 @@ configs/direct_scenarios.yaml
 
 ### 8.3 Full ODLD Scenario Explorer
 
-최종 결과 확인과 디버깅에는 generic `ms_odd_tagging.visualization.scenario_explorer` 대신 다음 full ODLD event-tag explorer를 사용한다.
+최종 결과 확인과 디버깅에는 generic `ms_odd_tagging.visualization.scenario_explorer` 대신 full ODLD event-tag explorer를 사용한다.
 
-이 explorer는 raw OD/LD, Ego Trajectory, canonical data와 scenario tag를 함께 표시한다. `recordings` positional argument는 여러 개를 받을 수 있으며, argument를 생략하면 canonical directory에서 생성 가능한 recording 전체를 대상으로 한다.
+현재 권장 실행 경로는 `generate_odld_dataset_explorers_w_stage_progress.py`이다. 이 runner는 raw OD/LD, Ego Trajectory, canonical data와 scenario tag를 함께 표시하는 explorer를 생성하면서, recording 내부의 실제 처리 stage가 완료될 때마다 진행 상황과 stage별 소요 시간을 출력한다.
+
+`recordings` positional argument는 여러 개를 받을 수 있으며, argument를 생략하면 canonical directory에서 생성 가능한 recording 전체를 대상으로 한다.
+
+> 현재 stage-progress runner는 **legacy window/tag cache를 읽지 않는다.** Rule-based scenario event는 현재 `$MS_ODD_OUTPUT_ROOT/01_canonical`의 canonical data와 현재 rule configuration을 기준으로 매 실행 시 다시 생성한다. 따라서 정상적인 Full ODLD Scenario Explorer 생성 명령에는 `legacy/windows` 경로나 `--window-dir`가 필요하지 않다.
+
+Explorer 결과는 항상 다음 정상 output 경로 아래에 생성한다.
+
+```text
+$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers
+```
 
 #### Recording 1개 생성
 
@@ -266,10 +276,23 @@ Windows PowerShell:
 ```powershell
 $RECORDING = "<RECORDING_ID>"
 
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py `
   --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
   --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --window-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "legacy/windows") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers/index.html") `
+  --regenerate-existing `
+  $RECORDING
+```
+
+예시:
+
+```powershell
+$RECORDING = "Rec_Drv_GER_MACHET18_20260319_144819"
+
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py `
+  --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
+  --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
   --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
   --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers/index.html") `
   --regenerate-existing `
@@ -292,10 +315,9 @@ $RECORDINGS = Get-ChildItem (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
 # 실제 선택된 recording 확인
 $RECORDINGS
 
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py `
   --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
   --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --window-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "legacy/windows") `
   --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
   --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers/index.html") `
   --regenerate-existing `
@@ -317,10 +339,9 @@ recording argument를 생략한다.
 Windows PowerShell:
 
 ```powershell
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py `
   --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
   --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --window-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "legacy/windows") `
   --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
   --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers/index.html") `
   --regenerate-existing
@@ -329,14 +350,24 @@ python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py `
 Linux/macOS:
 
 ```bash
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py \
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
   --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --window-dir "$MS_ODD_OUTPUT_ROOT/legacy/windows" \
   --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
   --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
   --regenerate-existing
 ```
+
+생성 중에는 다음과 같이 실제 완료된 stage와 해당 stage의 소요 시간이 출력된다.
+
+```text
+[odld-stage:<RECORDING_ID>] 1/17 ... complete: load canonical OD+LD JSON [...]
+[odld-stage:<RECORDING_ID>] 2/17 ... complete: run LD topology classifier [...]
+...
+[odld-stage:<RECORDING_ID>] 17/17 ... complete: update index + manifest [...]
+```
+
+이 percentage는 **완료된 stage 개수 기준**이며 전체 runtime의 정확한 시간 비율을 의미하지 않는다. 특정 stage가 오래 걸리면 다음 완료 log가 출력되기까지 시간이 길어질 수 있다.
 
 생성 후 다음 index를 browser에서 연다.
 
@@ -451,7 +482,7 @@ python -m ms_odd_tagging.canonical.builder --help
 python -m ms_odd_tagging.frame_inputs.builder --help
 python -m ms_odd_tagging.validator.frame_schema --help
 python -m ms_odd_tagging.tagger.rule_based.registry --help
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py --help
+python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py --help
 python scripts/odld_explorer/add_gt_authoring_to_tagged_explorers.py --help
 python scripts/odld_explorer/serve_gt_authoring_explorers.py --help
 ```
@@ -467,6 +498,8 @@ python scripts/odld_explorer/serve_gt_authoring_explorers.py --help
 - 첫 실행은 `--frame-limit 1` Smoke Test부터 수행
 - Smoke Test 성공 후 전체 Recording 실행
 - 실행 종료 후 Runtime Summary와 failed recording 확인
-- 결과 검토 시 generic explorer 대신 Full ODLD Scenario Explorer 사용
+- Full ODLD Scenario Explorer는 `generate_odld_dataset_explorers_w_stage_progress.py` 사용
+- Full ODLD Scenario Explorer 실행 시 `legacy/windows` 또는 `--window-dir`를 사용하지 않음
+- Explorer 결과는 `$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers`에서 확인
 - GT 작성 시 별도 Frame GT Reviewer 대신 Integrated ODLD GT Authoring 사용
 - output을 Git에 commit하지 않기
