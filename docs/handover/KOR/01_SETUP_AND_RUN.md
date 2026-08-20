@@ -26,8 +26,8 @@ MS_ODD_OUTPUT_ROOT/01_canonical
         ▼
 MS_ODD_OUTPUT_ROOT/02_frame_inputs
         │
-        ├── 07_odld_scenario_explorers
-        └── 07_odld_scenario_explorers_gt_authoring_all_tags
+        ├── 06_scenario_explorers/odld
+        └── 06_scenario_explorers/gt_authoring
 ~~~
 
 필수 recording 구조:
