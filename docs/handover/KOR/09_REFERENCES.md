@@ -29,18 +29,26 @@ run_pipeline.py
 src/ms_odd_tagging/pipeline.py
 ```
 
-현재 canonical → frame-input generation의 공식 entry point이다.
+현재 canonical → frame-input generation → GT Workspace의 공식 entry point이다.
 
 ## 3. Input / Canonicalization
 
+Canonicalization의 공식 entry point는 하나이다.
+
 ```text
-src/ms_odd_tagging/input_generator/canonical.py
-src/ms_odd_tagging/input_generator/canonical_odld.py
-src/ms_odd_tagging/input_generator/frame_input.py
-src/ms_odd_tagging/input_generator/frame_input_revised.py
+src/ms_odd_tagging/canonical/builder.py
 ```
 
-OD-only와 OD+LD canonicalization의 차이를 확인할 때 우선 참고한다.
+현재 지원되는 canonical path는 **OD + LD + Ego Trajectory 통합 경로 하나**이며, output schema는 `odld-trajectory-canonical-frame-v1`이다.
+
+Frame Input 관련 주요 module:
+
+```text
+src/ms_odd_tagging/frame_inputs/builder.py
+src/ms_odd_tagging/frame_inputs/frame_tags.py
+```
+
+과거 `src/ms_odd_tagging/input_generator/canonical.py`, `canonical_odld.py`는 compatibility alias였으며 cleanup branch에서는 제거했다. 새 코드나 문서에서 이 legacy path를 사용하지 않는다.
 
 ## 4. Rule-based Tagging
 
@@ -124,12 +132,12 @@ brainstorm.md
 ## 8. GT / Evaluation
 
 ```text
+src/ms_odd_tagging/simplified_taxonomy/
 src/ms_odd_tagging/gt_comparison/
 src/ms_odd_tagging/validator/
-data/02_gt/
 ```
 
-GT authoring과 metric 재현 시 해당 code와 실제 GT version을 함께 고정한다.
+현재 기본 GT reviewer는 Simplified Taxonomy GT Workspace이다. GT authoring과 metric 재현 시 해당 code와 실제 GT version을 함께 고정한다.
 
 ## 9. Visualization
 
@@ -157,7 +165,7 @@ Qwen VLM PoC package 주요 구성:
 - `merging.py`
 - `visualization.py`
 
-VLM 관련 코드는 active deterministic rule pipeline과 분리해 이해한다.
+VLM은 전체 frame을 독립적으로 판단하는 기본 tagger가 아니라, rule/geometry 기반 candidate selection 이후 필요한 episode에 적용하는 보조 판단 경로로 이해한다.
 
 ## 11. 정책 / 가이드 문서
 
