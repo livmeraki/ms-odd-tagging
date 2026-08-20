@@ -20,6 +20,10 @@ REQUIRED_RAW_FILES = (
     "annotations_LD.json",
     "traj_lcs.txt",
 )
+DEFAULT_GT_HOST = "127.0.0.1"
+DEFAULT_GT_PORT = 8765
+DEFAULT_GT_SAMPLE_HZ = 1.0
+DEFAULT_SOURCE_HZ = 10.0
 
 
 def format_elapsed(seconds: float) -> str:
@@ -51,6 +55,53 @@ def run_command(module: str, arguments: list[str]) -> float:
     start = time.monotonic()
     subprocess.run(command, check=True, env=env)
     return time.monotonic() - start
+
+
+def launch_default_gt_workspace(
+    *,
+    frame_root: Path,
+    output_root: Path,
+    host: str,
+    port: int,
+) -> None:
+    """Launch the current simplified-taxonomy GT workspace.
+
+    This is intentionally interactive and blocks until the workspace is stopped
+    with Ctrl+C. The workspace uses the current 1-FPS frame-tag predictions under
+    each recording's frame-input directory and autosaves reviewed GT under
+    ``06_gt_comparison/gt``.
+    """
+    gt_root = output_root / "06_gt_comparison" / "gt"
+    print("\n=== Default GT Workspace ===", flush=True)
+    print(
+        "Launching ms_odd_tagging.simplified_taxonomy.gt_workspace_profiled",
+        flush=True,
+    )
+    print(f"- URL: http://{host}:{port}", flush=True)
+    print(f"- Frame root: {frame_root}", flush=True)
+    print(f"- GT autosave root: {gt_root}", flush=True)
+    print(
+        "- Prediction source: <frame-root>/<recording>/recording_frame_tags_1fps",
+        flush=True,
+    )
+    print("- Stop the workspace with Ctrl+C when annotation is finished.", flush=True)
+    run_command(
+        "ms_odd_tagging.simplified_taxonomy.gt_workspace_profiled",
+        [
+            "--frame-root",
+            str(frame_root),
+            "--gt-root",
+            str(gt_root),
+            "--source-hz",
+            str(DEFAULT_SOURCE_HZ),
+            "--sample-hz",
+            str(DEFAULT_GT_SAMPLE_HZ),
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
+    )
 
 
 def missing_required_files(source_root: Path, recording: str) -> list[str]:
@@ -182,7 +233,10 @@ def print_runtime_summary(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run canonicalization -> explorer-aligned per-frame inputs and BEVs."
+        description=(
+            "Run canonicalization -> frame inputs/BEVs, then launch the default "
+            "simplified GT workspace."
+        )
     )
     parser.add_argument("recordings", nargs="+", help="Recording IDs to process.")
     parser.add_argument("--source-root", type=Path, default=DATA_RAW)
@@ -222,6 +276,25 @@ def parse_args() -> argparse.Namespace:
         "--profile-generation",
         action="store_true",
         help="Write optional frame-generation profiling artifacts.",
+    )
+    parser.add_argument(
+        "--no-gt-workspace",
+        action="store_true",
+        help=(
+            "Do not launch the default simplified GT workspace after successful "
+            "frame-input generation. Useful for unattended/batch runs."
+        ),
+    )
+    parser.add_argument(
+        "--gt-host",
+        default=DEFAULT_GT_HOST,
+        help=f"GT workspace host (default: {DEFAULT_GT_HOST}).",
+    )
+    parser.add_argument(
+        "--gt-port",
+        type=int,
+        default=DEFAULT_GT_PORT,
+        help=f"GT workspace port (default: {DEFAULT_GT_PORT}).",
     )
     return parser.parse_args()
 
@@ -269,9 +342,12 @@ def main() -> int:
             continue
 
         canonical_args = [
-            "--source-root", str(args.source_root),
-            "--output-root", str(canonical_root),
-            "--ld-radius-m", str(args.ld_radius_m),
+            "--source-root",
+            str(args.source_root),
+            "--output-root",
+            str(canonical_root),
+            "--ld-radius-m",
+            str(args.ld_radius_m),
             recording,
         ]
         try:
@@ -355,10 +431,14 @@ def main() -> int:
             flush=True,
         )
         model_args = [
-            "--input-dir", str(canonical_root),
-            "--output-dir", str(frame_input_root),
-            "--existing-output", args.existing_output,
-            "--recording", recording,
+            "--input-dir",
+            str(canonical_root),
+            "--output-dir",
+            str(frame_input_root),
+            "--existing-output",
+            args.existing_output,
+            "--recording",
+            recording,
         ]
         if args.frame_limit is not None:
             model_args.extend(["--frame-limit", str(args.frame_limit)])
@@ -433,6 +513,29 @@ def main() -> int:
         total_elapsed,
     )
     print_runtime_summary(stage_timings, failures, total_elapsed, report_path)
+
+    if frame_successes and not args.no_gt_workspace:
+        try:
+            launch_default_gt_workspace(
+                frame_root=frame_input_root,
+                output_root=args.output_root,
+                host=args.gt_host,
+                port=args.gt_port,
+            )
+        except subprocess.CalledProcessError as exc:
+            print(
+                red(
+                    "GT workspace failed to start or exited with an error "
+                    f"(code {exc.returncode})."
+                ),
+                flush=True,
+            )
+            return 1
+    elif not frame_successes:
+        print("\nGT workspace not launched: no successful frame-input recordings.", flush=True)
+    else:
+        print("\nGT workspace launch skipped (--no-gt-workspace).", flush=True)
+
     return 1 if failures else 0
 
 
