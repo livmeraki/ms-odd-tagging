@@ -118,22 +118,3 @@ BEV 또는 geometry feature를 생성할 때 `ld_feature_store`와 frame-level L
 기본 sampling은 1 FPS이다.
 
 각 sampled frame은 해당 source frame의 canonical state를 기반으로 생성되며 GT Workspace와 VLM evidence 구성에 사용된다.
-
-## 8. Rule Event와 Model Input의 분리
-
-중요한 설계 원칙:
-
-```text
-Canonical data
-├── model-facing frame.json
-└── rule-derived events / GT reference
-```
-
-Rule detector가 생성한 정답 후보를 model-facing `frame.json`에 직접 삽입하지 않는다. 이는 VLM 평가 시 answer leakage를 막기 위한 contract이다.
-
-## 9. Coordinate / Geometry 주의사항
-
-- 입력 데이터의 좌표계 종류를 확인한 후 변환한다.
-- BEV는 ego-centric representation을 사용하며 ego heading과 geometry 방향을 일관되게 유지해야 한다.
-- lane polygon, object footprint, crosswalk/stopline relation을 계산할 때 center point 하나만으로 판단하지 말고 footprint/geometry overlap 여부를 확인한다.
-- 숫자 `0`은 정상 값일 수 있으므로 falsy 처리로 `null`로 바꾸지 않는다.

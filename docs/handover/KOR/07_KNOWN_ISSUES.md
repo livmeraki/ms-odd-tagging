@@ -1,8 +1,8 @@
 # Known Issues
 
-## 1. 목적
+### 목적
 
-이 문서는 현재 pipeline에서 이미 확인되었거나 구조상 주의가 필요한 문제를 정리한다. 새 담당자가 동일한 문제를 다시 처음부터 조사하지 않도록 **현상 / 원인 / 영향 / 권장 확인 방법** 중심으로 작성한다.
+이 문서는 현재 pipeline에서 이미 확인되었거나 구조상 주의가 필요한 문제를 정리한다. 
 
 ## 2. Lane Reconstruction / Continuity
 
@@ -47,17 +47,6 @@ config에 다음 logic이 존재한다.
 
 threshold를 낮추면 recall은 올라갈 수 있지만 intersection false positive가 다시 증가할 수 있다.
 
-## 4. Intersection Look-ahead / Activation
-
-과거 topology 실험에서 ego가 아직 일반 도로를 주행 중인데 먼 intersection component가 너무 일찍 활성화되는 문제가 있었다.
-
-권장:
-
-- inside polygon 여부 우선
-- entry tolerance 제한
-- approach distance gating
-- hysteresis 적용
-- geometry result를 explorer로 확인
 
 ## 5. LD Missing / Short Segment
 
@@ -121,30 +110,8 @@ Nearby object 및 crossing scenario는 frame 간 object association과 velocity 
 
 Trajectory의 미세한 position/velocity noise는 acceleration과 jerk에서 크게 증폭될 수 있다.
 
-`high_magnitude_jerk`의 FP가 발생하면 threshold를 바로 올리기 전에:
 
-1. timestamp interval
-2. acceleration calculation
-3. isolated spike
-4. source trajectory discontinuity
-
-를 먼저 확인한다.
-
-## 10. Traffic Interaction Calibration
-
-`traffic_interactions` configuration provenance는 `poc_requires_calibration`이다.
-
-즉 아래 계열은 code가 존재해도 충분한 dataset validation 없이 production rule로 고정하면 안 된다.
-
-- slow lead
-- lane change with lead/trail
-- stopping with/without lead
-- stationary in traffic
-- behind bike/long vehicle/pedestrian
-- waiting for pedestrian
-- barrier interaction
-
-## 11. VLM Runtime
+## 10. VLM Runtime
 
 VLM은 rule보다 처리 비용이 훨씬 크다. candidate gating 없이 많은 frame/BEV를 전달하면 recording당 inference 시간이 크게 증가한다.
 
@@ -155,44 +122,3 @@ VLM은 rule보다 처리 비용이 훨씬 크다. candidate gating 없이 많은
 - image 수 최소화
 - cache 사용
 - semantic ambiguity가 실제 존재하는 scenario에만 적용
-
-## 12. VLM Evidence 부족
-
-Prompt를 수정해도 필요한 evidence가 입력에 없으면 성능이 개선되지 않는다.
-
-예를 들어 pedestrian interaction에는 단순 current position뿐 아니라:
-
-- displacement
-- velocity
-- trajectory/history
-- ego stopping/yielding state
-- crosswalk relation
-
-등이 필요할 수 있다.
-
-문제가 발생하면 prompt보다 evidence schema를 먼저 확인한다.
-
-## 13. Unsupported Label을 강제로 추론하지 않기
-
-README의 중요한 contract 중 하나는 evidence가 부족한 semantic label을 unknown으로 유지하는 것이다.
-
-GT reviewer에서도 future taxonomy label을 unsupported 상태로 보여줄 수 있다. unsupported를 false와 동일하게 처리하면 evaluation interpretation이 왜곡될 수 있다.
-
-## 14. OD-only vs OD+LD Canonicalizer
-
-두 canonicalizer는 아직 별도로 유지된다. 한쪽의 field/behavior를 다른 쪽에도 자동으로 동일하다고 가정하면 안 된다.
-
-변경 시 두 mode의 regression test가 필요하다.
-
-## 15. Repository Cleanup 관련 주의
-
-Repository에는 active module 외에도 revised generator, PoC package, legacy helper, 과거 experiment 문서가 남아 있다.
-
-삭제 전에 반드시 다음을 확인한다.
-
-- README에서 참조하는지
-- tests에서 import하는지
-- GT/explorer가 legacy helper를 import하는지
-- current pipeline이 아니라도 재현용 artifact인지
-
-인수인계 완료 전에는 대규모 cleanup을 별도 branch에서 수행하는 것을 권장한다.

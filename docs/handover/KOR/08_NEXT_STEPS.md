@@ -180,12 +180,6 @@ canonical
 
 단, 각 stage가 독립 실행 가능하다는 장점은 유지한다.
 
-### 14. Handover English Version
-
-Korean 문서를 최종 검증한 후 동일 구조를 `docs/handover/ENG/`에 번역한다.
-
-직접 두 언어를 동시에 수정하지 말고 **KOR을 source document로 확정한 후 ENG를 생성**하는 것을 권장한다.
-
 ## Recommended Order
 
 ```text
