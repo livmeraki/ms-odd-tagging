@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlparse
 from http.server import ThreadingHTTPServer
 
 from . import gt_workspace as workspace
+from .gt_workspace_layout import inject_workspace_layout
 from .input_frame_gt_server import _existing_gt_by_frame
 
 
@@ -238,6 +239,7 @@ def main() -> int:
 
     profiler = _ListLoadProfiler(len(recordings))
     workspace._recording_summary = profiler.summarize
+    workspace._inject_equal_height_sidebar = inject_workspace_layout
 
     t0 = perf_counter()
     server = ThreadingHTTPServer(
