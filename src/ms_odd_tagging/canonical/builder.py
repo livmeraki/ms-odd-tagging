@@ -1,8 +1,7 @@
-"""Public entrypoint for OD+LD canonical recording generation.
+"""Public entrypoint for canonical OD+LD+trajectory recording generation.
 
-OD annotations and ego trajectories provide the dynamic frame core. Recording-level
-LD supplies the map geometry required by the supported tagging pipeline. The
-OD-only implementation remains an internal shared core used by canonical_odld.
+The supported canonical path always combines OD annotations, recording-level LD
+map geometry, and ego trajectory into one canonical representation.
 """
 
 from __future__ import annotations
