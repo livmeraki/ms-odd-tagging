@@ -1,129 +1,141 @@
 # Next Steps
 
-## 1. 목적
+이 문서는 **현재 cleanup branch 구조를 기준으로** 후속 개발 우선순위만 정리한다. 이미 제거한 legacy/PoC 구조를 다시 유지하는 작업은 포함하지 않는다.
 
-이 문서는 현재 구현 상태를 기준으로 후속 개발 시 우선적으로 확인할 작업을 정리한다. 우선순위는 정확도, 재현성, 유지보수성, 확장성을 기준으로 제안한다.
+## P0 — 먼저 고정할 것
 
-## P0 — 반드시 먼저 확인
+### 1. 재현 가능한 Evaluation Baseline
 
-### 1. 재현 가능한 Evaluation Baseline 고정
+현재 가장 먼저 필요한 것은 같은 조건에서 반복 가능한 benchmark이다.
 
-현재 발표용 metric은 존재하지만 repository와 동일 조건으로 즉시 재현할 benchmark manifest가 부족하다.
+고정할 항목:
 
-해야 할 일:
+- evaluation recording list
+- GT version
+- commit SHA
+- `configs/direct_scenarios.yaml`
+- scenario subset
+- evaluation unit
+- 결과 JSON artifact
 
-- evaluation recording list 고정
-- GT version 고정
-- commit SHA / config version 저장
-- scenario subset 명시
-- frame/event evaluation unit 명시
-- 결과 JSON artifact 저장
+이 baseline이 있어야 threshold나 algorithm 변경이 실제 개선인지 판단할 수 있다.
 
-이 작업이 먼저 되어야 이후 threshold 변경이 실제 개선인지 판단할 수 있다.
+### 2. Cleanup branch fresh-clone 검증
 
-### 2. Traffic-light Temporal Persistence
+새 환경에서 다음 순서가 실제로 동작하는지 확인한다.
 
-현재 가장 명확한 data issue 중 하나는 traffic-light OD의 sparse annotation과 1 FPS BEV sampling 간 mismatch이다.
+```text
+clone
+→ pip install -e ".[dev]"
+→ smoke pipeline
+→ full pipeline
+→ ODLD Explorer
+→ GT Workspace
+→ pytest
+```
 
-해야 할 일:
+문서에 적힌 command와 실제 CLI가 다르면 code에 compatibility wrapper를 다시 추가하지 말고 문서를 현재 entry point에 맞춘다.
 
-- static-like traffic light track persistence
-- missing-gap tolerance
-- stopline/intersection association 유지
-- expiry / confidence decay rule
-- state 정보와 existence 정보를 분리
+### 3. Lane / Intersection Regression Set
 
-### 3. Lane / Intersection Regression Test
-
-Lane continuity와 intersection에서의 lane-ID 변화는 여러 detector에 영향을 준다.
-
-최소 regression set을 만들어 다음을 고정 검증한다.
+최소 다음 scene을 고정한다.
 
 - straight road
-- lane change left/right
+- left/right lane change
 - intersection straight
-- left/right turn intersection
+- intersection left/right turn
 - short/missing LD segment
 - split/merge lane
 
-## P1 — Accuracy / Coverage 개선
+Following-lane과 lane-change 수정 시 이 set을 항상 함께 확인한다.
 
-### 4. False Negative 중심 Recall 개선
+## P1 — Accuracy 개선
 
-대표 평가에서는 Precision보다 Recall이 낮았다.
+### 4. False Negative 분석
 
-권장 절차:
+대표 평가에서는 Recall이 Precision보다 낮았다. 모든 threshold를 동시에 느슨하게 하기보다 FN을 scenario별로 분리한다.
 
-1. FN을 scenario별로 분리
-2. detector가 candidate를 만들지 못한 이유 확인
-3. data/evidence 부족과 threshold 문제를 구분
-4. temporal boundary error 확인
-5. scenario별 threshold calibration
+확인 순서:
 
-모든 threshold를 한 번에 느슨하게 하지 않는다.
+1. detector가 candidate를 만들었는가
+2. 필요한 evidence가 canonical/features에 존재하는가
+3. threshold 문제인가
+4. temporal boundary 문제인가
+5. lane/topology 오류의 downstream 영향인가
 
-### 5. Traffic Interaction Calibration
+### 5. Traffic-light Temporal Persistence
 
-현재 `poc_requires_calibration` 상태인 scenario를 우선 검증한다.
+현재 traffic-light OD가 sparse하게 나타나는 경우 1 FPS sampled BEV와 context가 어긋날 수 있다.
 
-예:
+개선 후보:
 
-- `following_lane_with_slow_lead`
-- `stopping_with_lead`
-- `stopping_without_lead`
-- `stationary_in_traffic`
-- `waiting_for_pedestrian_to_cross`
+- existence persistence
+- missing-gap tolerance
+- stopline/intersection association 유지
+- confidence decay / expiry
 
-각 scenario에 최소 positive/negative GT set을 확보한 후 active/stable 여부를 결정한다.
+Traffic-light state가 source annotation에 없으면 임의 state를 생성하지 않는다.
 
-### 6. Following-lane Pipeline과 Main Registry 관계 정리
+### 6. Traffic Interaction Calibration
 
-현재 `following_lane`은 별도 scenario package와 main rule registry가 분리되어 있다.
+추가 validation이 필요한 interaction scenario는 positive/negative GT를 확보한 뒤 threshold를 재조정한다.
 
-해야 할 일:
+특히 다음 영역을 우선 확인한다.
 
-- source of truth 명확화
-- duplicate logic 여부 확인
-- `following_lane_with_lead/without_lead` wiring 명확화
-- GT reviewer support와 registry status 동기화
+- lead / slow lead
+- stopping with/without lead
+- stationary in traffic
+- waiting for pedestrian to cross
+- crossed-by object
 
-## P2 — Architecture 정리
+## P2 — Current architecture 단순화
 
-### 7. Canonicalizer 차이 정리
+### 7. Following-lane과 Main Rule Registry 관계 정리
 
-OD-only와 OD+LD canonicalizer의 차이를 비교하여:
+현재 following-lane은 별도 package를 사용하면서 main rule pipeline과 연결된다.
 
-- 반드시 분리해야 하는 부분
-- shared module로 이동 가능한 부분
-- schema compatibility
+확인할 것:
 
-를 문서화하고 test를 추가한다.
+- detector source of truth
+- duplicated relation calculation 여부
+- `following_lane_with_lead/without_lead` wiring
+- lane result가 lane-change/traffic interaction에 전달되는 경로
 
-무리하게 즉시 하나로 합치기보다 behavior parity를 먼저 확인한다.
+중복이 확인되면 하나의 implementation만 남긴다.
 
-### 8. PoC / Active / Legacy 구분 강화
+### 8. Frame Input / Frame Tag Sampling Contract 고정
 
-Repository에 다음이 공존한다.
+Frame Input과 `recording_frame_tags_1fps`는 같은 nominal timestamp를 다른 source frame index로 선택할 수 있다.
 
-- active pipeline
-- revised experiment
-- qwen VLM PoC
-- Lanelet2 PoC
-- legacy window helper
+현재 GT Workspace는:
 
-폴더 또는 README badge/documentation으로 상태를 명시해 잘못된 entry point 사용을 줄인다.
+```text
+exact frame index
+→ nearest timestamp within half sample period
+```
 
-### 9. Config Provenance 표준화
+순서로 정합한다.
 
-현재 config에 `taxonomy_defined`, `engineering_default`, `provisional`, `poc_requires_calibration` 등이 존재한다.
+후속 작업에서는 두 exporter가 동일 sampling helper를 공유하도록 만드는 것이 가장 깔끔하다. 그렇게 되면 GT Workspace의 fallback alignment도 단순화할 수 있다.
 
-좋은 방향이므로 scenario-level status에도 동일 provenance를 연결하고 threshold 변경 이력을 남긴다.
+### 9. GT Workspace 초기 로딩 최적화
 
-## P3 — VLM 개선
+Recording list 생성 시 모든 frame directory와 prediction tag를 매번 다시 읽으면 큰 dataset에서 초기 로딩이 느려질 수 있다.
 
-### 10. VLM은 Candidate Verifier 역할로 제한
+개선 후보:
 
-VLM을 full-frame classifier로 확장하기보다 다음 구조를 유지/개선한다.
+- recording summary cache
+- frame manifest 재사용
+- GT metadata 단일 read
+- 필요할 때만 scenario tag index 생성
+
+Profiler 전용 entry point를 다시 만들기보다 현재 workspace 내부에서 필요 시 timing/logging을 켤 수 있게 하는 편이 좋다.
+
+## P3 — VLM
+
+### 10. Candidate Verifier 역할 유지
+
+VLM은 full-frame classifier가 아니라 다음 구조를 유지한다.
 
 ```text
 Rule / Geometry Candidate
@@ -132,63 +144,36 @@ Episode Merge
           ↓
 Evidence Selection
           ↓
-VLM Verification
+Qwen VLM
+          ↓
+Validation / Merge
 ```
 
-### 11. Evidence Quality 개선
+### 11. VLM Benchmark 고정
 
-Semantic scenario별로 필요한 evidence를 정의한다.
-
-예: `waiting_for_pedestrian_to_cross`
-
-- pedestrian trajectory
-- crosswalk relation
-- ego deceleration/stationary history
-- conflict path
-- lead vehicle 여부
-
-### 12. VLM Benchmark 고정
+최소 다음을 함께 저장한다.
 
 - model version
 - prompt version
-- legend mode
-- image count
+- scenario group
 - candidate count
-- GPU/runtime
+- image count
+- GPU
+- cache 여부
+- runtime
 - accuracy/F1
-
-를 동일 manifest에 저장한다.
-
-## P4 — 사용성
-
-### 13. One-command Full Pipeline
-
-현재 `run_pipeline.py`는 canonical + frame input 중심이다.
-
-향후 필요하다면 별도 orchestration layer에서:
-
-```text
-canonical
-→ rules
-→ visualization
-→ optional VLM
-→ validation
-→ GT comparison
-```
-
-을 명시적으로 실행하도록 확장할 수 있다.
-
-단, 각 stage가 독립 실행 가능하다는 장점은 유지한다.
 
 ## Recommended Order
 
 ```text
-1. Evaluation baseline 고정
-2. Traffic-light persistence
-3. Lane/intersection regression
-4. FN 분석 및 Recall 개선
-5. Traffic interaction calibration
-6. Following-lane/main registry 정리
-7. PoC/legacy 구조 정리
-8. VLM evidence/runtime 개선
+1. fresh-clone + pytest 검증
+2. evaluation baseline 고정
+3. lane/intersection regression
+4. FN 분석
+5. traffic-light persistence
+6. traffic interaction calibration
+7. following-lane 중복 정리
+8. frame sampling contract 통일
+9. GT Workspace loading 최적화
+10. VLM benchmark 고정
 ```
