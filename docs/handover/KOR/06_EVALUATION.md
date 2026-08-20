@@ -6,27 +6,70 @@
 
 ## 2. 현재 GT 작성 방식
 
-현재 repository에는 frame-level GT reviewer가 있다.
+현재 기본 GT 작성 도구는 다음 module이다.
 
-실행 예:
-
-```bash
-python -m ms_odd_tagging.gt_comparison.authoring \
-  --frame-input-root outputs/02_frame_inputs_revised \
-  --output-root outputs/frame_gt_authoring \
-  --all
+```text
+ms_odd_tagging.simplified_taxonomy.gt_workspace_profiled
 ```
 
-Reviewer의 주요 특징:
+`run_pipeline.py`를 기본 option으로 실행하면 Canonicalization과 Frame Input / BEV generation이 완료된 뒤 이 GT Workspace가 자동으로 실행된다.
 
-- selected source frame과 정확히 대응하는 BEV 사용
-- browser에서 label 작성
-- recording별 `<recording>_frame_gt.json` 다운로드
-- deterministic rule / lane reference를 sidecar evidence로 제공
-- unsupported taxonomy label은 unknown으로 유지
-- source frame 0~4는 detection 신뢰도가 낮아 scoring에서 제외하도록 표시
+직접 실행:
 
-과거 5초 motional window 기반 GT helper는 legacy로 남아 있으나 active frame reviewer의 기본 방식은 아니다.
+```powershell
+python -m ms_odd_tagging.simplified_taxonomy.gt_workspace_profiled `
+  --frame-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "02_frame_inputs") `
+  --gt-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_gt_comparison/gt") `
+  --source-hz 10 `
+  --sample-hz 1 `
+  --host 127.0.0.1 `
+  --port 8765
+```
+
+browser:
+
+```text
+http://127.0.0.1:8765
+```
+
+### Prediction source
+
+Prediction은 별도 exported simplified prediction JSON을 기본 source로 사용하지 않는다.
+
+현재 source:
+
+```text
+outputs/02_frame_inputs/<recording>/recording_frame_tags_1fps/
+```
+
+각 frame의 active Motional Scenario를 simplified taxonomy로 mapping해 Prediction으로 보여 준다.
+
+### Frame alignment
+
+Frame Input과 frame-tag exporter가 서로 다른 1 FPS sampling policy를 사용할 수 있으므로 prediction matching은 다음 순서로 수행한다.
+
+1. exact frame index
+2. exact match가 없으면 nearest timestamp
+3. 1 FPS sample period의 절반 이내인 경우만 accept
+
+따라서 evaluation/debug 시 BEV frame과 prediction source frame이 같은 시점을 나타내는지 확인해야 한다.
+
+### Prediction prefill과 reviewed GT
+
+- unreviewed frame은 current prediction으로 GT control을 prefill
+- prefill 상태는 `UNREVIEWED`
+- 사용자가 `Save` 또는 `Save + Next`를 수행해야 reviewed GT가 됨
+- 기존 reviewed GT는 prediction으로 덮어쓰지 않음
+
+### Autosave
+
+```text
+outputs/06_gt_comparison/gt/<recording>_manual_gt.json
+```
+
+GT Workspace process는 annotation 중 계속 실행해 두고, 종료할 때 `Ctrl+C`를 사용한다.
+
+과거 `ms_odd_tagging.gt_comparison.authoring` standalone reviewer와 Full ODLD Explorer에 GT authoring panel을 주입하는 tool은 historical/debug 용도로 남아 있으나 현재 default GT workflow는 아니다.
 
 ## 3. 평가 기본 단위
 
@@ -38,6 +81,8 @@ Motional Scenario는 event range를 가지므로 평가 시 다음 중 어느 �
 - recording-level presence/absence
 
 서로 다른 평가 단위의 metric을 직접 비교하면 안 된다.
+
+현재 Simplified Taxonomy GT Workspace는 기본적으로 1 FPS sampled frame review workflow이다.
 
 ## 4. 기본 지표
 
@@ -112,13 +157,14 @@ VLM을 전체 frame에 직접 적용하는 것보다 rule gating 후 제한적�
 1. commit SHA 기록
 2. config version 기록
 3. GT version 고정
-4. scenario subset 명시
-5. small-set regression test
-6. TP/FP/FN 계산
-7. FP/FN case explorer로 visual review
-8. threshold 수정
-9. 같은 GT에서 재실행
-10. 결과 artifact 저장
+4. prediction source가 current `recording_frame_tags_1fps`인지 확인
+5. GT Workspace에서 frame/timestamp alignment 확인
+6. scenario subset 명시
+7. small-set regression test
+8. TP/FP/FN 계산
+9. FP/FN case visual review
+10. threshold 수정 후 같은 GT에서 재실행
+11. 결과 artifact 저장
 
 ## 10. 앞으로 반드시 추가할 것
 
@@ -131,6 +177,8 @@ VLM을 전체 frame에 직접 적용하는 것보다 rule gating 후 제한적�
   "commit": "<sha>",
   "config_version": "...",
   "gt_version": "...",
+  "prediction_source": "recording_frame_tags_1fps",
+  "sampling_hz": 1.0,
   "recordings": ["..."],
   "scenarios": ["..."],
   "evaluation_unit": "frame",
