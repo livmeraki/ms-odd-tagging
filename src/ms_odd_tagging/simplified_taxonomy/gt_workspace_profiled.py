@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import mimetypes
 from collections import defaultdict
 from pathlib import Path
 from threading import Lock
 from time import perf_counter
+from urllib.parse import unquote, urlparse
 
 from http.server import ThreadingHTTPServer
 
@@ -16,7 +18,7 @@ class _ListLoadProfiler:
     """Accumulate timing for one /api/recordings list build.
 
     The existing workspace builds the recording list synchronously by calling
-    ``_recording_summary`` once for every recording.  Replacing that function
+    ``_recording_summary`` once for every recording. Replacing that function
     lets us measure the expensive sub-steps without changing GT behavior.
     """
 
@@ -145,6 +147,64 @@ class _ListLoadProfiler:
         print("=" * 72 + "\n")
 
 
+def _make_profiled_handler(
+    frame_root: Path,
+    prediction_root: Path,
+    gt_root: Path,
+    source_hz: float,
+    sample_hz: float,
+):
+    """Use the normal workspace handler, but serve the current ``bev.png`` name.
+
+    The August simplified-GT workspace expected ``bev_revised.png``. The cleanup
+    pipeline now writes ``bev.png``. Prefer the current file and retain the old
+    filename only as a compatibility fallback.
+    """
+    BaseHandler = workspace._make_handler(
+        frame_root, prediction_root, gt_root, source_hz, sample_hz
+    )
+
+    class Handler(BaseHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            path = unquote(urlparse(self.path).path)
+            if not path.startswith("/bev/"):
+                super().do_GET()
+                return
+
+            rest = path[len("/bev/") :]
+            try:
+                recording, frame_text = rest.rsplit("/", 1)
+                frame_index = int(frame_text)
+            except ValueError:
+                self.send_error(400)
+                return
+
+            recording_dir = workspace._safe_recording(frame_root, recording)
+            if recording_dir is None:
+                self.send_error(404)
+                return
+
+            frame_dir = recording_dir / f"frame_{frame_index:06d}"
+            image = frame_dir / "bev.png"
+            if not image.is_file():
+                image = frame_dir / "bev_revised.png"
+            if not image.is_file():
+                self.send_error(404)
+                return
+
+            try:
+                payload = image.read_bytes()
+            except OSError:
+                self.send_error(500)
+                return
+            self._send_bytes(
+                payload,
+                mimetypes.guess_type(image.name)[0] or "image/png",
+            )
+
+    return Handler
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="GT Workspace with startup/list-load timing instrumentation."
@@ -182,7 +242,7 @@ def main() -> int:
     t0 = perf_counter()
     server = ThreadingHTTPServer(
         (args.host, args.port),
-        workspace._make_handler(
+        _make_profiled_handler(
             args.frame_root,
             args.prediction_root,
             args.gt_root,
