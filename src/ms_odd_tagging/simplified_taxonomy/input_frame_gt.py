@@ -10,6 +10,7 @@ from typing import Any
 from .manual_gt import _html
 
 _FRAME_RE = re.compile(r"^frame_(\d+)$")
+_BEV_FILENAMES = ("bev.png", "bev_revised.png")
 
 
 def _frame_index(frame_dir: Path, frame: dict[str, Any]) -> int | None:
@@ -28,6 +29,15 @@ def _timestamp(frame: dict[str, Any]) -> float | None:
     return None
 
 
+def _bev_path(frame_dir: Path) -> Path | None:
+    """Return the current BEV file, with legacy fallback for older frame-input trees."""
+    for filename in _BEV_FILENAMES:
+        path = frame_dir / filename
+        if path.is_file():
+            return path
+    return None
+
+
 def _sample_rows_by_time(
     rows: list[dict[str, Any]],
     *,
@@ -36,11 +46,11 @@ def _sample_rows_by_time(
 ) -> list[dict[str, Any]]:
     """Sample generated rows on a timestamp grid without assuming frame_index cadence.
 
-    frame_inputs_revised is itself commonly generated at 1 fps using timestamps, so
-    generated frame indices need not be exact multiples of 10 (for example 0, 11,
-    21, ...). Applying ``frame_index % 10`` a second time drops valid frames. This
-    helper keeps every already-generated 1 fps frame, while still allowing an
-    all-frame input tree to be downsampled to the requested rate.
+    Frame inputs are commonly generated at 1 fps using timestamps, so generated
+    frame indices need not be exact multiples of 10 (for example 0, 11, 21, ...).
+    Applying ``frame_index % 10`` a second time drops valid frames. This helper
+    keeps every already-generated 1 fps frame, while still allowing an all-frame
+    input tree to be downsampled to the requested rate.
     """
     if not rows:
         return []
@@ -76,10 +86,10 @@ def discover_completed_rows(
 ) -> list[dict[str, Any]]:
     """Snapshot fully readable input frames without modifying generator output.
 
-    A frame is considered usable only when both frame.json and bev_revised.png exist
-    and frame.json parses successfully. Sampling is timestamp-based, not based on
-    ``frame_index % N``, because revised frame inputs may already have been sampled
-    on a timestamp grid and therefore have non-uniform source-frame index gaps.
+    A frame is usable when ``frame.json`` parses successfully and a BEV exists.
+    The current cleanup pipeline writes ``bev.png``; ``bev_revised.png`` remains
+    supported as a compatibility fallback for older frame-input trees.
+    Sampling is timestamp-based, not based on ``frame_index % N``.
     """
     if source_hz <= 0 or sample_hz <= 0:
         raise ValueError("source_hz and sample_hz must be positive")
@@ -91,8 +101,8 @@ def discover_completed_rows(
         if not frame_dir.is_dir():
             continue
         frame_json = frame_dir / "frame.json"
-        bev_png = frame_dir / "bev_revised.png"
-        if not frame_json.is_file() or not bev_png.is_file():
+        bev_png = _bev_path(frame_dir)
+        if not frame_json.is_file() or bev_png is None:
             continue
         try:
             frame = json.loads(frame_json.read_text(encoding="utf-8"))
@@ -109,6 +119,7 @@ def discover_completed_rows(
                 "timestamp": _timestamp(frame),
                 "prediction": {},
                 "bev_uri": bev_png.resolve().as_uri(),
+                "bev_filename": bev_png.name,
                 "gt": None,
                 "reviewed": False,
             }
@@ -132,7 +143,7 @@ def generate_review_from_input_frames(
     )
     if not rows:
         raise ValueError(
-            "no completed frames found; expected frame_XXXXXX/frame.json and bev_revised.png"
+            "no completed frames found; expected frame_XXXXXX/frame.json and bev.png (or legacy bev_revised.png)"
         )
     output_html.parent.mkdir(parents=True, exist_ok=True)
     output_html.write_text(_html(rows, recording_dir.name, sample_hz), encoding="utf-8")
@@ -142,14 +153,14 @@ def generate_review_from_input_frames(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate manual GT HTML directly from completed frame_inputs_revised folders. "
+            "Generate manual GT HTML directly from completed frame-input folders. "
             "The source recording directory is read-only and incomplete frames are skipped."
         )
     )
     parser.add_argument(
         "recording_dir",
         type=Path,
-        help="outputs/02_frame_inputs_revised/<recording>",
+        help="outputs/02_frame_inputs/<recording>",
     )
     parser.add_argument(
         "--output",
@@ -170,7 +181,7 @@ def main() -> int:
     )
     if not rows:
         raise SystemExit(
-            "No completed frames found. Waiting/incomplete frame folders were not touched."
+            "No completed frames found. Expected frame.json plus bev.png (or legacy bev_revised.png)."
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
