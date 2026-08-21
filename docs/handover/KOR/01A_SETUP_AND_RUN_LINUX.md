@@ -1,8 +1,6 @@
 # Setup and Run — Linux
 
-이 문서는 Linux Bash 환경에서 cleanup branch의 **현재 경로만** 실행하기 위한 runbook이다.
-
-## 1. Clone / branch
+## 1. Clone
 
 ```bash
 git clone https://github.com/livmeraki/ms-odd-tagging.git
@@ -11,7 +9,7 @@ git switch refactor/repo-cleanup-20260813
 git pull
 ```
 
-## 2. Python environment
+## 2. Environment
 
 Python 3.10 이상을 사용한다.
 
@@ -22,21 +20,16 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
-설치 확인:
-
 ```bash
 ms-odd-tagging --help
-python -c "import ms_odd_tagging; print('ms_odd_tagging import OK')"
 ```
 
-## 3. Data / output root
+## 3. Data / output
 
 ```bash
 export MS_ODD_DATA_ROOT="/absolute/path/to/data"
 export MS_ODD_OUTPUT_ROOT="/absolute/path/to/outputs"
 ```
-
-각 recording은 다음 세 파일을 가진다.
 
 ```text
 $MS_ODD_DATA_ROOT/01_raw/<RECORDING_ID>/
@@ -60,21 +53,19 @@ find "$MS_ODD_OUTPUT_ROOT/01_canonical" -maxdepth 1 -type f | head
 find "$MS_ODD_OUTPUT_ROOT/02_frame_inputs" -type f | head
 ```
 
-`02_frame_inputs` 아래 sampled frame마다 `frame.json`과 `bev.png`가 생성되어야 한다.
-
-## 5. Normal pipeline
+## 5. Pipeline
 
 ```bash
-# 1 FPS (default)
+# 1 FPS
 ms-odd-tagging <RECORDING_ID>
 
 # 2 FPS
 ms-odd-tagging <RECORDING_ID> --frames-per-second 2
 
-# all canonical frames
+# all frames
 ms-odd-tagging <RECORDING_ID> --all-frames
 
-# reuse existing outputs
+# reuse output
 ms-odd-tagging <RECORDING_ID> --existing-output resume
 
 # regenerate
@@ -84,7 +75,7 @@ ms-odd-tagging <RECORDING_ID> --existing-output regenerate
 ms-odd-tagging <RECORDING_ID> --stop-after canonical
 ```
 
-모든 recording을 실행할 때:
+모든 recording:
 
 ```bash
 mapfile -t RECORDINGS < <(
@@ -93,34 +84,34 @@ mapfile -t RECORDINGS < <(
 ms-odd-tagging "${RECORDINGS[@]}" --existing-output resume
 ```
 
-## 6. Current CLIs
+## 6. Commands
 
 ```bash
-ms-odd-tagging --help
 ms-odd-canonical --help
-ms-odd-frame-inputs --help
+ms-odd-frames --help
 ms-odd-rules --help
-ms-odd-following-lane --help
-ms-odd-ld-topology --help
-ms-odd-qwen-vlm --help
-ms-odd-gt-workspace --help
-ms-odd-validate-frames --help
+ms-odd-lane --help
+ms-odd-topology --help
+ms-odd-vlm --help
+ms-odd-gt --help
+ms-odd-validate --help
 ```
 
-## 7. Full ODLD Scenario Explorer
+## 7. ODLD Explorer
 
 ```bash
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py \
+python scripts/odld_explorer/generate.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
   --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
   --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
   --regenerate-existing
 ```
 
-## 8. Simplified Taxonomy GT Workspace
+## 8. GT Workspace
 
 ```bash
-ms-odd-gt-workspace \
+ms-odd-gt \
   --frame-root "$MS_ODD_OUTPUT_ROOT/02_frame_inputs" \
   --gt-root "$MS_ODD_OUTPUT_ROOT/06_gt_comparison/gt" \
   --source-hz 10 \
@@ -131,14 +122,14 @@ ms-odd-gt-workspace \
 
 Browser: `http://127.0.0.1:8765`
 
-## 9. Qwen VLM
+## 9. VLM
+
+로컬 vLLM server가 `8001` port에서 실행 중이어야 실제 inference가 가능하다.
 
 ```bash
-ms-odd-qwen-vlm --help
 lsof -i :8001
+ms-odd-vlm --help
 ```
-
-VLM은 전체 frame을 직접 분류하는 기본 경로가 아니라 candidate/episode가 생성된 뒤 필요한 구간에 적용한다.
 
 ## 10. Test
 
