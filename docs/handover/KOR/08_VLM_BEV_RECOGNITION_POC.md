@@ -23,13 +23,15 @@ Image up          = ahead relative to ego
 
 대표 fixture:
 
-![Pedestrian crossing ahead](../../../examples/pseudo_bev_pedestrian/positive_crossing_ahead.png)
+![Pedestrian crossing ahead](https://raw.githubusercontent.com/livmeraki/ms-odd-tagging/poc/vlm-understanding-audit/examples/pseudo_bev_pedestrian/positive_crossing_ahead.png)
 
-![Multiple pedestrians, one crossing](../../../examples/pseudo_bev_pedestrian/positive_multiple_one_crossing.png)
+![Multiple pedestrians, one crossing](https://raw.githubusercontent.com/livmeraki/ms-odd-tagging/poc/vlm-understanding-audit/examples/pseudo_bev_pedestrian/positive_multiple_one_crossing.png)
 
-![No pedestrian](../../../examples/pseudo_bev_pedestrian/negative_no_pedestrian.png)
+![No pedestrian](https://raw.githubusercontent.com/livmeraki/ms-odd-tagging/poc/vlm-understanding-audit/examples/pseudo_bev_pedestrian/negative_no_pedestrian.png)
 
-![Stopped behind lead vehicle](../../../examples/pseudo_bev_pedestrian/negative_stopped_for_lead.png)
+![Stopped behind lead vehicle](https://raw.githubusercontent.com/livmeraki/ms-odd-tagging/poc/vlm-understanding-audit/examples/pseudo_bev_pedestrian/negative_stopped_for_lead.png)
+
+> 위 fixture image는 `main`이 아니라 `poc/vlm-understanding-audit` branch에 있다. 따라서 이 문서에서는 해당 branch의 raw image를 직접 참조한다.
 
 ---
 
