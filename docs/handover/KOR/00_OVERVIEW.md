@@ -216,26 +216,27 @@ scenario_catalog.csv 확인/수정
 
 VLM 개선 시 **candidate recall과 VLM decision quality를 별도로 측정**하는 것이 중요합니다.
 
-## 8. 현재 고도화 시 우선 볼 영역
+## 8. 아직 해결되지 않은 핵심 개발 항목
 
-현재 후속 개발에서 특히 주의할 영역은 다음과 같습니다.
+현재 후속 개발에서 가장 중요하게 확인해야 할 항목은 다음과 같습니다.
 
-- lane continuity / reconstruction
-- intersection에서 false lane change
-- short / missing LD segment
-- sparse traffic-light observation의 temporal persistence
-- object association / velocity noise
-- jerk / derivative noise
-- frame input과 frame tag sampling alignment
-- GT Workspace loading 성능
-- VLM candidate recall / benchmark 재현성
+- **Lane geometry reconstruction / ego lane inference**: lane 정보가 끊기거나, road 영역만 있고 명시적인 lane geometry가 부족한 구간에서 reconstruction이 약함
+- **Motion signal 품질**: speed, acceleration, lateral acceleration, jerk 계열에서 spike가 나타날 수 있어 source signal과 derivative 계산을 다시 확인해야 함
+- **Speed band 정의**: 현재 fixed band를 사용하지만, 향후 ALT에서 speed-limit 정보가 제공되면 구간별 제한속도를 반영한 dynamic band를 검토할 수 있음
+- **VLM BEV literacy**: VLM이 ego, object, 방향, 상대 위치, legend를 실제로 이해하는지 scenario accuracy와 별도로 검증해야 함
+- **Evaluation methodology**: 현재까지 사용한 수치가 reproducible/reliable baseline인지 다시 확인해야 하며, GT consistency, sampling alignment, evaluation unit, event boundary 기준을 고정해야 함
+- traffic-light temporal persistence
+- object tracking / velocity-sensitive scenario calibration
+- frame input / frame tag sampling contract 통일
+- GT Workspace 확장성/로딩 성능
 
-상세 내용과 권장 우선순위는 다음 문서를 기준으로 합니다.
+각 항목의 현상, 원인 가설, 확인 절차, 구현 방향, regression 범위는 다음 문서에 통합되어 있습니다.
 
 ```text
-07_KNOWN_ISSUES.md
-08_NEXT_STEPS.md
+07_REMAINING_WORK.md
 ```
+
+후속 개발자는 `07_REMAINING_WORK.md`를 단순 TODO list가 아니라 **현재 프로젝트에서 아직 충분히 검증되지 않은 부분의 기술적 인수인계 문서**로 사용합니다.
 
 ## 9. 처음 인수받은 개발자가 따라갈 순서
 
@@ -245,16 +246,15 @@ VLM 개선 시 **candidate recall과 VLM decision quality를 별도로 측정**�
 3. 01_SETUP_AND_RUN.md
 4. 02_PIPELINE.md
 5. 04_SCENARIO_STATUS.md
-6. 07_KNOWN_ISSUES.md
-7. 08_NEXT_STEPS.md
+6. 05_ALGORITHMS.md
+7. 06_EVALUATION.md
+8. 07_REMAINING_WORK.md
 ```
 
-새 detector나 알고리즘을 수정할 경우 추가로 다음 문서를 확인합니다.
+필요 시 다음 문서를 추가로 확인합니다.
 
 ```text
 03_DATA_FORMAT.md
-05_ALGORITHMS.md
-06_EVALUATION.md
 09_REFERENCES.md
 ```
 
@@ -269,10 +269,9 @@ VLM 개선 시 **candidate recall과 VLM decision quality를 별도로 측정**�
 | `02_PIPELINE.md` | pipeline 단계와 module 관계 |
 | `03_DATA_FORMAT.md` | OD / LD / Trajectory / Canonical 형식 |
 | `04_SCENARIO_STATUS.md` | scenario catalog와 현재 구현 상태 |
-| `05_ALGORITHMS.md` | 주요 rule / geometry 알고리즘 |
-| `06_EVALUATION.md` | GT 작성과 평가 방법 |
-| `07_KNOWN_ISSUES.md` | 현재 알려진 문제와 디버깅 주의점 |
-| `08_NEXT_STEPS.md` | 후속 개발 우선순위 |
+| `05_ALGORITHMS.md` | 주요 rule / geometry 알고리즘과 motion/lane 가정 |
+| `06_EVALUATION.md` | GT 작성, evaluation contract, 현재 평가 신뢰성 주의점 |
+| `07_REMAINING_WORK.md` | 아직 검증/구현이 필요한 항목과 구체적인 고도화 방향 |
 | `09_REFERENCES.md` | 관련 코드와 정책/참고 자료 |
 
 영문 문서는 현재 별도로 유지하지 않습니다. 한국어 문서를 먼저 고도화한 뒤, 내용이 안정되면 동일 구조와 내용으로 번역하는 것을 권장합니다.
