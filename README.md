@@ -26,8 +26,8 @@ Semantic cases use candidate/episode selection before VLM inference. Ground-trut
 ```text
 configs/                  scenario and geometry configuration
 data/                     local data layout documentation
-docs/handover/KOR/        detailed Korean handover documentation
-docs/handover/ENG/        developer-oriented English handover
+docs/handover/            developer handover guides
+docs/handover/KOR/        detailed Korean project documentation
 scripts/odld_explorer/    OD+LD scenario explorer
 src/ms_odd_tagging/       implementation
 tests/                    automated tests
@@ -122,11 +122,14 @@ Open `http://127.0.0.1:8765`.
 
 ## Documentation
 
-For an engineer taking over and improving the project, start with:
+For the engineer who will take over and further improve the project:
 
 ```text
-docs/handover/ENG/DEVELOPER_HANDOVER.md
+English: docs/handover/ENG/DEVELOPER_HANDOVER.md
+Korean:  docs/handover/KOREAN.md
 ```
+
+The developer handover guides explain the project architecture, important files, CLI/tools, debugging workflow, extension workflow, testing discipline, and recommended next development priorities.
 
 Detailed Korean project documentation:
 
