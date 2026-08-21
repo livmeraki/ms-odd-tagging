@@ -141,6 +141,7 @@ docs/handover/KOR/04_SCENARIO_STATUS.md
 docs/handover/KOR/05_ALGORITHMS.md
 docs/handover/KOR/06_EVALUATION.md
 docs/handover/KOR/07_REMAINING_WORK.md
+docs/handover/KOR/08_VLM_BEV_RECOGNITION_POC.md
 docs/handover/KOR/09_REFERENCES.md
 ```
 
