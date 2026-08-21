@@ -88,8 +88,7 @@ exact frame index
 
 순서로 정합한다.
 
-후속 작업에서는 두 exporter가 동일 sampling helper를 공유하도록 만드는 것이 가장 깔끔하다. 그렇게 되면 GT Workspace의 fallback alignment도 단순화할 수 있다.
-
+후속 작업에서는 두 exporter가 동일 sampling helper를 공유하도록 만드는 것이 가장 깔끔하다.
 
 ## Recommended Order
 
