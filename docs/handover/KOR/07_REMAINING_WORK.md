@@ -138,7 +138,7 @@ Filtering을 바로 추가하기보다 아래 순서로 원인을 추적해야 �
 5. lateral acceleration 계산의 heading/yaw convention에 문제가 없는지
 6. jerk differentiation에서 작은 오차가 확대되는지
 
-이 부분은 **한수님과 source signal의 기대 특성과 filtering 허용 범위를 다시 확인할 필요가 있다.**
+이 부분은 **한수와 source signal의 기대 특성과 filtering 허용 범위를 다시 확인할 필요가 있다.**
 
 ### Filtering을 적용한다면
 
@@ -316,31 +316,10 @@ Traffic-light OD는 실제 scene에 존재해도 annotation에서는 sparse하�
 
 Source annotation에 traffic-light state가 없으면 state를 임의 생성하지 않는다.
 
----
-
-## 9. Object Tracking / Velocity 기반 Scenario 검증
-
-다음 scenario는 object association과 velocity 품질에 민감하다.
-
-- `near_high_speed_vehicle`
-- `crossed_by_*`
-- slow-lead 관련 scenario
-- 일부 lead/trail behavior
-
-확인할 항목:
-
-- object ID continuity
-- duplicate observation
-- frame gap
-- position jitter
-- unrealistic velocity
-- track start/end artifact
-
-Threshold calibration 전에 upstream tracking/velocity 품질을 먼저 확인한다.
 
 ---
 
-## 10. Frame Sampling Contract 통일
+## 9. Frame Sampling Contract 통일
 
 Frame Input과 `recording_frame_tags_1fps`는 같은 nominal sampling rate를 사용하더라도 source frame 선택 방식이 다르면 정확한 frame index가 달라질 수 있다.
 
@@ -358,7 +337,7 @@ one sampling policy
 
 ---
 
-## 11. GT Workspace 확장성과 성능
+## 10. GT Workspace 확장성과 성능
 
 Dataset이 커질수록 초기 recording scan과 prediction/GT indexing 비용이 커질 수 있다.
 
@@ -371,46 +350,3 @@ Dataset이 커질수록 초기 recording scan과 prediction/GT indexing 비용�
 - scenario index cache
 
 별도 profiler 버전을 다시 만들기보다 현재 workspace 내부에서 optional timing/logging을 제공하는 방향이 좋다.
-
----
-
-## 12. 권장 진행 순서
-
-후속 개발자가 처음부터 모든 scenario threshold를 수정하는 것은 권장하지 않는다.
-
-다음 순서를 권장한다.
-
-```text
-1. Evaluation methodology 재검증
-2. Speed / acceleration / lateral acceleration / jerk signal spike 원인 확인
-3. Lane reconstruction regression set 구축
-4. Road-only / missing-lane fallback 설계 및 구현
-5. Lane-related downstream scenario regression
-6. VLM BEV literacy benchmark
-7. VLM candidate recall / decision accuracy 분리 평가
-8. Traffic-light persistence
-9. Object tracking / velocity-sensitive scenario calibration
-10. Sampling contract 통일
-11. GT Workspace 성능 개선
-```
-
-이 순서는 threshold tuning보다 upstream data/evidence의 신뢰성을 먼저 확보하는 데 목적이 있다.
-
----
-
-## 13. 후속 개발 시 반드시 남겨야 할 기록
-
-Algorithm 또는 threshold를 변경할 때 최소 다음을 함께 남긴다.
-
-```text
-commit SHA
-changed config
-recording list
-scenario subset
-GT version
-evaluation unit
-before/after metrics
-representative FP/FN examples
-```
-
-Lane, motion signal, VLM evidence처럼 shared infrastructure를 수정한 경우에는 해당 기능 하나의 metric만 보지 말고 downstream regression을 반드시 함께 확인한다.
