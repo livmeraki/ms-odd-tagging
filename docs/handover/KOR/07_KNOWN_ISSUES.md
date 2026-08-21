@@ -4,7 +4,7 @@
 
 이 문서는 현재 pipeline에서 이미 확인되었거나 구조상 주의가 필요한 문제를 정리한다. 
 
-## 2. Lane Reconstruction / Continuity
+## 1. Lane Reconstruction / Continuity
 
 ### 현상
 
@@ -29,7 +29,7 @@ LD는 physical segment 단위로 제공되며 실제 주행 continuity와 1:1로
 - explorer에서 left / ego / right lane geometry를 동시에 확인
 - lane endpoint, heading continuity, predecessor/successor relation 확인
 
-## 3. Intersection에서 False Lane Change
+## 2. Intersection에서 False Lane Change
 
 ### 현상
 
@@ -48,13 +48,13 @@ config에 다음 logic이 존재한다.
 threshold를 낮추면 recall은 올라갈 수 있지만 intersection false positive가 다시 증가할 수 있다.
 
 
-## 5. LD Missing / Short Segment
+## 3. LD Missing / Short Segment
 
 LD line이 짧거나 frame마다 일부 사라지는 경우 lane polygon 또는 topology reconstruction이 불안정하다.
 
 단순히 현재 frame의 line만 사용하는 것보다 temporal continuity를 활용할 필요가 있지만, 과도한 persistence는 잘못된 geometry를 오래 유지할 수 있다.
 
-## 6. Traffic-light Detection의 Temporal Sparsity
+## 4. Traffic-light Detection의 Temporal Sparsity
 
 ### 현상
 
@@ -80,7 +80,7 @@ Traffic light를 단순 frame-local object로만 사용하지 말고 다음을 �
 
 단, traffic-light **state** 정보가 OD annotation에 없는 경우 state를 임의 생성하지 않는다.
 
-## 7. 1 FPS Visualization vs Full-frame Rule Evaluation
+## 5. 1 FPS Visualization vs Full-frame Rule Evaluation
 
 현재 model-facing frame input/BEV는 기본 1 FPS지만 deterministic dynamic rule은 full canonical sequence를 사용할 수 있다.
 
@@ -91,7 +91,7 @@ Traffic light를 단순 frame-local object로만 사용하지 말고 다음을 �
 
 Debug 시 source frame index와 sampling policy를 확인한다.
 
-## 8. Object Velocity / Tracking Noise
+## 6. Object Velocity / Tracking Noise
 
 Nearby object 및 crossing scenario는 frame 간 object association과 velocity 추정 품질에 영향을 받는다.
 
@@ -106,12 +106,12 @@ Nearby object 및 crossing scenario는 frame 간 object association과 velocity 
 
 현재 config에는 plausible speed limit, association distance, track age, optional median filter 등이 있다.
 
-## 9. Jerk / Derivative Noise
+## 7. Jerk / Derivative Noise
 
 Trajectory의 미세한 position/velocity noise는 acceleration과 jerk에서 크게 증폭될 수 있다.
 
 
-## 10. VLM Runtime
+## 8. VLM Runtime
 
 VLM은 rule보다 처리 비용이 훨씬 크다. candidate gating 없이 많은 frame/BEV를 전달하면 recording당 inference 시간이 크게 증가한다.
 

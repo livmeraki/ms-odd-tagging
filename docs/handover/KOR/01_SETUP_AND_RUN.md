@@ -44,33 +44,3 @@ ms-odd-vlm        VLM candidate / inference
 ms-odd-gt         GT Workspace
 ms-odd-validate   frame input 검증
 ```
-
-## ODLD Explorer
-
-Explorer는 다음 하나의 runner를 사용한다.
-
-```text
-scripts/odld_explorer/generate.py
-```
-
-Linux:
-
-```bash
-python scripts/odld_explorer/generate.py \
-  --source-root "$MS_ODD_DATA_ROOT/01_raw" \
-  --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
-  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
-  --regenerate-existing
-```
-
-Windows PowerShell:
-
-```powershell
-python scripts/odld_explorer/generate.py `
-  --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
-  --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
-  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers\index.html") `
-  --regenerate-existing
-```
