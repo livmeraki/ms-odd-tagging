@@ -92,16 +92,18 @@ configs/following_lane.json
 configs/ld_topology.json
 ```
 
+Lane 관련 설명에서는 raw image에서 lane marking을 새로 검출하는 의미의 lane detection과 구분하기 위해, 현재 subsystem의 역할을 `lane geometry reconstruction` / `ego lane inference`로 표현한다.
+
 ## 7. VLM-assisted Tagging
 
 ```text
-src/ms_odd_tagging/qwen_vlm_poc/
+src/ms_odd_tagging/vlm/
 ```
 
 VLM scenario group과 최종 label mapping은 다음을 함께 확인한다.
 
 ```text
-src/ms_odd_tagging/qwen_vlm_poc/config.py
+src/ms_odd_tagging/vlm/config.py
 configs/scenario_catalog.csv
 ```
 
@@ -110,22 +112,24 @@ configs/scenario_catalog.csv
 ## 8. GT Review
 
 ```text
-src/ms_odd_tagging/simplified_taxonomy/
+src/ms_odd_tagging/gt/
 ```
 
 실행 command:
 
 ```text
-ms-odd-gt-workspace
+ms-odd-gt
 ```
 
 ## 9. Full ODLD Explorer
 
 ```text
-scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py
-scripts/odld_explorer/generate_odld_dataset_explorers_w_scenario_tag.py
+scripts/odld_explorer/generate.py
+scripts/odld_explorer/explorer.py
 scripts/odld_explorer/odld_explorer_common.py
 ```
+
+일반적으로 `generate.py`를 사용한다.
 
 ## 10. Validation / Tests
 
@@ -143,6 +147,8 @@ data/README.md
 src/ms_odd_tagging/common/config.py
 ```
 
+현재 output stage path의 source of truth는 `src/ms_odd_tagging/common/config.py`이다.
+
 ## 12. 정책 / 가이드 문서
 
 프로젝트 외부에서 함께 확인해야 하는 기준 문서는 다음과 같다.
@@ -156,19 +162,23 @@ src/ms_odd_tagging/common/config.py
 ## 13. Source of Truth 우선순위
 
 ```text
-1. 현재 cleanup branch source code + tests
+1. 현재 main source code + tests
 2. configs/scenario_catalog.csv / configs/direct_scenarios.yaml
-3. README.md
-4. docs/handover/KOR/*
-5. 최신 공식 taxonomy / policy 문서
+3. 최신 공식 taxonomy / policy 문서
+4. README.md
+5. docs/handover/KOR/*
 ```
+
+Documentation에 적힌 path/command가 source code와 다를 경우 current source code와 `common/config.py`, `pyproject.toml`을 기준으로 문서를 수정한다.
 
 ## 14. Handover 문서 유지 규칙
 
+- project entry point / developer workflow 변경 → `00_OVERVIEW.md`
+- 실행 command/path 변경 → `01_SETUP_AND_RUN.md`, OS별 runbook, `README.md`
 - pipeline 변경 → `02_PIPELINE.md`
 - schema 변경 → `03_DATA_FORMAT.md`
 - scenario wiring 변경 → `04_SCENARIO_STATUS.md`
-- detector logic 변경 → `05_ALGORITHMS.md`
-- metric 변경 → `06_EVALUATION.md`
-- known bug 변경 → `07_KNOWN_ISSUES.md`
-- backlog 변경 → `08_NEXT_STEPS.md`
+- detector logic / signal assumption 변경 → `05_ALGORITHMS.md`
+- GT / metric / evaluation contract 변경 → `06_EVALUATION.md`
+- unresolved implementation, validation task, future engineering direction 변경 → `07_REMAINING_WORK.md`
+- source of truth / reference path 변경 → `09_REFERENCES.md`
