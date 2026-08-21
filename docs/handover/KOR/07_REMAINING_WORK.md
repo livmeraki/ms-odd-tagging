@@ -1,7 +1,67 @@
 # Remaining Work
 
+이 문서는 후속 개발 시 **우선적으로 해결해야 할 항목을 중요도 순으로** 정리한다. 순서는 단순한 구현 난이도가 아니라, 현재 결과의 신뢰성에 미치는 영향, 여러 scenario에 공통으로 영향을 주는 정도, 다른 개선 작업의 선행 조건 여부를 기준으로 한다.
 
-## 1. Lane Detection + Ego Lane Inference 개선
+---
+
+## 1. Evaluation Methodology 재검증
+
+### 현재 문제의식
+
+현재까지 사용한 evaluation 결과는 참고는 가능하지만, **현재 시스템의 신뢰 가능한 공식 baseline이라고 보기에는 부족하다.**
+
+특히 다음 요소가 결과를 바꿀 수 있다.
+
+- GT 작성 기준
+- prediction-prefill에 의한 reviewer bias
+- frame input과 prediction tag의 sampling frame mismatch
+- sampled-frame 평가인지 event-range 평가인지의 차이
+- scenario imbalance
+- event start/end tolerance
+- evaluation recording list와 scenario subset
+
+### 필요한 작업
+
+먼저 evaluation contract를 고정해야 한다.
+
+```text
+1. 무엇을 평가하는가?
+   - frame state
+   - event interval
+   - recording-level presence
+
+2. 어떤 recording을 사용하는가?
+
+3. 어떤 scenario subset을 평가하는가?
+
+4. GT 작성 기준과 review process는 무엇인가?
+
+5. event boundary tolerance는 어떻게 정의하는가?
+
+6. sampling alignment는 어떻게 보장하는가?
+```
+
+### GT 신뢰성 확인
+
+가능하면 작은 subset에서 동일 scene을 두 번 독립적으로 검토하거나 다른 reviewer가 재검토해 disagreement를 확인한다.
+
+특히 event start/end가 중요한 scenario에서는 단순 Yes/No consistency뿐 아니라 boundary consistency도 확인한다.
+
+### metric
+
+단일 overall F1만 사용하지 말고 다음을 함께 기록한다.
+
+- scenario별 positive GT count
+- scenario별 Precision / Recall / F1
+- micro metric
+- macro metric
+- FP/FN example review
+
+Event-based evaluation을 도입한다면 temporal IoU 또는 start/end tolerance를 명시적으로 정의한다.
+
+---
+
+## 2. Lane Detection + Ego Lane Inference 개선
 
 ### 현재 상태
 
@@ -74,52 +134,7 @@ Lane reconstruction 수정은 다음 기능을 동시에 regression test 해야 
 
 ---
 
-## 2. Speed Band의 고정값 사용 여부 재검토
-
-### 현재 상태
-
-현재 speed scenario는 fixed global speed band를 사용한다.
-
-```text
-stationary: 0.0 <= v < 0.5 m/s
-low:        0.5 <= v < 5.0 m/s
-medium:     5.0 <= v < 15.0 m/s
-high:       v >= 15.0 m/s
-```
-
-이 기준은 현재 data에서 일관된 rule 적용이 가능하다는 장점이 있지만, 실제 주행 context를 완전히 반영하지는 않는다.
-
-### 향후 개선 가능성
-
-ALT에서 **해당 도로 구간의 speed-limit 정보가 안정적으로 제공되는 경우**, fixed global threshold 대신 speed limit에 상대적인 dynamic speed categorization을 검토할 수 있다.
-
-예를 들어 동일한 ego speed라도:
-
-- 제한속도 30 km/h 구간
-- 제한속도 50 km/h 구간
-- 제한속도 80 km/h 구간
-
-에서 `low / medium / high`의 의미가 동일하지 않을 수 있다.
-
-단, speed-limit data가 실제 source contract에 포함되기 전에는 추정 speed limit을 사용해 rule을 변경하지 않는다.
-
-### 변경 시 함께 확인할 항목
-
-Speed band는 단순 speed label에만 영향을 주지 않는다.
-
-특히:
-
-- `low_magnitude_speed`
-- `medium_magnitude_speed`
-- `high_magnitude_speed`
-- `starting_low_speed_turn`
-- `starting_high_speed_turn`
-
-과 같이 speed classification을 직접 사용하는 scenario를 함께 재검증해야 한다.
-
----
-
-## 4. Speed / Lateral Acceleration / Jerk Signal Spike 검증
+## 3. Speed / Lateral Acceleration / Jerk Signal Spike 검증
 
 ### 현재 확인된 우려
 
@@ -165,6 +180,24 @@ GT event boundary
 특정 filter를 먼저 정답으로 가정하지 않는다.
 
 특히 aggressive smoothing은 실제 급회전/급가감속 onset과 jerk peak를 약화시킬 수 있으므로 detector metric과 waveform을 함께 비교해야 한다.
+
+---
+
+## 4. Frame Sampling Contract 통일
+
+Frame Input과 `recording_frame_tags_1fps`는 같은 nominal sampling rate를 사용하더라도 source frame 선택 방식이 다르면 정확한 frame index가 달라질 수 있다.
+
+현재 GT Workspace는 exact frame index를 먼저 사용하고 timestamp-nearest fallback을 사용하지만, 장기적으로는 두 exporter가 같은 sampling helper를 사용하도록 통일하는 것이 가장 안전하다.
+
+목표:
+
+```text
+one sampling policy
+→ one selected source frame
+→ same frame.json / BEV / prediction tag / GT reference
+```
+
+이렇게 되면 evaluation alignment와 GT Workspace logic을 모두 단순화할 수 있다.
 
 ---
 
@@ -245,64 +278,7 @@ VLM TP / FP / FN
 
 ---
 
-## 7. Evaluation Methodology 재검증
-
-### 현재 문제의식
-
-현재까지 사용한 evaluation 결과는 참고는 가능하지만, **현재 시스템의 신뢰 가능한 공식 baseline이라고 보기에는 부족하다.**
-
-특히 다음 요소가 결과를 바꿀 수 있다.
-
-- GT 작성 기준
-- prediction-prefill에 의한 reviewer bias
-- frame input과 prediction tag의 sampling frame mismatch
-- sampled-frame 평가인지 event-range 평가인지의 차이
-- scenario imbalance
-- event start/end tolerance
-- evaluation recording list와 scenario subset
-
-### 필요한 작업
-
-먼저 evaluation contract를 고정해야 한다.
-
-```text
-1. 무엇을 평가하는가?
-   - frame state
-   - event interval
-   - recording-level presence
-
-2. 어떤 recording을 사용하는가?
-
-3. 어떤 scenario subset을 평가하는가?
-
-4. GT 작성 기준과 review process는 무엇인가?
-
-5. event boundary tolerance는 어떻게 정의하는가?
-
-6. sampling alignment는 어떻게 보장하는가?
-```
-
-### GT 신뢰성 확인
-
-가능하면 작은 subset에서 동일 scene을 두 번 독립적으로 검토하거나 다른 reviewer가 재검토해 disagreement를 확인한다.
-
-특히 event start/end가 중요한 scenario에서는 단순 Yes/No consistency뿐 아니라 boundary consistency도 확인한다.
-
-### metric
-
-단일 overall F1만 사용하지 말고 다음을 함께 기록한다.
-
-- scenario별 positive GT count
-- scenario별 Precision / Recall / F1
-- micro metric
-- macro metric
-- FP/FN example review
-
-Event-based evaluation을 도입한다면 temporal IoU 또는 start/end tolerance를 명시적으로 정의한다.
-
----
-
-## 8. Traffic-light Temporal Persistence
+## 7. Traffic-light Temporal Persistence
 
 Traffic-light OD는 실제 scene에 존재해도 annotation에서는 sparse하게 나타날 수 있다. 기본 1 FPS sampled BEV에서는 해당 observation을 놓칠 수도 있다.
 
@@ -316,28 +292,54 @@ Traffic-light OD는 실제 scene에 존재해도 annotation에서는 sparse하�
 
 Source annotation에 traffic-light state가 없으면 state를 임의 생성하지 않는다.
 
-
 ---
 
-## 9. Frame Sampling Contract 통일
+## 8. Speed Band의 고정값 사용 여부 재검토
 
-Frame Input과 `recording_frame_tags_1fps`는 같은 nominal sampling rate를 사용하더라도 source frame 선택 방식이 다르면 정확한 frame index가 달라질 수 있다.
+### 현재 상태
 
-현재 GT Workspace는 exact frame index를 먼저 사용하고 timestamp-nearest fallback을 사용하지만, 장기적으로는 두 exporter가 같은 sampling helper를 사용하도록 통일하는 것이 가장 안전하다.
-
-목표:
+현재 speed scenario는 fixed global speed band를 사용한다.
 
 ```text
-one sampling policy
-→ one selected source frame
-→ same frame.json / BEV / prediction tag / GT reference
+stationary: 0.0 <= v < 0.5 m/s
+low:        0.5 <= v < 5.0 m/s
+medium:     5.0 <= v < 15.0 m/s
+high:       v >= 15.0 m/s
 ```
 
-이렇게 되면 evaluation alignment와 GT Workspace logic을 모두 단순화할 수 있다.
+이 기준은 현재 data에서 일관된 rule 적용이 가능하다는 장점이 있지만, 실제 주행 context를 완전히 반영하지는 않는다.
+
+### 향후 개선 가능성
+
+ALT에서 **해당 도로 구간의 speed-limit 정보가 안정적으로 제공되는 경우**, fixed global threshold 대신 speed limit에 상대적인 dynamic speed categorization을 검토할 수 있다.
+
+예를 들어 동일한 ego speed라도:
+
+- 제한속도 30 km/h 구간
+- 제한속도 50 km/h 구간
+- 제한속도 80 km/h 구간
+
+에서 `low / medium / high`의 의미가 동일하지 않을 수 있다.
+
+단, speed-limit data가 실제 source contract에 포함되기 전에는 추정 speed limit을 사용해 rule을 변경하지 않는다.
+
+### 변경 시 함께 확인할 항목
+
+Speed band는 단순 speed label에만 영향을 주지 않는다.
+
+특히:
+
+- `low_magnitude_speed`
+- `medium_magnitude_speed`
+- `high_magnitude_speed`
+- `starting_low_speed_turn`
+- `starting_high_speed_turn`
+
+과 같이 speed classification을 직접 사용하는 scenario를 함께 재검증해야 한다.
 
 ---
 
-## 10. GT Workspace 확장성과 성능
+## 9. GT Workspace 확장성과 성능
 
 Dataset이 커질수록 초기 recording scan과 prediction/GT indexing 비용이 커질 수 있다.
 
