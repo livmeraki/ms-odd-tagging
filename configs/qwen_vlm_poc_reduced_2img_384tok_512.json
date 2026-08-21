@@ -1,0 +1,6 @@
+{
+  "max_bev_images": 2,
+  "bev_size_px": [512, 512],
+  "max_tokens": 384,
+  "prompt_version": "qwen-vlm-poc-v1-reduced-2img-384tok-512px"
+}
