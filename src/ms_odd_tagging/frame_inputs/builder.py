@@ -1,4 +1,4 @@
-"""Public entrypoint for per-frame explorer-aligned model-input generation."""
+"""Public entrypoint for per-frame JSON and BEV generation."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Sequence
 
 from ms_odd_tagging.common.config import CANONICAL, FRAME_INPUTS
 
-from . import explorer_aligned as frame_input_revised
+from . import generator as frame_generator
 
 
 DEFAULT_SIZE = (900, 1200)
@@ -17,7 +17,7 @@ DEFAULT_SIZE = (900, 1200)
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate explorer-aligned per-frame JSON and BEV inputs."
+        description="Generate per-frame JSON and BEV inputs."
     )
     parser.add_argument("--input-dir", type=Path, default=CANONICAL)
     parser.add_argument("--output-dir", type=Path, default=FRAME_INPUTS)
@@ -87,7 +87,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         forwarded.append("--refresh-analysis")
     if args.profile_generation:
         forwarded.append("--profile-generation")
-    return _forward_main(frame_input_revised.main, forwarded)
+    return _forward_main(frame_generator.main, forwarded)
 
 
 if __name__ == "__main__":
