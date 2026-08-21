@@ -100,8 +100,8 @@ ms-odd-validate --help
 python scripts/odld_explorer/generate.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
   --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
-  --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
-  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
+  --output-dir "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/06_scenario_explorers/odld/index.html" \
   --regenerate-existing
 ```
 
@@ -110,7 +110,7 @@ python scripts/odld_explorer/generate.py \
 ```bash
 ms-odd-gt \
   --frame-root "$MS_ODD_OUTPUT_ROOT/02_frame_inputs" \
-  --gt-root "$MS_ODD_OUTPUT_ROOT/06_gt_comparison/gt" \
+  --gt-root "$MS_ODD_OUTPUT_ROOT/05_gt_comparison/gt" \
   --source-hz 10 \
   --sample-hz 1 \
   --host 127.0.0.1 \
@@ -127,7 +127,7 @@ The single handover entry point is:
 docs/handover/KOR/00_OVERVIEW.md
 ```
 
-It explains the project purpose, architecture, important files, CLI/tools, debugging workflow, extension workflow, and the recommended direction for further development.
+It explains the project purpose, architecture, important files, CLI/tools, debugging workflow, extension workflow, and the areas that still require implementation or validation.
 
 Detailed documents:
 
@@ -140,8 +140,7 @@ docs/handover/KOR/03_DATA_FORMAT.md
 docs/handover/KOR/04_SCENARIO_STATUS.md
 docs/handover/KOR/05_ALGORITHMS.md
 docs/handover/KOR/06_EVALUATION.md
-docs/handover/KOR/07_KNOWN_ISSUES.md
-docs/handover/KOR/08_NEXT_STEPS.md
+docs/handover/KOR/07_REMAINING_WORK.md
 docs/handover/KOR/09_REFERENCES.md
 ```
 
