@@ -220,20 +220,26 @@ VLM 개선 시 **candidate recall과 VLM decision quality를 별도로 측정**�
 
 현재 후속 개발에서 가장 중요하게 확인해야 할 항목은 다음과 같습니다.
 
+- **Evaluation methodology**: 현재까지 사용한 수치가 reproducible/reliable baseline인지 다시 확인해야 하며, GT consistency, sampling alignment, evaluation unit, event boundary 기준을 고정해야 함
 - **Lane geometry reconstruction / ego lane inference**: lane 정보가 끊기거나, road 영역만 있고 명시적인 lane geometry가 부족한 구간에서 reconstruction이 약함
 - **Motion signal 품질**: speed, acceleration, lateral acceleration, jerk 계열에서 spike가 나타날 수 있어 source signal과 derivative 계산을 다시 확인해야 함
-- **Speed band 정의**: 현재 fixed band를 사용하지만, 향후 ALT에서 speed-limit 정보가 제공되면 구간별 제한속도를 반영한 dynamic band를 검토할 수 있음
+- **Frame sampling contract**: frame input, prediction tag, GT reference가 동일한 source frame을 사용하도록 sampling policy를 통일할 필요가 있음
 - **VLM BEV literacy**: VLM이 ego, object, 방향, 상대 위치, legend를 실제로 이해하는지 scenario accuracy와 별도로 검증해야 함
-- **Evaluation methodology**: 현재까지 사용한 수치가 reproducible/reliable baseline인지 다시 확인해야 하며, GT consistency, sampling alignment, evaluation unit, event boundary 기준을 고정해야 함
+- **VLM candidate/decision 분리 평가**: candidate recall과 실제 VLM decision quality를 별도로 측정해야 함
 - traffic-light temporal persistence
-- object tracking / velocity-sensitive scenario calibration
-- frame input / frame tag sampling contract 통일
+- **Speed band 정의**: 현재 fixed band를 사용하지만, 향후 ALT에서 speed-limit 정보가 제공되면 구간별 제한속도를 반영한 dynamic band를 검토할 수 있음
 - GT Workspace 확장성/로딩 성능
 
 각 항목의 현상, 원인 가설, 확인 절차, 구현 방향, regression 범위는 다음 문서에 통합되어 있습니다.
 
 ```text
 07_REMAINING_WORK.md
+```
+
+VLM이 BEV 표현을 실제로 이해하는지 검증하기 위한 별도 PoC와 Linux server 결과 artifact 위치는 다음 문서에 정리되어 있습니다.
+
+```text
+08_VLM_BEV_RECOGNITION_POC.md
 ```
 
 후속 개발자는 `07_REMAINING_WORK.md`를 단순 TODO list가 아니라 **현재 프로젝트에서 아직 충분히 검증되지 않은 부분의 기술적 인수인계 문서**로 사용합니다.
@@ -249,6 +255,7 @@ VLM 개선 시 **candidate recall과 VLM decision quality를 별도로 측정**�
 6. 05_ALGORITHMS.md
 7. 06_EVALUATION.md
 8. 07_REMAINING_WORK.md
+9. 08_VLM_BEV_RECOGNITION_POC.md   ← VLM/BEV 고도화 시
 ```
 
 필요 시 다음 문서를 추가로 확인합니다.
@@ -272,6 +279,7 @@ VLM 개선 시 **candidate recall과 VLM decision quality를 별도로 측정**�
 | `05_ALGORITHMS.md` | 주요 rule / geometry 알고리즘과 motion/lane 가정 |
 | `06_EVALUATION.md` | GT 작성, evaluation contract, 현재 평가 신뢰성 주의점 |
 | `07_REMAINING_WORK.md` | 아직 검증/구현이 필요한 항목과 구체적인 고도화 방향 |
+| `08_VLM_BEV_RECOGNITION_POC.md` | VLM BEV understanding PoC, 실행 방법, Linux server output artifact |
 | `09_REFERENCES.md` | 관련 코드와 정책/참고 자료 |
 
 영문 문서는 현재 별도로 유지하지 않습니다. 한국어 문서를 먼저 고도화한 뒤, 내용이 안정되면 동일 구조와 내용으로 번역하는 것을 권장합니다.
