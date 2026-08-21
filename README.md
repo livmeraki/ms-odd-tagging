@@ -2,16 +2,16 @@
 
 Autonomous-driving Motional Scenario tagging from OD/LD annotations and ego trajectory.
 
-## Current workflow
+## Workflow
 
 ```text
 annotations_OD.json + annotations_LD.json + traj_lcs.txt
         ↓
-OD+LD+Trajectory Canonicalization
+Canonicalization
         ↓
 outputs/01_canonical
         ↓
-Rule / geometry analysis + per-frame input / BEV generation
+Rule / geometry analysis + frame / BEV generation
         ↓
 outputs/02_frame_inputs
         ├── frame_XXXXXX/frame.json
@@ -19,15 +19,15 @@ outputs/02_frame_inputs
         └── recording_frame_tags_1fps/
 ```
 
-Semantic cases that require VLM reasoning use candidate/episode selection before Qwen VLM inference. Ground-truth review uses the Simplified Taxonomy GT Workspace.
+Semantic cases use candidate/episode selection before VLM inference. Ground-truth review uses the GT Workspace.
 
 ## Repository layout
 
 ```text
-configs/                  active scenario and geometry configuration
+configs/                  scenario and geometry configuration
 data/                     local data layout documentation
-docs/handover/KOR/        current project documentation
-scripts/odld_explorer/    full OD+LD scenario explorer
+docs/handover/KOR/        project documentation
+scripts/odld_explorer/    OD+LD scenario explorer
 src/ms_odd_tagging/       implementation
 tests/                    automated tests
 ```
@@ -80,34 +80,35 @@ annotations_LD.json
 traj_lcs.txt
 ```
 
-## Current CLIs
+## Commands
 
 ```bash
 ms-odd-tagging --help
 ms-odd-canonical --help
-ms-odd-frame-inputs --help
+ms-odd-frames --help
 ms-odd-rules --help
-ms-odd-following-lane --help
-ms-odd-ld-topology --help
-ms-odd-qwen-vlm --help
-ms-odd-gt-workspace --help
-ms-odd-validate-frames --help
+ms-odd-lane --help
+ms-odd-topology --help
+ms-odd-vlm --help
+ms-odd-gt --help
+ms-odd-validate --help
 ```
 
-## Full ODLD Scenario Explorer
+## ODLD Explorer
 
 ```bash
-python scripts/odld_explorer/generate_odld_dataset_explorers_w_stage_progress.py \
+python scripts/odld_explorer/generate.py \
   --source-root "$MS_ODD_DATA_ROOT/01_raw" \
   --canonical-dir "$MS_ODD_OUTPUT_ROOT/01_canonical" \
   --output-dir "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers" \
+  --index-path "$MS_ODD_OUTPUT_ROOT/07_odld_scenario_explorers/index.html" \
   --regenerate-existing
 ```
 
 ## GT Workspace
 
 ```bash
-ms-odd-gt-workspace \
+ms-odd-gt \
   --frame-root "$MS_ODD_OUTPUT_ROOT/02_frame_inputs" \
   --gt-root "$MS_ODD_OUTPUT_ROOT/06_gt_comparison/gt" \
   --source-hz 10 \
