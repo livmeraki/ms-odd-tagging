@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""Generate OD+LD explorers with progress reported only for completed work.
-
-This is a thin runner around generate_odld_dataset_explorers_w_scenario_tag.py.
-It keeps the same explorer output, but exposes the expensive per-recording
-pipeline as 17 concrete stages so long runs do not look frozen.
-
-Tag sourcing is identical to the full scenario-tag generator: compatible
-current-config recording events may be reused, otherwise events are regenerated
-from canonical data. Legacy overlapping five-second candidate windows are never
-used as visualization tags.
-"""
+"""Generate OD+LD scenario explorers with per-stage progress reporting."""
 
 from __future__ import annotations
 
@@ -19,7 +9,7 @@ import json
 import time
 from pathlib import Path
 
-import generate_odld_dataset_explorers_w_scenario_tag as gen
+import explorer as gen
 
 
 STAGE_NAMES = (
@@ -209,8 +199,6 @@ def main() -> None:
         del canonical, data
         gc.collect()
 
-    # Reconcile any explorers already present but not represented in the current
-    # manifest, then leave one final authoritative index/manifest.
     rows = gen.rebuild_rows_from_outputs(args.output_dir, rows_by_recording)
     gen.write_index_and_manifest(args.index_path, args.output_dir, rows)
     print(
