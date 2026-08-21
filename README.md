@@ -26,8 +26,7 @@ Semantic cases use candidate/episode selection before VLM inference. Ground-trut
 ```text
 configs/                  scenario and geometry configuration
 data/                     local data layout documentation
-docs/handover/            developer handover guides
-docs/handover/KOR/        detailed Korean project documentation
+docs/handover/KOR/        project handover and developer documentation
 scripts/odld_explorer/    OD+LD scenario explorer
 src/ms_odd_tagging/       implementation
 tests/                    automated tests
@@ -122,20 +121,20 @@ Open `http://127.0.0.1:8765`.
 
 ## Documentation
 
-For the engineer who will take over and further improve the project:
-
-```text
-English: docs/handover/ENG/DEVELOPER_HANDOVER.md
-Korean:  docs/handover/KOREAN.md
-```
-
-The developer handover guides explain the project architecture, important files, CLI/tools, debugging workflow, extension workflow, testing discipline, and recommended next development priorities.
-
-Detailed Korean project documentation:
+The single handover entry point is:
 
 ```text
 docs/handover/KOR/00_OVERVIEW.md
+```
+
+It explains the project purpose, architecture, important files, CLI/tools, debugging workflow, extension workflow, and the recommended direction for further development.
+
+Detailed documents:
+
+```text
 docs/handover/KOR/01_SETUP_AND_RUN.md
+docs/handover/KOR/01A_SETUP_AND_RUN_LINUX.md
+docs/handover/KOR/01B_SETUP_AND_RUN_WINDOWS.md
 docs/handover/KOR/02_PIPELINE.md
 docs/handover/KOR/03_DATA_FORMAT.md
 docs/handover/KOR/04_SCENARIO_STATUS.md
@@ -145,3 +144,5 @@ docs/handover/KOR/07_KNOWN_ISSUES.md
 docs/handover/KOR/08_NEXT_STEPS.md
 docs/handover/KOR/09_REFERENCES.md
 ```
+
+English handover documentation is intentionally not maintained separately yet. Refine the Korean source first, then translate it once the content is stable so the two versions do not diverge.
