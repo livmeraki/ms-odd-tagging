@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ms_odd_tagging.simplified_taxonomy.gt_workspace import (
+from ms_odd_tagging.gt.workspace import (
     _dashboard_html,
     _prediction_tags,
     _prepare_rows,
