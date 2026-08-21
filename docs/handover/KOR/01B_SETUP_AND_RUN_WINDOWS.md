@@ -7,7 +7,7 @@ Windows PowerShell 기준 실행 방법이다.
 ```powershell
 git clone https://github.com/livmeraki/ms-odd-tagging.git
 Set-Location ms-odd-tagging
-git switch refactor/repo-cleanup-20260813
+git switch main
 git pull
 ```
 
@@ -102,8 +102,8 @@ ms-odd-validate --help
 python scripts/odld_explorer/generate.py `
   --source-root (Join-Path $env:MS_ODD_DATA_ROOT "01_raw") `
   --canonical-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "01_canonical") `
-  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers") `
-  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "07_odld_scenario_explorers\index.html") `
+  --output-dir (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers\odld") `
+  --index-path (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_scenario_explorers\odld\index.html") `
   --regenerate-existing
 ```
 
@@ -112,7 +112,7 @@ python scripts/odld_explorer/generate.py `
 ```powershell
 ms-odd-gt `
   --frame-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "02_frame_inputs") `
-  --gt-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_gt_comparison\gt") `
+  --gt-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "05_gt_comparison\gt") `
   --source-hz 10 `
   --sample-hz 1 `
   --host 127.0.0.1 `
@@ -124,7 +124,7 @@ ms-odd-gt `
 ```powershell
 python -m ms_odd_tagging.gt.workspace `
   --frame-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "02_frame_inputs") `
-  --gt-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "06_gt_comparison\gt") `
+  --gt-root (Join-Path $env:MS_ODD_OUTPUT_ROOT "05_gt_comparison\gt") `
   --source-hz 10 `
   --sample-hz 1 `
   --host 127.0.0.1 `
