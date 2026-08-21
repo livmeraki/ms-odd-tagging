@@ -1,19 +1,7 @@
 # Remaining Work
 
-## 1. 목적
 
-이 문서는 현재 구현에서 **아직 충분히 검증되지 않았거나 추가 구현이 필요한 항목**을 한 곳에 정리한다. 단순한 Known Issue 목록과 추상적인 Next Step을 분리하지 않고, 후속 개발자가 실제로 무엇을 확인하고 어떤 방향으로 고도화해야 하는지를 중심으로 작성한다.
-
-우선순위는 다음 원칙을 따른다.
-
-1. source signal과 evaluation이 신뢰 가능한지 먼저 확인한다.
-2. shared infrastructure인 lane/topology를 안정화한다.
-3. scenario detector threshold를 조정한다.
-4. VLM은 BEV 이해 능력과 candidate recall을 분리해서 검증한다.
-
----
-
-## 2. Lane Geometry Reconstruction / Ego Lane Inference 개선
+## 1. Lane Detection + Ego Lane Inference 개선
 
 ### 현재 상태
 
@@ -86,7 +74,7 @@ Lane reconstruction 수정은 다음 기능을 동시에 regression test 해야 
 
 ---
 
-## 3. Speed Band의 고정값 사용 여부 재검토
+## 2. Speed Band의 고정값 사용 여부 재검토
 
 ### 현재 상태
 
